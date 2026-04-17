@@ -1,6 +1,6 @@
 import { requireUserId } from "@/lib/auth";
 import { plannerRepository } from "@/lib/planner/repository";
-import { eventSchema } from "@/lib/planner/validators";
+import { updateEventSchema } from "@/lib/planner/validators";
 import { handleRouteError, success } from "@/app/api/_helpers";
 
 type Params = {
@@ -11,7 +11,7 @@ export async function PATCH(request: Request, { params }: Params) {
   try {
     const userId = await requireUserId();
     const { eventId } = await params;
-    const input = eventSchema.partial().parse(await request.json());
+    const input = updateEventSchema.parse(await request.json());
     const event = await plannerRepository.updateEvent(userId, eventId, input);
     return success(event);
   } catch (error) {

@@ -28,6 +28,16 @@ export async function getInitialPlannerPayload(range?: PlannerRange) {
 
   const workspace = await plannerRepository.getWorkspace(session.userId);
   const effectiveRange = range ?? buildDefaultRange(workspace.settings.weekStart);
+  const primaryBlocksByTask = new Map(
+    workspace.taskBlocks.map((block) => [
+      block.taskId,
+      {
+        id: block.id,
+        startsAt: block.startsAt,
+        endsAt: block.endsAt,
+      },
+    ]),
+  );
   const tasks: PlannerTask[] = workspace.tasks.map((task) => ({
     ...task,
     area: workspace.areas.find((area) => area.id === task.areaId) ?? null,
@@ -40,7 +50,8 @@ export async function getInitialPlannerPayload(range?: PlannerRange) {
     checklist: workspace.checklistItems
       .filter((item) => item.taskId === task.id)
       .sort((left, right) => left.sortOrder - right.sortOrder),
-    hasBlock: workspace.taskBlocks.some((block) => block.taskId === task.id),
+    hasBlock: primaryBlocksByTask.has(task.id),
+    primaryBlock: primaryBlocksByTask.get(task.id) ?? null,
   }));
 
   const scheduledTasks: PlannerCalendarItem[] = workspace.taskBlocks.flatMap((block) => {
@@ -97,12 +108,21 @@ export async function getInitialPlannerPayload(range?: PlannerRange) {
   );
   const unscheduledTasks = tasks.filter((task) => !task.hasBlock && task.status !== "done");
   const today = new Date();
-  const overdueCount = tasks.filter(
-    (task) =>
-      task.status !== "done" &&
-      task.dueAt &&
-      isBefore(parseISO(task.dueAt), startOfDay(today)),
-  ).length;
+  const todayStart = startOfDay(today);
+  const overdueTasks = tasks.filter((task) => {
+    if (task.status === "done") {
+      return false;
+    }
+
+    const dueOverdue =
+      task.dueAt != null && isBefore(parseISO(task.dueAt), todayStart);
+    const scheduledOverdue =
+      task.primaryBlock != null &&
+      isBefore(parseISO(task.primaryBlock.endsAt), todayStart);
+
+    return dueOverdue || scheduledOverdue;
+  });
+  const overdueCount = overdueTasks.length;
   const todayCount = tasks.filter(
     (task) =>
       task.status !== "done" &&
@@ -154,6 +174,7 @@ export async function getInitialPlannerPayload(range?: PlannerRange) {
     events: workspace.events,
     tasks,
     unscheduledTasks,
+    overdueTasks,
     scheduledItems,
     capacity,
     overdueCount,

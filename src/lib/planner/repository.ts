@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 
 import { isDatabaseConfigured } from "@/lib/env";
+import { calculateMinutes } from "@/lib/planner/date";
 import { databaseRepository } from "@/lib/planner/database-repository";
 import { readDemoSnapshot, writeDemoSnapshot } from "@/lib/planner/demo-store";
 import type {
@@ -77,12 +78,17 @@ function replaceTaskTags(
 
 function patchTask(task: TaskRecord, input: UpdateTaskInput | NewTaskInput) {
   const timestamp = now();
+  const syncedEstimate =
+    input.estimatedMinutes ??
+    (input.startsAt && input.endsAt
+      ? calculateMinutes(input.startsAt, input.endsAt)
+      : undefined);
 
   Object.assign(task, {
     title: input.title ?? task.title,
     notes: input.notes ?? task.notes,
     priority: input.priority ?? task.priority,
-    estimatedMinutes: input.estimatedMinutes ?? task.estimatedMinutes,
+    estimatedMinutes: syncedEstimate ?? task.estimatedMinutes,
     dueAt:
       input.dueAt === undefined
         ? task.dueAt
@@ -127,7 +133,11 @@ const demoRepository = {
         title: input.title,
         notes: input.notes ?? "",
         priority: input.priority ?? "medium",
-        estimatedMinutes: input.estimatedMinutes ?? 60,
+        estimatedMinutes:
+          input.estimatedMinutes ??
+          (input.startsAt && input.endsAt
+            ? calculateMinutes(input.startsAt, input.endsAt)
+            : 60),
         dueAt: input.dueAt ?? null,
         preferredTimeBand: input.preferredTimeBand ?? "anytime",
         preferredWindowStart: input.preferredWindowStart ?? null,
@@ -232,6 +242,15 @@ const demoRepository = {
         updatedAt: now(),
       };
       snapshot.taskBlocks.push(block);
+      const task = snapshot.tasks.find(
+        (candidate) => candidate.id === input.taskId && candidate.userId === userId,
+      );
+
+      if (task) {
+        task.estimatedMinutes = calculateMinutes(input.startsAt, input.endsAt);
+        task.updatedAt = now();
+      }
+
       return block;
     });
   },
@@ -249,6 +268,15 @@ const demoRepository = {
       block.startsAt = input.startsAt ?? block.startsAt;
       block.endsAt = input.endsAt ?? block.endsAt;
       block.updatedAt = now();
+      const task = snapshot.tasks.find(
+        (candidate) => candidate.id === block.taskId && candidate.userId === userId,
+      );
+
+      if (task) {
+        task.estimatedMinutes = calculateMinutes(block.startsAt, block.endsAt);
+        task.updatedAt = now();
+      }
+
       return block;
     });
   },

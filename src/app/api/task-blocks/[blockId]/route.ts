@@ -1,6 +1,6 @@
 import { requireUserId } from "@/lib/auth";
 import { plannerRepository } from "@/lib/planner/repository";
-import { taskBlockSchema } from "@/lib/planner/validators";
+import { updateTaskBlockSchema } from "@/lib/planner/validators";
 import { handleRouteError, success } from "@/app/api/_helpers";
 
 type Params = {
@@ -11,7 +11,7 @@ export async function PATCH(request: Request, { params }: Params) {
   try {
     const userId = await requireUserId();
     const { blockId } = await params;
-    const input = taskBlockSchema.partial().parse(await request.json());
+    const input = updateTaskBlockSchema.parse(await request.json());
     const block = await plannerRepository.updateTaskBlock(userId, blockId, input);
     return success(block);
   } catch (error) {

@@ -10,7 +10,7 @@ export function Field({ label, description, children }: FieldProps) {
   return (
     <label className="grid gap-2">
       <div className="grid gap-1">
-        <span className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
+        <span className="text-sm font-medium text-[var(--foreground-strong)]">
           {label}
         </span>
         {description ? (
