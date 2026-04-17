@@ -5,13 +5,16 @@ import { calculateMinutes } from "@/lib/planner/date";
 import { databaseRepository } from "@/lib/planner/database-repository";
 import { readDemoSnapshot, writeDemoSnapshot } from "@/lib/planner/demo-store";
 import type {
+  MilestoneRecord,
   NewEventInput,
+  NewMilestoneInput,
   NewTaskBlockInput,
   NewTaskInput,
   NewTaxonomyInput,
   TaskChecklistItemRecord,
   TaskRecord,
   UpdateEventInput,
+  UpdateMilestoneInput,
   UpdateSettingsInput,
   UpdateTaskBlockInput,
   UpdateTaskInput,
@@ -76,13 +79,42 @@ function replaceTaskTags(
   snapshot.taskTags.push(...tagIds.map((tagId) => ({ taskId, tagId })));
 }
 
-function patchTask(task: TaskRecord, input: UpdateTaskInput | NewTaskInput) {
+function resolveTaskRelations(
+  snapshot: WorkspaceSnapshot,
+  task: TaskRecord,
+  input: UpdateTaskInput | NewTaskInput,
+) {
+  const nextMilestoneId =
+    input.milestoneId === undefined ? task.milestoneId : input.milestoneId;
+  const linkedMilestone =
+    nextMilestoneId == null
+      ? null
+      : snapshot.milestones.find((milestone) => milestone.id === nextMilestoneId) ?? null;
+  const nextProjectId =
+    linkedMilestone?.projectId ??
+    (input.projectId === undefined ? task.projectId : input.projectId);
+
+  return {
+    projectId: nextProjectId,
+    milestoneId:
+      linkedMilestone && linkedMilestone.projectId === nextProjectId
+        ? linkedMilestone.id
+        : null,
+  };
+}
+
+function patchTask(
+  snapshot: WorkspaceSnapshot,
+  task: TaskRecord,
+  input: UpdateTaskInput | NewTaskInput,
+) {
   const timestamp = now();
   const syncedEstimate =
     input.estimatedMinutes ??
     (input.startsAt && input.endsAt
       ? calculateMinutes(input.startsAt, input.endsAt)
       : undefined);
+  const relations = resolveTaskRelations(snapshot, task, input);
 
   Object.assign(task, {
     title: input.title ?? task.title,
@@ -103,8 +135,8 @@ function patchTask(task: TaskRecord, input: UpdateTaskInput | NewTaskInput) {
         ? task.preferredWindowEnd
         : input.preferredWindowEnd,
     areaId: input.areaId === undefined ? task.areaId : input.areaId,
-    projectId:
-      input.projectId === undefined ? task.projectId : input.projectId,
+    projectId: relations.projectId,
+    milestoneId: relations.milestoneId,
     recurrence:
       input.recurrence === undefined ? task.recurrence : input.recurrence,
     updatedAt: timestamp,
@@ -127,6 +159,10 @@ const demoRepository = {
   async createTask(userId: string, input: NewTaskInput) {
     return withSnapshot(userId, (snapshot) => {
       const timestamp = now();
+      const linkedMilestone =
+        input.milestoneId == null
+          ? null
+          : snapshot.milestones.find((milestone) => milestone.id === input.milestoneId) ?? null;
       const task: TaskRecord = {
         id: id("task"),
         userId,
@@ -145,7 +181,8 @@ const demoRepository = {
         status: "todo",
         completedAt: null,
         areaId: input.areaId ?? null,
-        projectId: input.projectId ?? null,
+        projectId: linkedMilestone?.projectId ?? input.projectId ?? null,
+        milestoneId: linkedMilestone?.id ?? null,
         recurrence: input.recurrence ?? null,
         createdAt: timestamp,
         updatedAt: timestamp,
@@ -181,7 +218,7 @@ const demoRepository = {
         throw new Error("NOT_FOUND");
       }
 
-      patchTask(task, input);
+      patchTask(snapshot, task, input);
       replaceChecklist(snapshot, task.id, input.checklist);
       replaceTaskTags(snapshot, task.id, input.tagIds);
 
@@ -369,6 +406,77 @@ const demoRepository = {
       };
       snapshot.projects.push(project);
       return project;
+    });
+  },
+
+  async createMilestone(userId: string, input: NewMilestoneInput) {
+    return withSnapshot(userId, (snapshot) => {
+      const milestone: MilestoneRecord = {
+        id: id("milestone"),
+        userId,
+        projectId: input.projectId,
+        name: input.name,
+        description: input.description ?? "",
+        startDate: input.startDate,
+        deadline: input.deadline,
+        createdAt: now(),
+        updatedAt: now(),
+      };
+      snapshot.milestones.push(milestone);
+      return milestone;
+    });
+  },
+
+  async updateMilestone(userId: string, milestoneId: string, input: UpdateMilestoneInput) {
+    return withSnapshot(userId, (snapshot) => {
+      const milestone = snapshot.milestones.find(
+        (candidate) => candidate.id === milestoneId && candidate.userId === userId,
+      );
+
+      if (!milestone) {
+        throw new Error("NOT_FOUND");
+      }
+
+      milestone.projectId = input.projectId ?? milestone.projectId;
+      milestone.name = input.name ?? milestone.name;
+      milestone.description = input.description ?? milestone.description;
+      milestone.startDate = input.startDate ?? milestone.startDate;
+      milestone.deadline = input.deadline ?? milestone.deadline;
+      milestone.updatedAt = now();
+
+      const nextProjectId = input.projectId;
+
+      if (nextProjectId) {
+        snapshot.tasks = snapshot.tasks.map((task) =>
+          task.milestoneId === milestoneId
+            ? {
+                ...task,
+                projectId: nextProjectId,
+                updatedAt: now(),
+              }
+            : task,
+        );
+      }
+
+      return milestone;
+    });
+  },
+
+  async deleteMilestone(userId: string, milestoneId: string) {
+    return withSnapshot(userId, (snapshot) => {
+      snapshot.milestones = snapshot.milestones.filter(
+        (milestone) => !(milestone.id === milestoneId && milestone.userId === userId),
+      );
+      snapshot.tasks = snapshot.tasks.map((task) =>
+        task.milestoneId === milestoneId
+          ? {
+              ...task,
+              milestoneId: null,
+              updatedAt: now(),
+            }
+          : task,
+      );
+      return { ok: true };
     });
   },
 

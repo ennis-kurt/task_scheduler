@@ -23,6 +23,7 @@ const taskBaseSchema = z.object({
   preferredWindowEnd: z.string().nullable().optional(),
   areaId: z.string().nullable().optional(),
   projectId: z.string().nullable().optional(),
+  milestoneId: z.string().nullable().optional(),
   tagIds: z.array(z.string()).optional(),
   checklist: z
     .array(
@@ -121,6 +122,34 @@ export const taxonomySchema = z.object({
   areaId: z.string().nullable().optional(),
   deadlineAt: z.string().datetime().nullable().optional(),
 });
+
+const milestoneBaseSchema = z.object({
+  projectId: z.string().min(1),
+  name: z.string().min(1).max(120),
+  description: z.string().max(2000).optional(),
+  startDate: z.string().datetime(),
+  deadline: z.string().datetime(),
+});
+
+export const milestoneSchema = milestoneBaseSchema
+  .refine((value) => value.startDate < value.deadline, "Milestones must end after they start.");
+
+export const updateMilestoneSchema = milestoneBaseSchema
+  .partial()
+  .refine(
+    (value) => {
+      if (!value.startDate && !value.deadline) {
+        return true;
+      }
+
+      if (!value.startDate || !value.deadline) {
+        return true;
+      }
+
+      return value.startDate < value.deadline;
+    },
+    "Milestones must end after they start.",
+  );
 
 export const settingsSchema = z.object({
   timezone: z.string().optional(),

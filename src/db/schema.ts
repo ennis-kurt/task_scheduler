@@ -51,6 +51,22 @@ export const projects = pgTable("projects", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
+export const milestones = pgTable("milestones", {
+  id: text("id").primaryKey(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  projectId: text("project_id")
+    .notNull()
+    .references(() => projects.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  description: text("description").notNull().default(""),
+  startDate: timestamp("start_date", { withTimezone: true }).notNull(),
+  deadline: timestamp("deadline", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
 export const tags = pgTable("tags", {
   id: text("id").primaryKey(),
   userId: text("user_id")
@@ -79,6 +95,9 @@ export const tasks = pgTable("tasks", {
   completedAt: timestamp("completed_at", { withTimezone: true }),
   areaId: text("area_id").references(() => areas.id, { onDelete: "set null" }),
   projectId: text("project_id").references(() => projects.id, {
+    onDelete: "set null",
+  }),
+  milestoneId: text("milestone_id").references(() => milestones.id, {
     onDelete: "set null",
   }),
   recurrence: jsonb("recurrence"),

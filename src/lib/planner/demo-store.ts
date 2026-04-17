@@ -13,15 +13,35 @@ function storePath() {
   );
 }
 
+function normalizeSnapshot(snapshot: WorkspaceSnapshot): WorkspaceSnapshot {
+  return {
+    ...snapshot,
+    milestones: Array.isArray(snapshot.milestones) ? snapshot.milestones : [],
+    tasks: snapshot.tasks.map((task) => ({
+      ...task,
+      milestoneId: task.milestoneId ?? null,
+    })),
+  };
+}
+
 export async function readDemoSnapshot(userId = "demo-user") {
   const target = storePath();
 
   try {
     const raw = await readFile(target, "utf8");
-    const parsed = JSON.parse(raw) as WorkspaceSnapshot;
+    const parsedRaw = JSON.parse(raw) as WorkspaceSnapshot & {
+      milestones?: WorkspaceSnapshot["milestones"];
+    };
+    const parsed = normalizeSnapshot(parsedRaw as WorkspaceSnapshot);
 
     if (parsed.user.id === userId) {
-      return parsed;
+      if (Array.isArray(parsedRaw.milestones)) {
+        return parsed;
+      }
+
+      const seeded = createSeedSnapshot(userId);
+      await writeDemoSnapshot(seeded);
+      return seeded;
     }
   } catch {
     // Seed below.
@@ -36,5 +56,5 @@ export async function writeDemoSnapshot(snapshot: WorkspaceSnapshot) {
   const target = storePath();
 
   await mkdir(path.dirname(target), { recursive: true });
-  await writeFile(target, JSON.stringify(snapshot, null, 2));
+  await writeFile(target, JSON.stringify(normalizeSnapshot(snapshot), null, 2));
 }
