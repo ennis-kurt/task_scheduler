@@ -6,6 +6,7 @@ import { getDb } from "@/db";
 import {
   areas,
   events,
+  milestones,
   projects,
   tags,
   taskBlocks,
@@ -21,7 +22,9 @@ import type {
   AppUserRecord,
   AreaRecord,
   EventRecord,
+  MilestoneRecord,
   NewEventInput,
+  NewMilestoneInput,
   NewTaskBlockInput,
   NewTaskInput,
   NewTaxonomyInput,
@@ -32,6 +35,7 @@ import type {
   TaskRecord,
   TaskTagRecord,
   UpdateEventInput,
+  UpdateMilestoneInput,
   UpdateSettingsInput,
   UpdateTaskBlockInput,
   UpdateTaskInput,
@@ -130,6 +134,20 @@ function mapProject(record: typeof projects.$inferSelect): ProjectRecord {
   };
 }
 
+function mapMilestone(record: typeof milestones.$inferSelect): MilestoneRecord {
+  return {
+    id: record.id,
+    userId: record.userId,
+    projectId: record.projectId,
+    name: record.name,
+    description: record.description,
+    startDate: iso(record.startDate)!,
+    deadline: iso(record.deadline)!,
+    createdAt: iso(record.createdAt)!,
+    updatedAt: iso(record.updatedAt)!,
+  };
+}
+
 function mapTag(record: typeof tags.$inferSelect): TagRecord {
   return {
     id: record.id,
@@ -157,6 +175,7 @@ function mapTask(record: typeof tasks.$inferSelect): TaskRecord {
     completedAt: iso(record.completedAt),
     areaId: record.areaId,
     projectId: record.projectId,
+    milestoneId: record.milestoneId,
     recurrence: (record.recurrence ?? null) as TaskRecord["recurrence"],
     createdAt: iso(record.createdAt)!,
     updatedAt: iso(record.updatedAt)!,
@@ -286,6 +305,23 @@ async function upsertPrimaryBlock(
   }
 }
 
+async function resolveMilestoneProject(
+  milestoneId?: string | null,
+): Promise<MilestoneRecord | null> {
+  if (!milestoneId) {
+    return null;
+  }
+
+  const db = getDb();
+  const [record] = await db
+    .select()
+    .from(milestones)
+    .where(eq(milestones.id, milestoneId))
+    .limit(1);
+
+  return record ? mapMilestone(record) : null;
+}
+
 export const databaseRepository = {
   async getWorkspace(userId: string): Promise<WorkspaceSnapshot> {
     await ensureDbUser(userId);
@@ -297,10 +333,11 @@ export const databaseRepository = {
       .from(userSettings)
       .where(eq(userSettings.userId, userId))
       .limit(1);
-    const [areaRows, projectRows, tagRows, taskRows, blockRows, eventRows] =
+    const [areaRows, projectRows, milestoneRows, tagRows, taskRows, blockRows, eventRows] =
       await Promise.all([
         db.select().from(areas).where(eq(areas.userId, userId)),
         db.select().from(projects).where(eq(projects.userId, userId)),
+        db.select().from(milestones).where(eq(milestones.userId, userId)),
         db.select().from(tags).where(eq(tags.userId, userId)),
         db.select().from(tasks).where(eq(tasks.userId, userId)),
         db.select().from(taskBlocks).where(eq(taskBlocks.userId, userId)),
@@ -322,6 +359,7 @@ export const databaseRepository = {
       settings: mapSettings(settingsRecord),
       areas: areaRows.map(mapArea),
       projects: projectRows.map(mapProject),
+      milestones: milestoneRows.map(mapMilestone),
       tags: tagRows.map(mapTag),
       tasks: taskRows.map(mapTask),
       taskBlocks: blockRows.map(mapTaskBlock),
@@ -335,6 +373,7 @@ export const databaseRepository = {
     await ensureDbUser(userId);
     const db = getDb();
     const taskId = id("task");
+    const linkedMilestone = await resolveMilestoneProject(input.milestoneId);
     const syncedEstimate =
       input.estimatedMinutes ??
       (input.startsAt && input.endsAt
@@ -355,7 +394,8 @@ export const databaseRepository = {
       status: "todo",
       completedAt: null,
       areaId: input.areaId ?? null,
-      projectId: input.projectId ?? null,
+      projectId: linkedMilestone?.projectId ?? input.projectId ?? null,
+      milestoneId: linkedMilestone?.id ?? null,
       recurrence: input.recurrence ?? null,
       createdAt: now(),
       updatedAt: now(),
@@ -371,6 +411,10 @@ export const databaseRepository = {
   async updateTask(userId: string, taskId: string, input: UpdateTaskInput) {
     await ensureDbUser(userId);
     const db = getDb();
+    const linkedMilestone =
+      input.milestoneId === undefined
+        ? null
+        : await resolveMilestoneProject(input.milestoneId);
     const syncedEstimate =
       input.estimatedMinutes ??
       (input.startsAt && input.endsAt
@@ -398,7 +442,14 @@ export const databaseRepository = {
                 : now()
               : null,
         areaId: input.areaId,
-        projectId: input.projectId,
+        projectId:
+          input.milestoneId === undefined
+            ? input.projectId
+            : linkedMilestone?.projectId ?? input.projectId ?? null,
+        milestoneId:
+          input.milestoneId === undefined
+            ? undefined
+            : linkedMilestone?.id ?? null,
         recurrence: input.recurrence,
         updatedAt: now(),
       })
@@ -581,6 +632,79 @@ export const databaseRepository = {
 
     const [record] = await db.select().from(projects).where(eq(projects.id, projectId)).limit(1);
     return mapProject(record);
+  },
+
+  async createMilestone(userId: string, input: NewMilestoneInput) {
+    await ensureDbUser(userId);
+    const db = getDb();
+    const milestoneId = id("milestone");
+
+    await db.insert(milestones).values({
+      id: milestoneId,
+      userId,
+      projectId: input.projectId,
+      name: input.name,
+      description: input.description ?? "",
+      startDate: new Date(input.startDate),
+      deadline: new Date(input.deadline),
+      createdAt: now(),
+      updatedAt: now(),
+    });
+
+    const [record] = await db
+      .select()
+      .from(milestones)
+      .where(eq(milestones.id, milestoneId))
+      .limit(1);
+    return mapMilestone(record);
+  },
+
+  async updateMilestone(userId: string, milestoneId: string, input: UpdateMilestoneInput) {
+    await ensureDbUser(userId);
+    const db = getDb();
+
+    await db
+      .update(milestones)
+      .set({
+        projectId: input.projectId,
+        name: input.name,
+        description: input.description,
+        startDate: input.startDate ? new Date(input.startDate) : undefined,
+        deadline: input.deadline ? new Date(input.deadline) : undefined,
+        updatedAt: now(),
+      })
+      .where(and(eq(milestones.id, milestoneId), eq(milestones.userId, userId)));
+
+    if (input.projectId) {
+      await db
+        .update(tasks)
+        .set({
+          projectId: input.projectId,
+          updatedAt: now(),
+        })
+        .where(and(eq(tasks.milestoneId, milestoneId), eq(tasks.userId, userId)));
+    }
+
+    const [record] = await db
+      .select()
+      .from(milestones)
+      .where(eq(milestones.id, milestoneId))
+      .limit(1);
+
+    if (!record) {
+      throw new Error("NOT_FOUND");
+    }
+
+    return mapMilestone(record);
+  },
+
+  async deleteMilestone(userId: string, milestoneId: string) {
+    await ensureDbUser(userId);
+    const db = getDb();
+    await db
+      .delete(milestones)
+      .where(and(eq(milestones.id, milestoneId), eq(milestones.userId, userId)));
+    return { ok: true };
   },
 
   async createTag(userId: string, input: NewTaxonomyInput) {

@@ -11,6 +11,7 @@ import {
 import { DEFAULT_SETTINGS, SAVED_FILTERS } from "@/lib/planner/constants";
 import { getSessionContext } from "@/lib/auth";
 import { buildDefaultRange, calculateMinutes, expandRecurrence } from "@/lib/planner/date";
+import { buildProjectPlans } from "@/lib/planner/project-planning";
 import { plannerRepository } from "@/lib/planner/repository";
 import type {
   PlannerCalendarItem,
@@ -42,6 +43,8 @@ export async function getInitialPlannerPayload(range?: PlannerRange) {
     ...task,
     area: workspace.areas.find((area) => area.id === task.areaId) ?? null,
     project: workspace.projects.find((project) => project.id === task.projectId) ?? null,
+    milestone:
+      workspace.milestones.find((milestone) => milestone.id === task.milestoneId) ?? null,
     tags: workspace.tags.filter((tag) =>
       workspace.taskTags.some(
         (taskTag) => taskTag.taskId === task.id && taskTag.tagId === tag.id,
@@ -106,6 +109,7 @@ export async function getInitialPlannerPayload(range?: PlannerRange) {
   const scheduledItems = [...scheduledTasks, ...scheduledEvents].sort((left, right) =>
     left.start.localeCompare(right.start),
   );
+  const projectPlans = buildProjectPlans(workspace.projects, workspace.milestones, tasks);
   const unscheduledTasks = tasks.filter((task) => !task.hasBlock && task.status !== "done");
   const today = new Date();
   const todayStart = startOfDay(today);
@@ -170,6 +174,8 @@ export async function getInitialPlannerPayload(range?: PlannerRange) {
     settings,
     areas: workspace.areas,
     projects: workspace.projects,
+    milestones: workspace.milestones,
+    projectPlans,
     tags: workspace.tags,
     events: workspace.events,
     tasks,

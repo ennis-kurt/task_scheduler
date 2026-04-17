@@ -59,6 +59,18 @@ export type ProjectRecord = {
   updatedAt: string;
 };
 
+export type MilestoneRecord = {
+  id: string;
+  userId: string;
+  projectId: string;
+  name: string;
+  description: string;
+  startDate: string;
+  deadline: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type TagRecord = {
   id: string;
   userId: string;
@@ -83,6 +95,7 @@ export type TaskRecord = {
   completedAt: string | null;
   areaId: string | null;
   projectId: string | null;
+  milestoneId: string | null;
   recurrence: RecurrenceRule | null;
   createdAt: string;
   updatedAt: string;
@@ -131,6 +144,7 @@ export type WorkspaceSnapshot = {
   settings: UserSettingsRecord;
   areas: AreaRecord[];
   projects: ProjectRecord[];
+  milestones: MilestoneRecord[];
   tags: TagRecord[];
   tasks: TaskRecord[];
   taskBlocks: TaskBlockRecord[];
@@ -142,6 +156,7 @@ export type WorkspaceSnapshot = {
 export type PlannerTask = TaskRecord & {
   area: AreaRecord | null;
   project: ProjectRecord | null;
+  milestone: MilestoneRecord | null;
   tags: TagRecord[];
   checklist: TaskChecklistItemRecord[];
   hasBlock: boolean;
@@ -186,6 +201,54 @@ export type SavedFilter = {
   description: string;
 };
 
+export type MilestoneHealth = "not_started" | "on_track" | "at_risk" | "done";
+
+export type PlannerMilestone = MilestoneRecord & {
+  project: ProjectRecord | null;
+  tasks: PlannerTask[];
+  completionPercentage: number;
+  completedTaskCount: number;
+  totalTaskCount: number;
+  completedMinutes: number;
+  totalMinutes: number;
+  remainingMinutes: number;
+  health: MilestoneHealth;
+};
+
+export type ProjectBurndownPoint = {
+  date: string;
+  remainingMinutes: number;
+  idealRemainingMinutes: number;
+  completedMinutes: number;
+};
+
+export type ProjectStatusBreakdown = {
+  status: TaskStatus;
+  label: string;
+  count: number;
+  minutes: number;
+};
+
+export type ProjectPlan = {
+  project: ProjectRecord;
+  milestones: PlannerMilestone[];
+  standaloneTasks: PlannerTask[];
+  tasks: PlannerTask[];
+  completionPercentage: number;
+  completedTaskCount: number;
+  totalTaskCount: number;
+  completedMinutes: number;
+  totalMinutes: number;
+  remainingMinutes: number;
+  statusBreakdown: ProjectStatusBreakdown[];
+  burndown: ProjectBurndownPoint[];
+  scheduleRange: {
+    start: string;
+    end: string;
+  };
+  health: Exclude<MilestoneHealth, "not_started">;
+};
+
 export type PlannerPayload = {
   generatedAt: string;
   mode: "clerk" | "demo";
@@ -193,6 +256,8 @@ export type PlannerPayload = {
   settings: UserSettingsRecord;
   areas: AreaRecord[];
   projects: ProjectRecord[];
+  milestones: MilestoneRecord[];
+  projectPlans: ProjectPlan[];
   tags: TagRecord[];
   events: EventRecord[];
   tasks: PlannerTask[];
@@ -222,6 +287,7 @@ export type NewTaskInput = {
   preferredWindowEnd?: string | null;
   areaId?: string | null;
   projectId?: string | null;
+  milestoneId?: string | null;
   tagIds?: string[];
   checklist?: Array<{
     id?: string;
@@ -237,6 +303,16 @@ export type UpdateTaskInput = Partial<NewTaskInput> & {
   status?: TaskStatus;
   completedAt?: string | null;
 };
+
+export type NewMilestoneInput = {
+  projectId: string;
+  name: string;
+  description?: string;
+  startDate: string;
+  deadline: string;
+};
+
+export type UpdateMilestoneInput = Partial<NewMilestoneInput>;
 
 export type NewTaskBlockInput = {
   taskId: string;
