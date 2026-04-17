@@ -222,9 +222,9 @@ function ChartCard({
   children: ReactNode;
 }) {
   return (
-    <article className="grid gap-4 rounded-[24px] border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[var(--shadow-soft)]">
-      <div className="flex items-start justify-between gap-3">
-        <div>
+    <article className="grid min-w-0 gap-4 rounded-[24px] border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[var(--shadow-soft)]">
+      <div className="flex min-w-0 items-start justify-between gap-3">
+        <div className="min-w-0">
           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
             {title}
           </p>
@@ -585,7 +585,7 @@ export function ProjectPlanningModule({
   }));
 
   return (
-    <section className="relative grid gap-5">
+    <section className="relative grid min-w-0 gap-5">
       <MilestoneComposer
         open={composerOpen}
         projectPlans={projectPlans}
@@ -594,9 +594,9 @@ export function ProjectPlanningModule({
         onSubmit={onCreateMilestone}
       />
 
-      <div className="rounded-[28px] border border-[var(--border)] bg-[var(--surface)] p-5 shadow-[var(--shadow-soft)]">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
+      <div className="min-w-0 rounded-[28px] border border-[var(--border)] bg-[var(--surface)] p-5 shadow-[var(--shadow-soft)]">
+        <div className="flex min-w-0 flex-wrap items-start justify-between gap-4">
+          <div className="min-w-0">
             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
               Project Planning
             </p>
@@ -657,13 +657,13 @@ export function ProjectPlanningModule({
         </div>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[1.1fr_1.1fr_1fr_1fr]">
+      <div className="grid min-w-0 gap-4 md:grid-cols-2 2xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,1fr)]">
         <ChartCard
           title="Overall Progress"
           caption="Weighted by estimated task effort across the active project."
           icon={<Target className="h-4 w-4" />}
         >
-          <div className="grid items-center gap-4 md:grid-cols-[172px_minmax(0,1fr)]">
+          <div className="grid min-w-0 items-center gap-4 md:grid-cols-[172px_minmax(0,1fr)]">
             <div className="relative h-[172px]">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
@@ -716,7 +716,7 @@ export function ProjectPlanningModule({
           caption="See how work is distributed across to-do, active, and done states."
           icon={<CheckCircle2 className="h-4 w-4" />}
         >
-          <div className="grid items-center gap-4 md:grid-cols-[170px_minmax(0,1fr)]">
+          <div className="grid min-w-0 items-center gap-4 md:grid-cols-[170px_minmax(0,1fr)]">
             <div className="h-[168px]">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
@@ -842,7 +842,7 @@ export function ProjectPlanningModule({
         </ChartCard>
       </div>
 
-      <article className="rounded-[28px] border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[var(--shadow-soft)] sm:p-5">
+      <article className="min-w-0 rounded-[28px] border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[var(--shadow-soft)] sm:p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
@@ -866,7 +866,7 @@ export function ProjectPlanningModule({
           </div>
         </div>
 
-        <div className="mt-5 overflow-x-auto rounded-[24px] border border-[var(--border)] bg-[var(--surface-muted)]">
+        <div className="mt-5 w-full max-w-full overflow-x-auto rounded-[24px] border border-[var(--border)] bg-[var(--surface-muted)]">
           <div style={{ width: LABEL_WIDTH + timelineWidth }} className="min-w-full">
             <div
               className="sticky top-0 z-10 grid border-b border-[var(--border)] bg-[var(--surface)]"
@@ -1133,8 +1133,8 @@ export function ProjectPlanningModule({
         </div>
       </article>
 
-      <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
-        <article className="grid gap-3 rounded-[24px] border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[var(--shadow-soft)]">
+      <div className="grid min-w-0 gap-4 2xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
+        <article className="grid min-w-0 gap-3 rounded-[24px] border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[var(--shadow-soft)]">
           <div className="flex items-start justify-between gap-4">
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
@@ -1165,7 +1165,7 @@ export function ProjectPlanningModule({
           )}
         </article>
 
-        <article className="grid gap-3 rounded-[24px] border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[var(--shadow-soft)]">
+        <article className="grid min-w-0 gap-3 rounded-[24px] border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[var(--shadow-soft)]">
           <div className="flex items-start justify-between gap-4">
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
