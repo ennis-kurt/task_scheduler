@@ -5,6 +5,8 @@ import { env } from "@/lib/env";
 import { createSeedSnapshot } from "@/lib/planner/seed";
 import type { WorkspaceSnapshot } from "@/lib/planner/types";
 
+const volatileSnapshots = new Map<string, WorkspaceSnapshot>();
+
 function storePath() {
   return path.join(
     process.cwd(),
@@ -24,7 +26,28 @@ function normalizeSnapshot(snapshot: WorkspaceSnapshot): WorkspaceSnapshot {
   };
 }
 
+function cloneSnapshot(snapshot: WorkspaceSnapshot): WorkspaceSnapshot {
+  return JSON.parse(JSON.stringify(normalizeSnapshot(snapshot))) as WorkspaceSnapshot;
+}
+
+function shouldUseVolatileStore(error?: unknown) {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+
+  return (
+    process.env.VERCEL === "1" ||
+    code === "EROFS" ||
+    code === "EACCES" ||
+    code === "EPERM"
+  );
+}
+
 export async function readDemoSnapshot(userId = "demo-user") {
+  const volatile = volatileSnapshots.get(userId);
+
+  if (volatile) {
+    return cloneSnapshot(volatile);
+  }
+
   const target = storePath();
 
   try {
@@ -41,7 +64,7 @@ export async function readDemoSnapshot(userId = "demo-user") {
 
       const seeded = createSeedSnapshot(userId);
       await writeDemoSnapshot(seeded);
-      return seeded;
+      return cloneSnapshot(seeded);
     }
   } catch {
     // Seed below.
@@ -49,12 +72,22 @@ export async function readDemoSnapshot(userId = "demo-user") {
 
   const seeded = createSeedSnapshot(userId);
   await writeDemoSnapshot(seeded);
-  return seeded;
+  return cloneSnapshot(seeded);
 }
 
 export async function writeDemoSnapshot(snapshot: WorkspaceSnapshot) {
+  const normalized = cloneSnapshot(snapshot);
+  volatileSnapshots.set(normalized.user.id, normalized);
   const target = storePath();
 
-  await mkdir(path.dirname(target), { recursive: true });
-  await writeFile(target, JSON.stringify(normalizeSnapshot(snapshot), null, 2));
+  try {
+    await mkdir(path.dirname(target), { recursive: true });
+    await writeFile(target, JSON.stringify(normalized, null, 2));
+  } catch (error) {
+    if (shouldUseVolatileStore(error)) {
+      return;
+    }
+
+    throw error;
+  }
 }
