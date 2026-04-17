@@ -4,9 +4,10 @@ export type PreferredTimeBand =
   | "morning"
   | "afternoon"
   | "evening";
-export type TaskStatus = "todo" | "done";
+export type TaskStatus = "todo" | "in_progress" | "done";
 export type PlannerItemSource = "task" | "event";
 export type PlannerView = "timeGridWeek" | "timeGridDay" | "listDay";
+export type PlannerSurface = "week" | "day" | "agenda";
 
 export type RecurrenceRule = {
   frequency: "none" | "daily" | "weekly" | "monthly" | "weekdays";
@@ -144,6 +145,11 @@ export type PlannerTask = TaskRecord & {
   tags: TagRecord[];
   checklist: TaskChecklistItemRecord[];
   hasBlock: boolean;
+  primaryBlock: {
+    id: string;
+    startsAt: string;
+    endsAt: string;
+  } | null;
 };
 
 export type PlannerCalendarItem = {
@@ -191,6 +197,7 @@ export type PlannerPayload = {
   events: EventRecord[];
   tasks: PlannerTask[];
   unscheduledTasks: PlannerTask[];
+  overdueTasks: PlannerTask[];
   scheduledItems: PlannerCalendarItem[];
   capacity: DayCapacity[];
   overdueCount: number;

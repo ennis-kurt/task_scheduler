@@ -7,46 +7,71 @@ import interactionPlugin, {
   type EventReceiveArg,
   type EventResizeDoneArg,
 } from "@fullcalendar/interaction";
-import listPlugin from "@fullcalendar/list";
 import timeGridPlugin from "@fullcalendar/timegrid";
 import type {
   DateSelectArg,
-  DatesSetArg,
   EventClickArg,
+  EventContentArg,
   EventDropArg,
 } from "@fullcalendar/core";
 import {
+  ChevronLeft,
+  ChevronRight,
   CalendarClock,
-  CircleAlert,
-  Clock3,
+  ChevronDown,
+  Command,
   GripVertical,
-  ListTodo,
+  Monitor,
+  Moon,
   Plus,
   Search,
   Settings2,
-  Sparkles,
+  Sun,
   Trash2,
+  X,
 } from "lucide-react";
 import {
   useDeferredValue,
   useEffect,
+  useEffectEvent,
+  useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   useTransition,
 } from "react";
-import type { ReactNode } from "react";
-import { format, isBefore, isToday, parseISO } from "date-fns";
+import type { DragEvent as ReactDragEvent, ReactNode } from "react";
+import {
+  addDays,
+  addMinutes,
+  differenceInMinutes,
+  endOfDay,
+  format,
+  isBefore,
+  isSameDay,
+  parseISO,
+  startOfDay,
+  startOfWeek,
+} from "date-fns";
 import { toast } from "sonner";
+import { useTheme } from "next-themes";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Calendar } from "@/components/ui/calendar";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { PRIORITIES, TIME_BANDS } from "@/lib/planner/constants";
-import { toDateTimeInput, todayDateString } from "@/lib/planner/date";
+import { PRIORITIES } from "@/lib/planner/constants";
+import {
+  buildDefaultEventWindow,
+  calculateMinutes,
+  toDateTimeInput,
+  todayDateString,
+} from "@/lib/planner/date";
 import type {
   DayCapacity,
   EventRecord,
@@ -54,11 +79,11 @@ import type {
   PlannerCalendarItem,
   PlannerPayload,
   PlannerRange,
+  PlannerSurface,
   PlannerTask,
-  PlannerView,
-  PreferredTimeBand,
   Priority,
   RecurrenceRule,
+  TaskStatus,
   UpdateSettingsInput,
 } from "@/lib/planner/types";
 import { cn } from "@/lib/utils";
@@ -90,12 +115,204 @@ const PRIORITY_LABELS: Record<Priority, string> = {
   critical: "Critical",
 };
 
-const TIME_BAND_LABELS: Record<PreferredTimeBand, string> = {
-  anytime: "Anytime",
-  morning: "Morning",
-  afternoon: "Afternoon",
-  evening: "Evening",
+const SURFACE_LABELS: Record<PlannerSurface, string> = {
+  week: "Week",
+  day: "Day",
+  agenda: "Agenda",
 };
+
+const BOARD_COLUMNS: Array<{
+  id: TaskStatus;
+  label: string;
+  description: string;
+}> = [
+  {
+    id: "todo",
+    label: "To do",
+    description: "Ready to place and sequence.",
+  },
+  {
+    id: "in_progress",
+    label: "In progress",
+    description: "Already moving this week.",
+  },
+  {
+    id: "done",
+    label: "Done",
+    description: "Closed loops for this plan.",
+  },
+];
+
+function ThemeToggle() {
+  const { theme, resolvedTheme, setTheme } = useTheme();
+  const [open, setOpen] = useState(false);
+  const mounted = useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false,
+  );
+
+  if (!mounted) {
+    return (
+      <Button
+        variant="outline"
+        size="icon"
+        className="h-9 w-9 rounded-full"
+        title="Theme settings"
+      >
+        <Monitor className="h-4 w-4" />
+        <span className="sr-only">Theme settings</span>
+      </Button>
+    );
+  }
+
+  const selectedTheme = theme ?? "system";
+  const activeVisualTheme =
+    selectedTheme === "system" ? resolvedTheme ?? "light" : selectedTheme;
+  const TriggerIcon =
+    selectedTheme === "system" ? Monitor : activeVisualTheme === "dark" ? Moon : Sun;
+
+  const options = [
+    {
+      value: "system" as const,
+      label: "System",
+      description: `Following ${resolvedTheme ?? "light"}`,
+      icon: Monitor,
+    },
+    {
+      value: "light" as const,
+      label: "Light",
+      description: "Always use the light theme",
+      icon: Sun,
+    },
+    {
+      value: "dark" as const,
+      label: "Dark",
+      description: "Always use the dark theme",
+      icon: Moon,
+    },
+  ];
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          variant="outline"
+          size="icon"
+          className="h-9 w-9 rounded-full"
+          title={`Theme: ${selectedTheme}`}
+        >
+          <TriggerIcon className="h-4 w-4" />
+          <span className="sr-only">Change theme</span>
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="end"
+        className="w-[192px] rounded-[22px] border border-[var(--border-strong)] bg-[var(--surface-elevated)] p-1.5 shadow-[var(--shadow-soft)]"
+      >
+        <div className="grid gap-1">
+          {options.map((option) => {
+            const OptionIcon = option.icon;
+            const active = selectedTheme === option.value;
+
+            return (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => {
+                  setTheme(option.value);
+                  setOpen(false);
+                }}
+                className={cn(
+                  "flex w-full items-center gap-3 rounded-[18px] px-3 py-2 text-left transition",
+                  active
+                    ? "bg-[var(--accent-soft)] text-[var(--foreground-strong)]"
+                    : "text-[var(--foreground)] hover:bg-[var(--button-ghost-hover)]",
+                )}
+              >
+                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[var(--surface-elevated)] text-[var(--muted-foreground)]">
+                  <OptionIcon className="h-4 w-4" />
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-sm font-medium">{option.label}</span>
+                  <span className="block truncate text-[11px] text-[var(--muted-foreground)]">
+                    {option.description}
+                  </span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+type QueueMode = "unscheduled" | "overdue";
+
+function DateTimePicker({
+  value,
+  onChange,
+  className,
+}: {
+  value: string;
+  onChange: (val: string) => void;
+  className?: string;
+}) {
+  const dt = value ? parseISO(value) : undefined;
+  const hasValidDate = dt && !isNaN(dt.getTime());
+
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button
+          variant="outline"
+          className={cn(
+            "h-10 w-full justify-start bg-[var(--surface-elevated)] px-3 py-2 text-left font-normal",
+            !hasValidDate && "text-[var(--muted-foreground)]",
+            className,
+          )}
+        >
+          <CalendarClock className="mr-2 h-4 w-4 opacity-70" />
+          {hasValidDate ? format(dt, "MMM d, yyyy - h:mm a") : <span>Pick date and time</span>}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        className="z-50 my-1 w-auto overflow-hidden rounded-[22px] border border-[var(--border-strong)] bg-[var(--surface-elevated)] p-0 shadow-[var(--shadow-soft)]"
+      >
+        <Calendar
+          mode="single"
+          selected={hasValidDate ? dt : undefined}
+          onSelect={(date) => {
+            if (date) {
+               const oldTime = hasValidDate ? format(dt, "HH:mm") : "12:00";
+               const newStr = format(date, "yyyy-MM-dd") + "T" + oldTime;
+               onChange(newStr);
+            }
+          }}
+          initialFocus
+        />
+        <div className="border-t border-[var(--border)] p-3">
+           <Input 
+             type="time" 
+             value={hasValidDate ? format(dt, "HH:mm") : ""}
+             onChange={(e) => {
+               const time = e.target.value;
+               if (hasValidDate && time) {
+                 const newStr = format(dt, "yyyy-MM-dd") + "T" + time;
+                 onChange(newStr);
+               } else if (time) {
+                 const newStr = format(new Date(), "yyyy-MM-dd") + "T" + time;
+                 onChange(newStr);
+               }
+             }}
+           />
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 function formatMinutes(minutes: number) {
   if (minutes <= 0) {
@@ -118,15 +335,46 @@ function formatMinutes(minutes: number) {
 
 function priorityClass(priority?: Priority) {
   if (priority === "critical") {
-    return "border-[rgba(190,24,93,0.22)] bg-[rgba(244,63,94,0.14)] text-[rgb(159,18,57)]";
+    return "border-transparent bg-[var(--danger-soft)] text-[var(--danger)]";
   }
   if (priority === "high") {
-    return "border-[rgba(217,119,6,0.22)] bg-[rgba(245,158,11,0.14)] text-[rgb(146,64,14)]";
+    return "border-transparent bg-[rgba(245,158,11,0.14)] text-[color:#b45309] dark:text-[color:#fbbf24]";
   }
   if (priority === "low") {
-    return "border-[rgba(51,65,85,0.16)] bg-[rgba(148,163,184,0.14)] text-[rgb(51,65,85)]";
+    return "border-transparent bg-[var(--panel-subtle)] text-[var(--muted-foreground)]";
   }
-  return "border-[rgba(15,118,110,0.22)] bg-[rgba(45,212,191,0.16)] text-[rgb(15,118,110)]";
+  return "border-transparent bg-[var(--accent-soft)] text-[var(--foreground-strong)]";
+}
+
+function renderCalendarEventContent(info: EventContentArg) {
+  const source = info.event.extendedProps.source as PlannerCalendarItem["source"] | undefined;
+  const durationMinutes =
+    info.event.start && info.event.end
+      ? Math.max(0, differenceInMinutes(info.event.end, info.event.start))
+      : 0;
+  const compact = durationMinutes > 0 && durationMinutes <= 30;
+
+  return (
+    <div
+      className={cn(
+        "planner-calendar-event",
+        source === "task" ? "is-task" : "is-event",
+        compact && "is-compact",
+      )}
+    >
+      <div className="planner-calendar-event__inner">
+        <span className="planner-calendar-event__dot" aria-hidden />
+        <div className="planner-calendar-event__body">
+          {!compact && info.timeText ? (
+            <span className="planner-calendar-event__time">{info.timeText}</span>
+          ) : null}
+          <span className="planner-calendar-event__title" title={info.event.title}>
+            {info.event.title}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function recurrenceLabel(rule: RecurrenceRule | null | undefined) {
@@ -146,6 +394,182 @@ function recurrenceLabel(rule: RecurrenceRule | null | undefined) {
     default:
       return "Repeats";
   }
+}
+
+function buildSurfaceRange(
+  surface: PlannerSurface,
+  focusedDate: string,
+  weekStartsOn: number,
+): PlannerRange {
+  const focus = parseISO(`${focusedDate}T12:00:00`);
+
+  if (surface === "day") {
+    return {
+      start: startOfDay(focus).toISOString(),
+      end: endOfDay(focus).toISOString(),
+    };
+  }
+
+  const weekStart = startOfWeek(focus, {
+    weekStartsOn: weekStartsOn as 0 | 1 | 2 | 3 | 4 | 5 | 6,
+  });
+  const weekEnd = addDays(weekStart, 6);
+
+  return {
+    start: weekStart.toISOString(),
+    end: endOfDay(weekEnd).toISOString(),
+  };
+}
+
+function sameRange(left: PlannerRange, right: PlannerRange) {
+  return left.start === right.start && left.end === right.end;
+}
+
+function shiftFocusedDate(
+  surface: PlannerSurface,
+  focusedDate: string,
+  direction: "prev" | "next",
+) {
+  const delta = surface === "day" ? 1 : 7;
+  const base = parseISO(`${focusedDate}T12:00:00`);
+  const next = addDays(base, direction === "prev" ? -delta : delta);
+  return format(next, "yyyy-MM-dd");
+}
+
+function isTaskOverdue(task: PlannerTask, reference = new Date()) {
+  if (task.status === "done") {
+    return false;
+  }
+
+  const todayStart = startOfDay(reference);
+  const dueOverdue =
+    task.dueAt != null && isBefore(parseISO(task.dueAt), todayStart);
+  const scheduledOverdue =
+    task.primaryBlock != null &&
+    isBefore(parseISO(task.primaryBlock.endsAt), todayStart);
+
+  return dueOverdue || scheduledOverdue;
+}
+
+function deriveTaskCollections(tasks: PlannerTask[]) {
+  const overdueTasks = tasks.filter((task) => isTaskOverdue(task));
+  const unscheduledTasks = tasks.filter((task) => !task.hasBlock && task.status !== "done");
+  const todayCount = tasks.filter(
+    (task) =>
+      task.status !== "done" &&
+      task.dueAt != null &&
+      isSameDay(parseISO(task.dueAt), new Date()),
+  ).length;
+
+  return {
+    overdueTasks,
+    unscheduledTasks,
+    overdueCount: overdueTasks.length,
+    unscheduledCount: unscheduledTasks.length,
+    todayCount,
+  };
+}
+
+function taskMatchesQuery(task: PlannerTask, query: string) {
+  if (!query) {
+    return true;
+  }
+
+  const needle = query.toLowerCase();
+  return [
+    task.title,
+    task.notes,
+    task.project?.name ?? "",
+    task.area?.name ?? "",
+    ...task.tags.map((tag) => tag.name),
+  ]
+    .join(" ")
+    .toLowerCase()
+    .includes(needle);
+}
+
+function taskFallsInRange(task: PlannerTask, range: PlannerRange) {
+  const rangeStart = parseISO(range.start);
+  const rangeEnd = parseISO(range.end);
+  const inRange = (value: string | null | undefined) =>
+    value != null &&
+    !isBefore(parseISO(value), rangeStart) &&
+    !isBefore(rangeEnd, parseISO(value));
+
+  if (task.status === "done") {
+    return (
+      inRange(task.completedAt) ||
+      inRange(task.primaryBlock?.startsAt) ||
+      inRange(task.dueAt)
+    );
+  }
+
+  return (
+    inRange(task.primaryBlock?.startsAt) ||
+    inRange(task.dueAt) ||
+    (isTaskOverdue(task, parseISO(range.start)) &&
+      (task.primaryBlock == null ||
+        isBefore(parseISO(task.primaryBlock.startsAt), rangeStart) ||
+        task.dueAt == null ||
+        isBefore(parseISO(task.dueAt), rangeStart)))
+  );
+}
+
+function compareBoardTasks(left: PlannerTask, right: PlannerTask) {
+  const priorityRank: Record<Priority, number> = {
+    critical: 0,
+    high: 1,
+    medium: 2,
+    low: 3,
+  };
+
+  const leftAnchor =
+    left.primaryBlock?.startsAt ?? left.dueAt ?? left.completedAt ?? left.createdAt;
+  const rightAnchor =
+    right.primaryBlock?.startsAt ?? right.dueAt ?? right.completedAt ?? right.createdAt;
+
+  return (
+    priorityRank[left.priority] - priorityRank[right.priority] ||
+    leftAnchor.localeCompare(rightAnchor) ||
+    left.title.localeCompare(right.title)
+  );
+}
+
+function formatSurfaceTitle(surface: PlannerSurface, focusedDate: string, range: PlannerRange) {
+  if (surface === "day") {
+    return format(parseISO(`${focusedDate}T12:00:00`), "EEEE, MMM d");
+  }
+
+  if (surface === "agenda") {
+    return `Agenda for ${format(parseISO(range.start), "MMM d")} - ${format(parseISO(range.end), "MMM d")}`;
+  }
+
+  return `Week of ${format(parseISO(range.start), "MMM d")}`;
+}
+
+function buildTaskItem(
+  task: PlannerTask,
+  sourceId: string,
+  startsAt: string,
+  endsAt: string,
+): PlannerCalendarItem {
+  return {
+    id: `task:${sourceId}:${startsAt}`,
+    sourceId,
+    instanceId: `${sourceId}-${startsAt}`,
+    source: "task",
+    taskId: task.id,
+    title: task.title,
+    start: startsAt,
+    end: endsAt,
+    notes: task.notes,
+    priority: task.priority,
+    status: task.status,
+    areaId: task.areaId,
+    projectId: task.projectId,
+    recurring: false,
+    readOnly: false,
+  };
 }
 
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -169,69 +593,69 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
 
 export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
   const calendarRef = useRef<FullCalendar | null>(null);
-  const externalTasksRef = useRef<HTMLDivElement | null>(null);
+  const queueRef = useRef<HTMLDivElement | null>(null);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
   const [plannerData, setPlannerData] = useState(initialData);
   const [visibleRange, setVisibleRange] = useState(initialRange);
+  const [surface, setSurface] = useState<PlannerSurface>("week");
+  const [focusedDate, setFocusedDate] = useState(todayDateString());
   const [drawerState, setDrawerState] = useState<DrawerState>(null);
   const [quickAddKind, setQuickAddKind] = useState<QuickAddKind>(null);
   const [quickAddDefaults, setQuickAddDefaults] = useState<QuickAddDefaults>({});
-  const [activeView, setActiveView] = useState<PlannerView>("timeGridWeek");
-  const [calendarTitle, setCalendarTitle] = useState("This week");
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
-  const [activeFilter, setActiveFilter] = useState("inbox");
+  const [queueMode, setQueueMode] = useState<QueueMode>("unscheduled");
   const [helpOpen, setHelpOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  const [showWeekends, setShowWeekends] = useState(false);
+  const [popoverOpen, setPopoverOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
 
   const selectedTask =
     drawerState?.type === "task"
       ? plannerData.tasks.find((task) => task.id === drawerState.taskId) ?? null
       : null;
+  const selectedBlock =
+    drawerState?.type === "task"
+      ? plannerData.scheduledItems.find(
+          (item) =>
+            item.source === "task" &&
+            item.sourceId === (drawerState.blockId ?? selectedTask?.primaryBlock?.id),
+        ) ?? null
+      : null;
   const selectedEvent =
     drawerState?.type === "event"
       ? plannerData.events.find((event) => event.id === drawerState.eventId) ?? null
       : null;
-  const selectedBlock =
-    drawerState?.type === "task" && drawerState.blockId
-      ? plannerData.scheduledItems.find(
-          (item) => item.source === "task" && item.sourceId === drawerState.blockId,
-        ) ?? null
-      : null;
 
-  const filteredUnscheduledTasks = plannerData.unscheduledTasks.filter((task) => {
-    const matchesQuery =
-      !deferredQuery ||
-      task.title.toLowerCase().includes(deferredQuery.toLowerCase()) ||
-      task.notes.toLowerCase().includes(deferredQuery.toLowerCase());
+  const surfaceTitle = useMemo(
+    () => formatSurfaceTitle(surface, focusedDate, visibleRange),
+    [focusedDate, surface, visibleRange],
+  );
+  const queueTasks = useMemo(() => {
+    const base =
+      queueMode === "overdue"
+        ? plannerData.overdueTasks
+        : plannerData.unscheduledTasks.filter((task) => !isTaskOverdue(task));
 
-    if (!matchesQuery) {
-      return false;
-    }
-
-    if (activeFilter === "urgent") {
-      return (
-        task.priority === "high" ||
-        task.priority === "critical" ||
-        (task.dueAt && isBefore(parseISO(task.dueAt), parseISO(visibleRange.end)))
-      );
-    }
-
-    if (activeFilter === "deep-work") {
-      return task.estimatedMinutes >= 90;
-    }
-
-    if (activeFilter === "morning") {
-      return task.preferredTimeBand === "morning";
-    }
-
-    return true;
-  });
-
-  const overloadedDays = plannerData.capacity.filter((day) => day.overloaded);
-  const todayCapacity =
-    plannerData.capacity.find((day) => day.date === todayDateString()) ??
-    plannerData.capacity[0];
+    return base
+      .filter((task) => taskMatchesQuery(task, deferredQuery))
+      .sort(compareBoardTasks);
+  }, [deferredQuery, plannerData.overdueTasks, plannerData.unscheduledTasks, queueMode]);
+  const boardTasks = useMemo(
+    () =>
+      plannerData.tasks
+        .filter((task) => taskFallsInRange(task, visibleRange))
+        .sort(compareBoardTasks),
+    [plannerData.tasks, visibleRange],
+  );
+  const boardColumns = BOARD_COLUMNS.map((column) => ({
+    ...column,
+    tasks: boardTasks.filter((task) => task.status === column.id),
+  }));
+  const agendaItems = plannerData.scheduledItems.filter((item) =>
+    isSameDay(parseISO(item.start), parseISO(`${focusedDate}T12:00:00`)),
+  );
 
   async function refreshPlanner(range: PlannerRange = visibleRange) {
     const params = new URLSearchParams({
@@ -241,9 +665,59 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
 
     const nextData = await requestJson<PlannerPayload>(`/api/planner?${params}`);
     setPlannerData(nextData);
+    setVisibleRange(range);
   }
 
-  function optimisticallyScheduleTask(taskId: string, startsAt: string, endsAt: string) {
+  function openQuickAdd(kind: Exclude<QuickAddKind, null>, defaults: QuickAddDefaults = {}) {
+    setQuickAddDefaults(defaults);
+    setQuickAddKind(kind);
+  }
+
+  function moveToSurface(nextSurface: PlannerSurface, nextFocusedDate = focusedDate) {
+    const nextRange = buildSurfaceRange(
+      nextSurface,
+      nextFocusedDate,
+      plannerData.settings.weekStart,
+    );
+
+    setSurface(nextSurface);
+    setFocusedDate(nextFocusedDate);
+
+    if (sameRange(nextRange, visibleRange)) {
+      return;
+    }
+
+    setVisibleRange(nextRange);
+    startTransition(async () => {
+      await refreshPlanner(nextRange);
+    });
+  }
+
+  function navigateSurface(direction: "prev" | "today" | "next") {
+    if (direction === "today") {
+      moveToSurface(surface, todayDateString());
+      return;
+    }
+
+    moveToSurface(surface, shiftFocusedDate(surface, focusedDate, direction));
+  }
+
+  function suggestTimeWindow(durationMinutes: number) {
+    return buildDefaultEventWindow(plannerData.settings, new Date(), {
+      durationMinutes,
+      busyWindows: plannerData.scheduledItems.map((item) => ({
+        startsAt: item.start,
+        endsAt: item.end,
+        })),
+    });
+  }
+
+  function optimisticallyScheduleTask(
+    taskId: string,
+    startsAt: string,
+    endsAt: string,
+    options?: { sourceId?: string },
+  ) {
     setPlannerData((current) => {
       const task = current.tasks.find((item) => item.id === taskId);
 
@@ -251,83 +725,129 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
         return current;
       }
 
-      const scheduledItem: PlannerCalendarItem = {
-        id: `task:temp:${taskId}`,
-        sourceId: `temp-${taskId}`,
-        instanceId: `temp-${taskId}-${startsAt}`,
-        source: "task",
-        taskId,
-        title: task.title,
-        start: startsAt,
-        end: endsAt,
-        notes: task.notes,
-        priority: task.priority,
-        status: task.status,
-        areaId: task.areaId,
-        projectId: task.projectId,
-        recurring: false,
-        readOnly: false,
+      const sourceId = options?.sourceId ?? task.primaryBlock?.id ?? `temp-${taskId}`;
+      const updatedTask: PlannerTask = {
+        ...task,
+        estimatedMinutes: calculateMinutes(startsAt, endsAt),
+        hasBlock: true,
+        primaryBlock: {
+          id: sourceId,
+          startsAt,
+          endsAt,
+        },
       };
+      const nextTasks = current.tasks.map((item) =>
+        item.id === taskId ? updatedTask : item,
+      );
+      const nextCollections = deriveTaskCollections(nextTasks);
 
       return {
         ...current,
-        tasks: current.tasks.map((item) =>
-          item.id === taskId ? { ...item, hasBlock: true } : item,
-        ),
-        unscheduledTasks: current.unscheduledTasks.filter((item) => item.id !== taskId),
+        ...nextCollections,
+        tasks: nextTasks,
         scheduledItems: [
           ...current.scheduledItems.filter((item) => item.taskId !== taskId),
-          scheduledItem,
+          buildTaskItem(updatedTask, sourceId, startsAt, endsAt),
         ].sort((left, right) => left.start.localeCompare(right.start)),
       };
     });
   }
 
-  function optimisticallyMoveCalendarItem(
-    sourceId: string,
-    source: "task" | "event",
-    startsAt: string,
-    endsAt: string,
-  ) {
+  function optimisticallyMoveCalendarItem(sourceId: string, startsAt: string, endsAt: string) {
+    setPlannerData((current) => {
+      const matchingItem = current.scheduledItems.find(
+        (item) => item.source === "task" && item.sourceId === sourceId,
+      );
+
+      if (!matchingItem?.taskId) {
+        return current;
+      }
+
+      const nextTasks = current.tasks.map((task) =>
+        task.id === matchingItem.taskId
+          ? {
+              ...task,
+              estimatedMinutes: calculateMinutes(startsAt, endsAt),
+              hasBlock: true,
+              primaryBlock: {
+                id: sourceId,
+                startsAt,
+                endsAt,
+              },
+            }
+          : task,
+      );
+
+      return {
+        ...current,
+        ...deriveTaskCollections(nextTasks),
+        tasks: nextTasks,
+        scheduledItems: current.scheduledItems.map((item) =>
+          item.source === "task" && item.sourceId === sourceId
+            ? { ...item, start: startsAt, end: endsAt }
+            : item,
+        ),
+      };
+    });
+  }
+
+  function markTaskStatus(taskId: string, status: TaskStatus) {
     setPlannerData((current) => ({
       ...current,
-      scheduledItems: current.scheduledItems.map((item) =>
-        item.source === source && item.sourceId === sourceId
-          ? { ...item, start: startsAt, end: endsAt }
-          : item,
-      ),
+      ...(() => {
+        const completedAt = status === "done" ? new Date().toISOString() : null;
+        const nextTasks = current.tasks.map((task) =>
+          task.id === taskId ? { ...task, status, completedAt } : task,
+        );
+
+        return {
+          ...deriveTaskCollections(nextTasks),
+          tasks: nextTasks,
+          scheduledItems: current.scheduledItems.map((item) =>
+            item.source === "task" && item.taskId === taskId
+              ? { ...item, status }
+              : item,
+          ),
+        };
+      })(),
     }));
   }
 
-  function markTaskStatus(taskId: string, status: "todo" | "done") {
-    setPlannerData((current) => ({
-      ...current,
-      tasks: current.tasks.map((task) =>
-        task.id === taskId
-          ? {
-              ...task,
-              status,
-              completedAt: status === "done" ? new Date().toISOString() : null,
-            }
-          : task,
-      ),
-      unscheduledTasks: current.unscheduledTasks
-        .map((task) =>
-          task.id === taskId
-            ? {
-                ...task,
-                status,
-                completedAt: status === "done" ? new Date().toISOString() : null,
-              }
-            : task,
-        )
-        .filter((task) => task.status !== "done"),
-      scheduledItems: current.scheduledItems.map((item) =>
-        item.source === "task" && item.taskId === taskId
-          ? { ...item, status }
-          : item,
-      ),
-    }));
+  function scheduleTaskIntoSuggestedWindow(task: PlannerTask) {
+    const suggestion = suggestTimeWindow(task.estimatedMinutes);
+    const blockId = task.primaryBlock?.id;
+    optimisticallyScheduleTask(task.id, suggestion.startsAt, suggestion.endsAt, {
+      sourceId: blockId,
+    });
+
+    startTransition(async () => {
+      try {
+        if (blockId) {
+          await requestJson(`/api/task-blocks/${blockId}`, {
+            method: "PATCH",
+            body: JSON.stringify({
+              startsAt: suggestion.startsAt,
+              endsAt: suggestion.endsAt,
+            }),
+          });
+          toast.success("Task rescheduled into the next open slot");
+        } else {
+          await requestJson("/api/task-blocks", {
+            method: "POST",
+            body: JSON.stringify({
+              taskId: task.id,
+              startsAt: suggestion.startsAt,
+              endsAt: suggestion.endsAt,
+            }),
+          });
+          toast.success("Task scheduled for the next open slot");
+        }
+        await refreshPlanner();
+      } catch (error) {
+        await refreshPlanner();
+        toast.error(error instanceof Error ? error.message : "Could not schedule task");
+      }
+    });
   }
 
   useEffect(() => {
@@ -335,12 +855,7 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
 
     const apply = () => {
       setIsMobile(media.matches);
-      setActiveView((current) => {
-        if (media.matches) {
-          return current === "timeGridWeek" ? "listDay" : current;
-        }
-        return current === "listDay" ? "timeGridWeek" : current;
-      });
+      setSurface((current) => (media.matches && current === "week" ? "agenda" : current));
     };
 
     apply();
@@ -351,18 +866,22 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
   useEffect(() => {
     const calendarApi = calendarRef.current?.getApi();
 
-    if (calendarApi && calendarApi.view.type !== activeView) {
-      calendarApi.changeView(activeView);
+    if (!calendarApi) return;
+
+    if (surface === "week") {
+      calendarApi.changeView("timeGridWeek", focusedDate);
+    } else {
+      calendarApi.changeView("timeGridDay", focusedDate);
     }
-  }, [activeView]);
+  }, [focusedDate, surface]);
 
   useEffect(() => {
-    if (!externalTasksRef.current || isMobile) {
+    if (!queueRef.current || isMobile) {
       return;
     }
 
-    const draggable = new Draggable(externalTasksRef.current, {
-      itemSelector: "[data-draggable-task='true']",
+    const draggable = new Draggable(queueRef.current, {
+      itemSelector: "[data-draggable-queue-task='true']",
       eventData(eventEl) {
         const element = eventEl as HTMLElement;
         const duration = Number(element.dataset.duration ?? "60");
@@ -372,6 +891,7 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
           duration: { minutes: duration },
           extendedProps: {
             taskId: element.dataset.taskId,
+            blockId: element.dataset.blockId,
           },
         };
       },
@@ -380,10 +900,9 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
     return () => {
       draggable.destroy();
     };
-  }, [isMobile, plannerData.unscheduledTasks]);
+  }, [isMobile, plannerData.overdueTasks, plannerData.unscheduledTasks, queueMode]);
 
-  useEffect(() => {
-    const keyboardHandler = (event: KeyboardEvent) => {
+  const handleKeyboardEvent = useEffectEvent((event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       const inTextInput =
         target &&
@@ -392,61 +911,109 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
           target.getAttribute("contenteditable") === "true" ||
           target.tagName === "SELECT");
 
+      if (event.key === "Escape") {
+        event.preventDefault();
+        if (quickAddKind) {
+          setQuickAddKind(null);
+          return;
+        }
+
+        if (drawerState) {
+          setDrawerState(null);
+          return;
+        }
+
+        if (helpOpen) {
+          setHelpOpen(false);
+        }
+        return;
+      }
+
+      const usesPlannerShortcut =
+        (event.metaKey || event.ctrlKey) && event.altKey && event.shiftKey;
+
       if (inTextInput) {
         return;
       }
 
-      if (event.key === "n") {
+      if (!usesPlannerShortcut) {
+        return;
+      }
+
+      const key = event.key.toLowerCase();
+
+      if (key === "/") {
+        event.preventDefault();
+        setHelpOpen((current) => !current);
+        return;
+      }
+
+      if (key === "f") {
+        event.preventDefault();
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+        return;
+      }
+
+      if (key === "n") {
         event.preventDefault();
         setQuickAddDefaults({});
         setQuickAddKind("task");
+        return;
       }
 
-      if (event.key === "e") {
+      if (key === "e") {
         event.preventDefault();
         setQuickAddDefaults({});
         setQuickAddKind("event");
+        return;
       }
 
-      if (event.key === "d") {
+      if (key === "d") {
         event.preventDefault();
-        setActiveView("timeGridDay");
+        moveToSurface("day");
+        return;
       }
 
-      if (event.key === "w") {
+      if (key === "w") {
         event.preventDefault();
-        setActiveView("timeGridWeek");
+        moveToSurface("week");
+        return;
       }
 
-      if (event.key === "?") {
+      if (key === "a") {
         event.preventDefault();
-        setHelpOpen((current) => !current);
+        moveToSurface("agenda");
+        return;
       }
+
+      if (key === "t") {
+        event.preventDefault();
+        moveToSurface(surface, todayDateString());
+        return;
+      }
+
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        navigateSurface("prev");
+        return;
+      }
+
+      if (event.key === "ArrowRight") {
+        event.preventDefault();
+        navigateSurface("next");
+        return;
+      }
+    });
+
+  useEffect(() => {
+    const keyboardHandler = (event: KeyboardEvent) => {
+      handleKeyboardEvent(event);
     };
 
     window.addEventListener("keydown", keyboardHandler);
     return () => window.removeEventListener("keydown", keyboardHandler);
   }, []);
-
-  const handleDatesSet = (info: DatesSetArg) => {
-    setCalendarTitle(info.view.title);
-    const nextRange = {
-      start: info.start.toISOString(),
-      end: info.end.toISOString(),
-    };
-
-    if (
-      nextRange.start === visibleRange.start &&
-      nextRange.end === visibleRange.end
-    ) {
-      return;
-    }
-
-    setVisibleRange(nextRange);
-    startTransition(async () => {
-      await refreshPlanner(nextRange);
-    });
-  };
 
   const handleEventClick = (info: EventClickArg) => {
     const source = info.event.extendedProps.source as "task" | "event";
@@ -466,6 +1033,7 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
 
   const handleTaskReceive = (info: EventReceiveArg) => {
     const taskId = info.event.extendedProps.taskId as string | undefined;
+    const blockId = info.event.extendedProps.blockId as string | undefined;
     const startsAt = info.event.start?.toISOString();
     const endsAt = info.event.end?.toISOString();
 
@@ -474,22 +1042,30 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
       return;
     }
 
-    optimisticallyScheduleTask(taskId, startsAt, endsAt);
+    info.event.remove();
+    optimisticallyScheduleTask(taskId, startsAt, endsAt, { sourceId: blockId });
 
     startTransition(async () => {
       try {
-        await requestJson("/api/task-blocks", {
-          method: "POST",
-          body: JSON.stringify({
-            taskId,
-            startsAt,
-            endsAt,
-          }),
-        });
-        toast.success("Task scheduled");
+        if (blockId) {
+          await requestJson(`/api/task-blocks/${blockId}`, {
+            method: "PATCH",
+            body: JSON.stringify({ startsAt, endsAt }),
+          });
+          toast.success("Task rescheduled");
+        } else {
+          await requestJson("/api/task-blocks", {
+            method: "POST",
+            body: JSON.stringify({
+              taskId,
+              startsAt,
+              endsAt,
+            }),
+          });
+          toast.success("Task scheduled");
+        }
         await refreshPlanner();
       } catch (error) {
-        info.revert();
         await refreshPlanner();
         toast.error(error instanceof Error ? error.message : "Could not schedule task");
       }
@@ -507,7 +1083,9 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
       return;
     }
 
-    optimisticallyMoveCalendarItem(sourceId, source, startsAt, endsAt);
+    if (source === "task") {
+      optimisticallyMoveCalendarItem(sourceId, startsAt, endsAt);
+    }
 
     startTransition(async () => {
       try {
@@ -533,11 +1111,10 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
   };
 
   const handleCalendarSelect = (info: DateSelectArg) => {
-    setQuickAddDefaults({
+    openQuickAdd("task", {
       startsAt: info.start.toISOString(),
       endsAt: info.end.toISOString(),
     });
-    setQuickAddKind("task");
   };
 
   const calendarEvents = plannerData.scheduledItems.map((item) => ({
@@ -556,18 +1133,69 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
     ],
   }));
 
+  function handleBoardDrop(status: TaskStatus, event: ReactDragEvent<HTMLElement>) {
+    event.preventDefault();
+    const taskId = event.dataTransfer.getData("text/planner-task-id");
+
+    if (!taskId) {
+      return;
+    }
+
+    markTaskStatus(taskId, status);
+    startTransition(async () => {
+      try {
+        await requestJson(`/api/tasks/${taskId}`, {
+          method: "PATCH",
+          body: JSON.stringify({ status }),
+        });
+        toast.success(
+          status === "done"
+            ? "Task marked done"
+            : status === "in_progress"
+              ? "Task moved to in progress"
+              : "Task moved back to to do",
+        );
+        await refreshPlanner();
+      } catch (error) {
+        await refreshPlanner();
+        toast.error(error instanceof Error ? error.message : "Could not update task");
+      }
+    });
+  }
+
   return (
-    <div className="min-h-screen bg-[var(--surface)]">
-      <header className="sticky top-0 z-20 border-b border-[var(--border)] bg-[rgba(248,246,241,0.9)] backdrop-blur">
-        <div className="mx-auto flex max-w-[1680px] items-center gap-3 px-4 py-4 lg:px-6">
+    <div className={cn("min-h-screen bg-[var(--background)]", isMobile && "pb-24")}>
+      <header className="sticky top-0 z-20 border-b border-[var(--border)] bg-[var(--topbar-bg)]">
+        <div className="mx-auto flex max-w-[1600px] items-center gap-2.5 px-4 py-3 lg:px-5">
           <div className="mr-auto">
-            <p className="font-mono text-[11px] uppercase tracking-[0.28em] text-[var(--muted-foreground)]">
-              Daycraft Planner
+            <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-[var(--muted-foreground)]">
+              Daycraft planner
             </p>
-            <div className="mt-1 flex items-center gap-3">
-              <h1 className="text-2xl font-semibold tracking-[-0.05em] text-[var(--foreground-strong)]">
-                {calendarTitle}
-              </h1>
+            <div className="mt-1 flex items-center gap-2.5">
+              <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
+                <PopoverTrigger asChild>
+                  <button className="flex cursor-pointer items-center gap-1 text-[clamp(1.7rem,2vw,2.5rem)] font-semibold tracking-[-0.05em] text-[var(--foreground-strong)] transition-colors outline-none hover:text-[var(--accent-strong)]">
+                    {surfaceTitle}
+                    <ChevronDown className="h-5 w-5 text-[var(--muted-foreground)] transition-transform data-[state=open]:rotate-180" />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent
+                  align="start"
+                  className="my-1 w-auto overflow-hidden rounded-[24px] border border-[var(--border-strong)] bg-[var(--surface-elevated)] p-0 shadow-[var(--shadow-soft)]"
+                >
+                  <Calendar
+                    mode="single"
+                    selected={parseISO(focusedDate)}
+                    onSelect={(date) => {
+                      if (date) {
+                        moveToSurface(surface, format(date, "yyyy-MM-dd"));
+                        setPopoverOpen(false);
+                      }
+                    }}
+                    initialFocus
+                  />
+                </PopoverContent>
+              </Popover>
               {plannerData.mode === "demo" ? (
                 <Badge tone="accent">Demo mode</Badge>
               ) : (
@@ -576,65 +1204,95 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
             </div>
           </div>
 
-          <div className="hidden items-center gap-2 lg:flex">
-            <Button variant="outline" onClick={() => calendarRef.current?.getApi().prev()}>
+          <div className="hidden items-center gap-1.5 lg:flex">
+            <Button variant="outline" onClick={() => navigateSurface("prev")}>
               Prev
             </Button>
-            <Button variant="outline" onClick={() => calendarRef.current?.getApi().today()}>
+            <Button variant="outline" onClick={() => navigateSurface("today")}>
               Today
             </Button>
-            <Button variant="outline" onClick={() => calendarRef.current?.getApi().next()}>
+            <Button variant="outline" onClick={() => navigateSurface("next")}>
               Next
             </Button>
           </div>
 
-          <div className="flex items-center gap-2 rounded-full border border-[var(--border)] bg-white/90 p-1 shadow-sm">
-            <Button
-              variant={activeView === "timeGridDay" ? "solid" : "ghost"}
-              size="sm"
-              onClick={() => setActiveView("timeGridDay")}
-            >
-              Day
-            </Button>
-            <Button
-              variant={activeView === "timeGridWeek" ? "solid" : "ghost"}
-              size="sm"
-              onClick={() => setActiveView("timeGridWeek")}
-            >
-              Week
-            </Button>
-            <Button
-              variant={activeView === "listDay" ? "solid" : "ghost"}
-              size="sm"
-              onClick={() => setActiveView("listDay")}
-            >
-              Agenda
-            </Button>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <div className="flex items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--surface-elevated)] p-1 shadow-[var(--shadow-soft)]">
+              <Button
+                variant={surface === "day" ? "solid" : "ghost"}
+                size="sm"
+                data-testid="surface-day"
+                onClick={() => moveToSurface("day")}
+              >
+                Day
+              </Button>
+              <Button
+                variant={surface === "week" ? "solid" : "ghost"}
+                size="sm"
+                data-testid="surface-week"
+                onClick={() => moveToSurface("week")}
+              >
+                Week
+              </Button>
+              <Button
+                variant={surface === "agenda" ? "solid" : "ghost"}
+                size="sm"
+                data-testid="surface-agenda"
+                onClick={() => moveToSurface("agenda")}
+              >
+                Agenda
+              </Button>
+            </div>
+            {surface === "week" ? (
+              <Select
+                value={showWeekends ? "full" : "work"}
+                onChange={(e) => setShowWeekends(e.target.value === "full")}
+                className="hidden h-9 w-[134px] rounded-full bg-[var(--surface-elevated)] shadow-[var(--shadow-soft)] sm:block"
+              >
+                <option value="work">Work week</option>
+                <option value="full">Full week</option>
+              </Select>
+            ) : null}
           </div>
 
-          <div className="hidden items-center gap-2 md:flex">
+          <div className="hidden items-center gap-1.5 md:flex">
             <Button
               variant="outline"
-              onClick={() => {
-                setQuickAddDefaults({});
-                setQuickAddKind("event");
-              }}
+              size="sm"
+              onClick={() => openQuickAdd("event")}
+              aria-label="New event"
+              title="New event"
             >
               <CalendarClock className="h-4 w-4" />
-              New event
             </Button>
             <Button
-              onClick={() => {
-                setQuickAddDefaults({});
-                setQuickAddKind("task");
-              }}
+              variant="solid"
+              size="sm"
+              onClick={() => openQuickAdd("task")}
+              aria-label="New task"
+              title="New task"
             >
               <Plus className="h-4 w-4" />
-              New task
+            </Button>
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              onClick={() => setHelpOpen(true)}
+              aria-label="Shortcuts"
+              title="Shortcuts"
+            >
+              <Command className="h-4 w-4" />
             </Button>
           </div>
 
-          <Button variant="ghost" onClick={() => setDrawerState({ type: "settings" })}>
+          <ThemeToggle />
+
+          <Button
+            variant="ghost"
+            onClick={() => setDrawerState({ type: "settings" })}
+            aria-label="Planner settings"
+            title="Planner settings"
+          >
             <Settings2 className="h-4 w-4" />
           </Button>
 
@@ -644,254 +1302,352 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
             </div>
           ) : null}
         </div>
+
+        <div className="mx-auto flex max-w-[1600px] items-center justify-between gap-2 px-4 pb-3 md:hidden lg:px-5">
+          <Button
+            variant="outline"
+            size="sm"
+            aria-label="Go to previous dates"
+            onClick={() => navigateSurface("prev")}
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => navigateSurface("today")}>
+            Today
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            aria-label="Go to next dates"
+            onClick={() => navigateSurface("next")}
+          >
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+        </div>
       </header>
 
-      <main className="mx-auto grid max-w-[1680px] gap-4 px-4 py-4 lg:grid-cols-[340px_1fr] lg:px-6">
-        <aside className="grid gap-4 lg:sticky lg:top-[88px] lg:h-[calc(100vh-112px)] lg:overflow-hidden">
-          <section className="grid gap-3 rounded-[28px] border border-[var(--border)] bg-white/90 p-5 shadow-[var(--shadow-soft)]">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
-                  Today at a glance
-                </p>
-                <h2 className="mt-1 text-2xl font-semibold tracking-[-0.04em]">
-                  {format(new Date(), "EEEE")}
-                </h2>
-              </div>
-              <Sparkles className="h-5 w-5 text-[var(--accent-strong)]" />
-            </div>
-            <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1">
-              <MetricCard
-                icon={<Clock3 className="h-4 w-4" />}
-                label="Planned load"
-                value={`${formatMinutes(todayCapacity?.scheduledTaskMinutes ?? 0)} / ${formatMinutes(todayCapacity?.workMinutes ?? 0)}`}
-                tone="accent"
-              />
-              <MetricCard
-                icon={<CircleAlert className="h-4 w-4" />}
-                label="Overdue"
-                value={`${plannerData.overdueCount}`}
-                tone={plannerData.overdueCount ? "danger" : "neutral"}
-              />
-              <MetricCard
-                icon={<ListTodo className="h-4 w-4" />}
-                label="Unscheduled"
-                value={`${plannerData.unscheduledCount}`}
-                tone="neutral"
-              />
-            </div>
-            <div className="rounded-[24px] border border-[var(--border)] bg-[var(--panel-subtle)] p-4">
-              <div className="mb-2 flex items-center justify-between">
-                <p className="text-sm font-semibold">Capacity</p>
-                <p className="text-xs uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
-                  Fixed + planned
-                </p>
-              </div>
-              <div className="h-2 overflow-hidden rounded-full bg-white">
-                <div
-                  className={cn(
-                    "h-full rounded-full bg-[var(--accent-strong)] transition-all",
-                    (todayCapacity?.remainingMinutes ?? 0) < 0 && "bg-[var(--danger)]",
-                  )}
-                  style={{
-                    width: todayCapacity?.workMinutes
-                      ? `${Math.min(
-                          100,
-                          ((todayCapacity.scheduledTaskMinutes +
-                            todayCapacity.fixedEventMinutes) /
-                            todayCapacity.workMinutes) *
-                            100,
-                        )}%`
-                      : "0%",
-                  }}
-                />
-              </div>
-              <p className="mt-3 text-sm text-[var(--muted-foreground)]">
-                {todayCapacity?.remainingMinutes ?? 0 >= 0
-                  ? `${formatMinutes(todayCapacity?.remainingMinutes ?? 0)} left in your workday`
-                  : `${formatMinutes(Math.abs(todayCapacity?.remainingMinutes ?? 0))} overbooked today`}
-              </p>
-            </div>
-          </section>
+      <main className="mx-auto grid max-w-[1600px] gap-3 px-4 py-3 lg:grid-cols-[198px_minmax(0,1fr)] lg:px-5">
+        <aside className="hidden min-w-0 w-[198px] flex-col gap-3 overflow-y-auto pb-4 pr-1 lg:sticky lg:top-[78px] lg:flex lg:h-[calc(100vh-96px)]" style={{ scrollbarWidth: 'none' }}>
+          <Calendar
+            mode="single"
+            selected={parseISO(focusedDate)}
+            onSelect={(date) => date && moveToSurface(surface, format(date, "yyyy-MM-dd"))}
+            className="bg-transparent p-0 text-[12px] [--cell-size:1.55rem]"
+            classNames={{
+              caption_label: "text-[11px] font-semibold text-[var(--foreground-strong)]",
+              weekday: "text-[0.66rem] font-medium text-[var(--muted-foreground)]",
+            }}
+          />
 
-          <section className="grid min-h-0 gap-4 rounded-[28px] border border-[var(--border)] bg-white/90 p-5 shadow-[var(--shadow-soft)]">
-            <div className="flex items-center gap-3 rounded-[22px] border border-[var(--border)] bg-[var(--panel-subtle)] px-4 py-3">
-              <Search className="h-4 w-4 text-[var(--muted-foreground)]" />
+          <div className="flex flex-col gap-0.5">
+            <div className="mb-1.5 px-2 text-[9px] font-bold uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
+              Workspaces
+            </div>
+
+            <button
+              type="button"
+              data-testid="queue-unscheduled"
+              onClick={() => {
+                setQuery("");
+                setQueueMode("unscheduled");
+              }}
+              className={cn(
+                "flex items-center rounded-xl px-2 py-1.5 text-left text-[12px] font-medium transition-colors",
+                query === "" && queueMode === "unscheduled"
+                  ? "bg-[var(--accent-soft)] text-[var(--accent-strong)]"
+                  : "text-[var(--foreground)] hover:bg-[var(--panel-subtle)]",
+              )}
+            >
+              Inbox
+              <span
+                className={cn(
+                  "ml-auto rounded-full px-2 py-0.5 text-[10px] opacity-80",
+                  plannerData.unscheduledCount > 0
+                    ? "bg-[var(--button-solid-bg)] text-[var(--button-solid-fg)]"
+                    : "bg-[var(--panel-subtle)]",
+                )}
+              >
+                {plannerData.unscheduledCount}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              data-testid="queue-overdue"
+              onClick={() => {
+                setQuery("");
+                setQueueMode("overdue");
+              }}
+              className={cn(
+                "flex items-center rounded-xl px-2 py-1.5 text-left text-[12px] font-medium transition-colors",
+                query === "" && queueMode === "overdue"
+                  ? "bg-[var(--danger-soft)] text-[var(--danger)]"
+                  : "text-[var(--foreground)] hover:bg-[var(--panel-subtle)]",
+              )}
+            >
+              Overdue
+              {plannerData.overdueCount > 0 ? (
+                <span className="ml-auto rounded-full bg-[var(--danger)] px-2 py-0.5 text-[10px] text-white">
+                  {plannerData.overdueCount}
+                </span>
+              ) : null}
+            </button>
+
+            {plannerData.projects?.length ? (
+              <div className="mt-4">
+                <div className="mb-1.5 flex items-center justify-between px-2 text-[9px] font-bold uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
+                  <span>Projects</span>
+                  <button
+                    type="button"
+                    onClick={() => openQuickAdd("project")}
+                    className="hover:text-[var(--foreground)]"
+                  >
+                    <Plus className="h-3 w-3" />
+                  </button>
+                </div>
+                {plannerData.projects.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => setQuery(`project:"${p.name}"`)}
+                    className={cn(
+                      "flex w-full items-center rounded-xl px-2 py-1.5 text-left text-[12px] font-medium transition-colors",
+                      query.includes(`project:"${p.name}"`)
+                        ? "bg-[var(--panel-subtle)] text-[var(--foreground-strong)]"
+                        : "text-[var(--foreground)] hover:bg-[var(--panel-subtle)]",
+                    )}
+                  >
+                    <span className="mr-2.5 h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--accent-strong)] opacity-60" />
+                    <span className="truncate">{p.name}</span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+
+          <section className="grid min-w-0 gap-2.5 overflow-hidden rounded-[20px] border border-[var(--border)] bg-[var(--surface)] px-2.5 py-2.5 shadow-[var(--shadow-soft)]">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0 flex-1">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
+                  {queueMode === "unscheduled" ? "Queue" : "Recovery"}
+                </p>
+                <h2 className="mt-1 text-[14px] font-semibold tracking-[-0.03em] text-[var(--foreground-strong)]">
+                  {queueMode === "unscheduled" ? "Ready to place" : "Needs a new slot"}
+                </h2>
+                <p className="mt-1 text-[11px] leading-4 text-[var(--muted-foreground)]">
+                  {queueMode === "unscheduled"
+                    ? "Tasks waiting for placement."
+                    : "Past-due work to reschedule."}
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-1">
+                <Badge tone={queueMode === "overdue" ? "danger" : "neutral"}>
+                  {queueTasks.length}
+                </Badge>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 shrink-0 text-[var(--muted-foreground)]"
+                  onClick={() => openQuickAdd("task")}
+                  aria-label="New task"
+                  title="New task"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            </div>
+
+            <div className="flex min-w-0 items-center gap-2 rounded-[14px] border border-[var(--border)] bg-[var(--surface-muted)] px-2.5 py-2">
+              <Search className="h-3.5 w-3.5 text-[var(--muted-foreground)]" />
               <input
+                ref={searchInputRef}
+                aria-label="Search task queue"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search unscheduled tasks"
-                className="w-full bg-transparent text-sm outline-none placeholder:text-[var(--muted-foreground)]"
+                placeholder={queueMode === "unscheduled" ? "Find in inbox..." : "Find overdue work..."}
+                className="min-w-0 w-full bg-transparent text-[12px] outline-none placeholder:text-[var(--muted-foreground)]"
               />
-            </div>
-
-            <div className="flex flex-wrap gap-2">
-              {plannerData.savedFilters.map((filter) => (
+              {query ? (
                 <button
-                  key={filter.id}
                   type="button"
-                  onClick={() => setActiveFilter(filter.id)}
-                  className={cn(
-                    "rounded-full border px-3 py-2 text-xs font-medium uppercase tracking-[0.16em] transition",
-                    activeFilter === filter.id
-                      ? "border-[var(--accent-strong)] bg-[var(--accent-soft)] text-[var(--accent-stronger)]"
-                      : "border-[var(--border)] bg-white text-[var(--muted-foreground)] hover:bg-[var(--panel-subtle)]",
-                  )}
+                  onClick={() => setQuery("")}
+                  className="shrink-0 text-[10px] font-medium uppercase tracking-[0.12em] text-[var(--muted-foreground)] transition hover:text-[var(--foreground)]"
                 >
-                  {filter.label}
+                  Clear
                 </button>
-              ))}
+              ) : null}
             </div>
 
-            <div className="flex flex-wrap gap-2">
-              <Button variant="outline" size="sm" onClick={() => setQuickAddKind("project")}>
-                New project
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => setQuickAddKind("area")}>
-                New area
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => setQuickAddKind("tag")}>
-                New tag
-              </Button>
-            </div>
-
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-lg font-semibold tracking-[-0.03em]">Inbox</h2>
-                <p className="text-sm text-[var(--muted-foreground)]">
-                  Drag tasks into the calendar to place real time blocks.
-                </p>
-              </div>
-              <Badge tone="neutral">{filteredUnscheduledTasks.length}</Badge>
-            </div>
-
-            <div
-              ref={externalTasksRef}
-              className="grid min-h-0 gap-3 overflow-y-auto pr-1"
-            >
-              {filteredUnscheduledTasks.length ? (
-                filteredUnscheduledTasks.map((task) => (
-                  <button
+            {queueTasks.length ? (
+              <div ref={queueRef} className="grid min-w-0 gap-2">
+                {queueTasks.map((task) => (
+                  <QueueTaskCard
                     key={task.id}
-                    type="button"
-                    data-draggable-task="true"
-                    data-task-id={task.id}
-                    data-title={task.title}
-                    data-duration={task.estimatedMinutes}
-                    onClick={() => setDrawerState({ type: "task", taskId: task.id })}
-                    className="group grid gap-3 rounded-[24px] border border-[var(--border)] bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-[var(--border-strong)]"
-                  >
-                    <div className="flex items-start gap-3">
-                      <div className="mt-1 text-[var(--muted-foreground)]">
-                        <GripVertical className="h-4 w-4" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <p className="text-sm font-semibold text-[var(--foreground-strong)]">
-                            {task.title}
-                          </p>
-                          <span className={cn("rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em]", priorityClass(task.priority))}>
-                            {PRIORITY_LABELS[task.priority]}
-                          </span>
-                        </div>
-                        <p className="mt-2 line-clamp-2 text-sm leading-6 text-[var(--muted-foreground)]">
-                          {task.notes || "No task notes yet."}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Badge tone="neutral">{formatMinutes(task.estimatedMinutes)}</Badge>
-                      <Badge tone="accent">{TIME_BAND_LABELS[task.preferredTimeBand]}</Badge>
-                      {task.dueAt ? (
-                        <Badge tone={isBefore(parseISO(task.dueAt), new Date()) ? "danger" : "neutral"}>
-                          Due {format(parseISO(task.dueAt), "MMM d, h:mm a")}
-                        </Badge>
-                      ) : null}
-                    </div>
-                  </button>
-                ))
-              ) : (
-                <div className="rounded-[24px] border border-dashed border-[var(--border-strong)] bg-[var(--panel-subtle)] p-6 text-sm leading-7 text-[var(--muted-foreground)]">
-                  No unscheduled tasks match this view.
-                </div>
-              )}
-            </div>
-
-            <div className="grid gap-3 rounded-[24px] border border-[var(--border)] bg-[var(--panel-subtle)] p-4">
-              <div className="flex items-center justify-between">
-                <p className="text-sm font-semibold">Conflict radar</p>
-                <CircleAlert className="h-4 w-4 text-[var(--danger)]" />
+                    queueMode={queueMode}
+                    task={task}
+                    onEdit={() => setDrawerState({ type: "task", taskId: task.id })}
+                    onPlaceNext={() => scheduleTaskIntoSuggestedWindow(task)}
+                  />
+                ))}
               </div>
-              {overloadedDays.length ? (
-                overloadedDays.map((day) => (
-                  <div key={day.date} className="flex items-center justify-between text-sm">
-                    <span>{format(parseISO(day.date), "EEEE, MMM d")}</span>
-                    <span className="font-medium text-[var(--danger)]">
-                      {formatMinutes(Math.abs(day.remainingMinutes))} over
-                    </span>
-                  </div>
-                ))
-              ) : (
-                <p className="text-sm leading-6 text-[var(--muted-foreground)]">
-                  No overbooked days in the visible range.
+            ) : (
+              <div className="rounded-[18px] border border-dashed border-[var(--border)] bg-[var(--surface-muted)] px-3 py-4 text-center">
+                <p className="text-[12px] font-medium text-[var(--foreground-strong)]">
+                  {queueMode === "unscheduled" ? "Inbox is clear" : "Nothing overdue"}
                 </p>
-              )}
+                <p className="mt-1 text-[11px] leading-5 text-[var(--muted-foreground)]">
+                  {queueMode === "unscheduled"
+                    ? "New tasks will appear here until you place them on the calendar."
+                    : "Late tasks will collect here when they need attention."}
+                </p>
+              </div>
+            )}
+
+            <div className="grid gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full justify-center"
+                onClick={() => openQuickAdd("task")}
+              >
+                <Plus className="h-3.5 w-3.5" />
+                New task
+              </Button>
+              <Button
+                size="sm"
+                className="w-full justify-center"
+                onClick={() =>
+                  queueTasks[0]
+                    ? scheduleTaskIntoSuggestedWindow(queueTasks[0])
+                    : openQuickAdd("event")
+                }
+              >
+                <CalendarClock className="h-3.5 w-3.5" />
+                {queueTasks[0]
+                  ? queueMode === "overdue"
+                    ? "Reschedule next"
+                    : "Place next"
+                  : "New event"}
+              </Button>
             </div>
           </section>
         </aside>
 
-        <section className="relative rounded-[32px] border border-[var(--border)] bg-white/94 p-4 shadow-[var(--shadow-soft)] lg:p-5">
-          <div className="mb-4 grid gap-3 md:grid-cols-3">
-            {plannerData.capacity.map((day) => (
-              <DayChip
-                key={day.date}
-                day={day}
-                active={isToday(parseISO(day.date))}
-              />
-            ))}
+        <section className="relative rounded-[28px] border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[var(--shadow-soft)] sm:p-5">
+          <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-[13px] font-medium text-[var(--muted-foreground)]">
+                {SURFACE_LABELS[surface]} view
+              </p>
+              <h2 className="mt-1 text-[1.55rem] font-semibold tracking-[-0.04em] text-[var(--foreground-strong)]">
+                {surfaceTitle}
+              </h2>
+              <p className="mt-2 max-w-2xl text-[13px] leading-6 text-[var(--muted-foreground)]">
+                {surface === "agenda"
+                  ? "Click a day card to inspect that day, then drag tasks into the hourly planner or resize blocks to tune the schedule."
+                  : surface === "week"
+                    ? "Organize the week by moving tasks between to do, in progress, and done."
+                    : "Use the day board to focus only on tasks that belong to the selected day."}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" size="sm" onClick={() => openQuickAdd("event")}>
+                <CalendarClock className="h-4 w-4" />
+                New event
+              </Button>
+              <Button size="sm" onClick={() => openQuickAdd("task")}>
+                <Plus className="h-4 w-4" />
+                New task
+              </Button>
+            </div>
           </div>
-          <div className="rounded-[28px] border border-[var(--border)] bg-[var(--panel-subtle)] p-2">
-            <FullCalendar
-              ref={calendarRef}
-              plugins={[timeGridPlugin, interactionPlugin, listPlugin]}
-              initialView={activeView}
-              headerToolbar={false}
-              height="auto"
-              editable
-              selectable
-              selectMirror
-              eventResizableFromStart
-              droppable={!isMobile}
-              nowIndicator
-              allDaySlot={false}
-              slotDuration={`00:${String(plannerData.settings.slotMinutes).padStart(2, "0")}:00`}
-              slotMinTime="06:00:00"
-              slotMaxTime="22:00:00"
-              firstDay={plannerData.settings.weekStart}
-              eventTimeFormat={{
-                hour: "numeric",
-                minute: "2-digit",
-                meridiem: "short",
-              }}
-              events={calendarEvents}
-              datesSet={handleDatesSet}
-              eventClick={handleEventClick}
-              eventReceive={handleTaskReceive}
-              eventDrop={handleCalendarMove}
-              eventResize={handleCalendarMove}
-              select={handleCalendarSelect}
-            />
+
+          <div className="flex h-full flex-col gap-4">
+            {surface === "agenda" ? (
+              <div className="grid gap-4">
+                <div className="flex snap-x snap-mandatory gap-3 overflow-x-auto px-0.5 pb-3" style={{ scrollbarWidth: 'thin' }}>
+                  {plannerData.capacity.map((day) => (
+                    <div key={day.date} className="min-w-[188px] shrink-0 snap-start">
+                      <AgendaDayCard
+                        active={day.date === focusedDate}
+                        day={day}
+                        onClick={() => setFocusedDate(day.date)}
+                      />
+                    </div>
+                  ))}
+                </div>
+
+                {agendaItems.length ? null : (
+                  <AgendaEmptyState
+                    hasQueueTasks={queueTasks.length > 0}
+                    queueMode={queueMode}
+                    onCreateEvent={() => openQuickAdd("event")}
+                    onCreateTask={() => openQuickAdd("task")}
+                    onPlaceNextTask={
+                      queueTasks[0] ? () => scheduleTaskIntoSuggestedWindow(queueTasks[0]) : undefined
+                    }
+                  />
+                )}
+              </div>
+            ) : (
+              <KanbanBoard
+                columns={boardColumns}
+                dateLabel={
+                  surface === "day"
+                    ? format(parseISO(`${focusedDate}T12:00:00`), "EEEE, MMM d")
+                    : `${format(parseISO(visibleRange.start), "MMM d")} - ${format(parseISO(visibleRange.end), "MMM d")}`
+                }
+                onCardClick={(task) => setDrawerState({ type: "task", taskId: task.id })}
+                onColumnDrop={handleBoardDrop}
+              />
+            )}
+
+            <div className="min-h-[460px] rounded-[22px] border border-[var(--border)] bg-[var(--surface-muted)] p-1.5 shadow-[var(--shadow-soft)]">
+              <FullCalendar
+                ref={calendarRef}
+                plugins={[timeGridPlugin, interactionPlugin]}
+                initialView={surface === "week" ? "timeGridWeek" : "timeGridDay"}
+                initialDate={focusedDate}
+                headerToolbar={false}
+                height="560px"
+                editable
+                selectable
+                selectMirror
+                eventResizableFromStart
+                eventMinHeight={32}
+                eventShortHeight={26}
+                eventContent={renderCalendarEventContent}
+                droppable={!isMobile}
+                nowIndicator
+                weekends={showWeekends}
+                allDaySlot={false}
+                scrollTime={surface === "week" ? "09:00:00" : String(new Date().getHours()).padStart(2, "0") + ":00:00"}
+                slotDuration={`00:${String(plannerData.settings.slotMinutes).padStart(2, "0")}:00`}
+                firstDay={plannerData.settings.weekStart}
+                eventTimeFormat={{
+                  hour: "numeric",
+                  minute: "2-digit",
+                  meridiem: "short",
+                }}
+                events={calendarEvents}
+                eventClick={handleEventClick}
+                eventReceive={handleTaskReceive}
+                eventDrop={handleCalendarMove}
+                eventResize={handleCalendarMove}
+                select={handleCalendarSelect}
+              />
+            </div>
           </div>
 
           {isPending ? (
-            <div className="absolute right-8 top-8 rounded-full bg-[var(--foreground-strong)] px-3 py-2 text-xs font-medium text-white shadow-lg">
+            <div className="absolute right-6 top-6 rounded-full bg-[var(--button-solid-bg)] px-3 py-2 text-xs font-medium text-[var(--button-solid-fg)] shadow-[var(--shadow-soft)]">
               Updating planner...
             </div>
           ) : null}
         </section>
       </main>
 
-      <EditorDrawer
+      <EditorModal
         drawerState={drawerState}
         onClose={() => setDrawerState(null)}
         task={selectedTask}
@@ -916,22 +1672,6 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
             await refreshPlanner();
           })
         }
-        onToggleTask={(taskId, status) => {
-          markTaskStatus(taskId, status);
-          startTransition(async () => {
-            try {
-              await requestJson(`/api/tasks/${taskId}`, {
-                method: "PATCH",
-                body: JSON.stringify({ status }),
-              });
-              toast.success(status === "done" ? "Task completed" : "Task reopened");
-              await refreshPlanner();
-            } catch (error) {
-              await refreshPlanner();
-              toast.error(error instanceof Error ? error.message : "Could not update task");
-            }
-          });
-        }}
         onUnscheduleTask={(blockId) =>
           startTransition(async () => {
             await requestJson(`/api/task-blocks/${blockId}`, { method: "DELETE" });
@@ -998,59 +1738,53 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
         }
       />
 
+      {isMobile ? (
+        <MobileActionDock
+          onToday={() => navigateSurface("today")}
+          onNewTask={() => openQuickAdd("task")}
+          onNewEvent={() => openQuickAdd("event")}
+          onHelp={() => setHelpOpen(true)}
+        />
+      ) : null}
+
       {helpOpen ? <KeyboardShortcuts onClose={() => setHelpOpen(false)} /> : null}
     </div>
   );
 }
 
-type MetricCardProps = {
-  icon: ReactNode;
-  label: string;
-  value: string;
-  tone: "neutral" | "accent" | "danger";
-};
-
-function MetricCard({ icon, label, value, tone }: MetricCardProps) {
+function AgendaDayCard({
+  active,
+  day,
+  onClick,
+}: {
+  active: boolean;
+  day: DayCapacity;
+  onClick: () => void;
+}) {
   return (
-    <div className="rounded-[22px] border border-[var(--border)] bg-[var(--panel-subtle)] p-4">
-      <div className="flex items-center justify-between">
-        <span
-          className={cn(
-            "flex h-9 w-9 items-center justify-center rounded-full",
-            tone === "accent" && "bg-[var(--accent-soft)] text-[var(--accent-stronger)]",
-            tone === "danger" && "bg-[var(--danger-soft)] text-[var(--danger)]",
-            tone === "neutral" && "bg-white text-[var(--muted-foreground)]",
-          )}
-        >
-          {icon}
-        </span>
-        <p className="text-2xl font-semibold tracking-[-0.04em]">{value}</p>
-      </div>
-      <p className="mt-3 text-sm text-[var(--muted-foreground)]">{label}</p>
-    </div>
-  );
-}
-
-function DayChip({ day, active }: { day: DayCapacity; active: boolean }) {
-  return (
-    <div
+    <button
+      type="button"
+      data-testid={`agenda-day-${day.date}`}
+      onClick={onClick}
       className={cn(
-        "rounded-[24px] border px-4 py-3",
+        "grid gap-3 rounded-[22px] border px-3.5 py-3.5 text-left transition hover:border-[var(--border-strong)]",
         active
           ? "border-[var(--accent-strong)] bg-[var(--accent-soft)]"
-          : "border-[var(--border)] bg-white/85",
+          : "border-[var(--border)] bg-[var(--surface)] opacity-85",
       )}
     >
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-xs uppercase tracking-[0.16em] text-[var(--muted-foreground)]">
+          <p className="text-[13px] font-medium text-[var(--muted-foreground)]">
             {format(parseISO(day.date), "EEE")}
           </p>
-          <p className="text-base font-semibold">{format(parseISO(day.date), "MMM d")}</p>
+          <p className="text-[15px] font-semibold">{format(parseISO(day.date), "MMM d")}</p>
         </div>
-        {day.overloaded ? <Badge tone="danger">Over</Badge> : <Badge tone="success">Open</Badge>}
+        <Badge tone={day.overloaded ? "danger" : "neutral"}>
+          {day.overloaded ? "Over capacity" : "Plannable"}
+        </Badge>
       </div>
-      <div className="mt-3 grid gap-2 text-sm text-[var(--muted-foreground)]">
+      <div className="grid gap-1.5 text-[13px] text-[var(--muted-foreground)]">
         <div className="flex items-center justify-between">
           <span>Tasks</span>
           <span>{formatMinutes(day.scheduledTaskMinutes)}</span>
@@ -1059,28 +1793,291 @@ function DayChip({ day, active }: { day: DayCapacity; active: boolean }) {
           <span>Meetings</span>
           <span>{formatMinutes(day.fixedEventMinutes)}</span>
         </div>
+        <div className="flex items-center justify-between">
+          <span>Open time</span>
+          <span>{formatMinutes(Math.max(0, day.remainingMinutes))}</span>
+        </div>
+      </div>
+    </button>
+  );
+}
+
+function QueueTaskCard({
+  queueMode,
+  task,
+  onEdit,
+  onPlaceNext,
+}: {
+  queueMode: QueueMode;
+  task: PlannerTask;
+  onEdit: () => void;
+  onPlaceNext: () => void;
+}) {
+  return (
+    <article className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-start gap-2 rounded-[16px] border border-[var(--border)] bg-[var(--surface-muted)] px-2 py-2 transition hover:border-[var(--border-strong)] hover:bg-[var(--surface-elevated)]">
+      <button
+        type="button"
+        data-draggable-queue-task="true"
+        data-task-id={task.id}
+        data-block-id={task.primaryBlock?.id ?? ""}
+        data-title={task.title}
+        data-duration={task.estimatedMinutes}
+        aria-label={`Drag ${task.title} onto the agenda`}
+        className="mt-0.5 flex h-[26px] w-[26px] shrink-0 cursor-grab touch-none items-center justify-center rounded-full border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)] transition hover:border-[var(--border-strong)] hover:text-[var(--foreground)] active:cursor-grabbing"
+      >
+        <GripVertical className="h-3 w-3" />
+      </button>
+
+      <div className="min-w-0">
+        <button
+          type="button"
+          data-testid={`queue-card-${task.id}`}
+          onClick={onEdit}
+          className="block min-w-0 w-full text-left"
+        >
+          <p className="line-clamp-2 min-w-0 text-[12px] font-semibold leading-[1.15rem] text-[var(--foreground-strong)]">
+            {task.title}
+          </p>
+        </button>
+        <div className="mt-1.5 flex flex-wrap gap-1">
+          <span
+            className={cn(
+              "rounded-full border px-1.5 py-0.5 text-[8px] font-semibold uppercase tracking-[0.08em]",
+              priorityClass(task.priority),
+            )}
+          >
+            {PRIORITY_LABELS[task.priority]}
+          </span>
+          <Badge tone="neutral" className="px-1.5 py-0.5 text-[9px]">
+            {formatMinutes(task.estimatedMinutes)}
+          </Badge>
+          {task.project ? (
+            <Badge tone="neutral" className="px-2 py-0.5 text-[10px]">
+              {task.project.name}
+            </Badge>
+          ) : null}
+          {task.dueAt ? (
+            <Badge
+              tone={isTaskOverdue(task) ? "danger" : "neutral"}
+              className="px-1.5 py-0.5 text-[9px]"
+            >
+              Due {format(parseISO(task.dueAt), "MMM d")}
+            </Badge>
+          ) : null}
+          {queueMode === "overdue" && task.primaryBlock ? (
+            <Badge tone="accent" className="px-1.5 py-0.5 text-[9px]">
+              {format(parseISO(task.primaryBlock.startsAt), "EEE h:mm a")}
+            </Badge>
+          ) : null}
+        </div>
+        <div className="mt-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 w-full justify-center rounded-[12px] px-2 text-[11px] text-[var(--muted-foreground)]"
+            onClick={onPlaceNext}
+            aria-label={queueMode === "overdue" ? `Reschedule ${task.title}` : `Place ${task.title}`}
+            title={queueMode === "overdue" ? "Reschedule" : "Place next"}
+          >
+            <CalendarClock className="h-3.5 w-3.5" />
+            {queueMode === "overdue" ? "Reschedule" : "Place next"}
+          </Button>
+        </div>
+      </div>
+    </article>
+  );
+}
+
+function AgendaEmptyState({
+  hasQueueTasks,
+  queueMode,
+  onCreateTask,
+  onCreateEvent,
+  onPlaceNextTask,
+}: {
+  hasQueueTasks: boolean;
+  queueMode: QueueMode;
+  onCreateTask: () => void;
+  onCreateEvent: () => void;
+  onPlaceNextTask?: () => void;
+}) {
+  return (
+    <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-[22px] border border-[var(--border)] bg-[var(--panel-subtle)] px-4 py-3.5">
+      <div className="grid gap-1">
+        <p className="text-[15px] font-semibold tracking-[-0.03em] text-[var(--foreground-strong)]">
+          Nothing is placed on this agenda day yet
+        </p>
+        <p className="text-[13px] leading-5 text-[var(--muted-foreground)]">
+          {hasQueueTasks
+            ? `Start with the ${queueMode} queue and place the next task into an open work slot.`
+            : "Add a task or a fixed event to start shaping this day visually."}
+        </p>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {hasQueueTasks && onPlaceNextTask ? (
+          <Button size="sm" onClick={onPlaceNextTask}>
+            Place next task
+          </Button>
+        ) : null}
+        <Button variant="outline" size="sm" onClick={onCreateEvent}>
+          New event
+        </Button>
+        <Button size="sm" onClick={onCreateTask}>
+          New task
+        </Button>
       </div>
     </div>
   );
 }
 
-type EditorDrawerProps = {
+function KanbanBoard({
+  columns,
+  dateLabel,
+  onCardClick,
+  onColumnDrop,
+}: {
+  columns: Array<(typeof BOARD_COLUMNS)[number] & { tasks: PlannerTask[] }>;
+  dateLabel: string;
+  onCardClick: (task: PlannerTask) => void;
+  onColumnDrop: (status: TaskStatus, event: ReactDragEvent<HTMLElement>) => void;
+}) {
+  const totalTasks = columns.reduce((sum, column) => sum + column.tasks.length, 0);
+
+  if (!totalTasks) {
+    return (
+      <div className="grid gap-3 rounded-[22px] border border-dashed border-[var(--border-strong)] bg-[var(--panel-subtle)] p-5">
+        <p className="text-[18px] font-semibold tracking-[-0.03em] text-[var(--foreground-strong)]">
+          No tasks fall inside {dateLabel}
+        </p>
+        <p className="max-w-xl text-[13px] leading-6 text-[var(--muted-foreground)]">
+          Scheduled or due tasks for this range will collect here. Anything still without a date stays in the left queue until you place it.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+      <div className="grid gap-3 xl:grid-cols-3">
+      {columns.map((column) => (
+        <section
+          key={column.id}
+          data-testid={`kanban-column-${column.id}`}
+          onDragOver={(event) => event.preventDefault()}
+          onDrop={(event) => onColumnDrop(column.id, event)}
+          className="flex min-h-[340px] flex-col rounded-[20px] border border-[var(--border)] bg-[var(--panel-subtle)] p-2"
+        >
+          <div className="mb-2.5 flex items-start justify-between gap-3">
+            <div>
+              <h3 className="text-[15px] font-semibold tracking-[-0.03em]">{column.label}</h3>
+              <p className="mt-1 text-[12px] leading-5 text-[var(--muted-foreground)]">
+                {column.description}
+              </p>
+            </div>
+            <Badge tone="neutral">{column.tasks.length}</Badge>
+          </div>
+
+          <div className="grid flex-1 content-start gap-2">
+            {column.tasks.length ? (
+              column.tasks.map((task) => (
+                <button
+                  key={task.id}
+                  type="button"
+                  draggable
+                  data-testid={`kanban-card-${task.id}`}
+                  onDragStart={(event) => {
+                    event.dataTransfer.setData("text/planner-task-id", task.id);
+                    event.dataTransfer.effectAllowed = "move";
+                  }}
+                  onClick={() => onCardClick(task)}
+                  className="rounded-[16px] border border-[var(--border)] bg-[var(--surface-elevated)] p-2.5 text-left shadow-[var(--shadow-soft)] transition hover:-translate-y-0.5 hover:border-[var(--border-strong)]"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="line-clamp-2 text-[14px] font-semibold leading-5 text-[var(--foreground-strong)]">
+                        {task.title}
+                      </p>
+                      <p className="mt-1.5 line-clamp-2 text-[12px] leading-5 text-[var(--muted-foreground)]">
+                        {task.notes || "No notes yet."}
+                      </p>
+                    </div>
+                    <span className="mt-0.5 rounded-full bg-[var(--panel-subtle)] p-1.5 text-[var(--muted-foreground)]">
+                      <GripVertical className="h-3.5 w-3.5" />
+                    </span>
+                  </div>
+                  <div className="mt-2.5 flex flex-wrap gap-1.5">
+                    <Badge tone="neutral">{formatMinutes(task.estimatedMinutes)}</Badge>
+                    {task.primaryBlock ? (
+                      <Badge tone="accent">
+                        {format(parseISO(task.primaryBlock.startsAt), "EEE h:mm a")}
+                      </Badge>
+                    ) : null}
+                    {task.dueAt ? (
+                      <Badge tone={isTaskOverdue(task) ? "danger" : "neutral"}>
+                        Due {format(parseISO(task.dueAt), "MMM d")}
+                      </Badge>
+                    ) : null}
+                  </div>
+                </button>
+              ))
+            ) : (
+              <div className="rounded-[22px] border border-dashed border-[var(--border)] bg-[var(--surface)] opacity-60 p-4 text-sm leading-6 text-[var(--muted-foreground)]">
+                No tasks in {column.label.toLowerCase()} for this range.
+              </div>
+            )}
+          </div>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+function MobileActionDock({
+  onToday,
+  onNewTask,
+  onNewEvent,
+  onHelp,
+}: {
+  onToday: () => void;
+  onNewTask: () => void;
+  onNewEvent: () => void;
+  onHelp: () => void;
+}) {
+  return (
+    <div className="fixed inset-x-4 bottom-4 z-20 md:hidden">
+      <div className="grid grid-cols-4 gap-2 rounded-[24px] border border-[var(--border)] bg-[var(--surface)] p-2 shadow-[var(--shadow-soft)]">
+        <Button variant="ghost" size="sm" onClick={onToday}>
+          Today
+        </Button>
+        <Button variant="ghost" size="sm" onClick={onNewTask}>
+          Task
+        </Button>
+        <Button variant="ghost" size="sm" onClick={onNewEvent}>
+          Event
+        </Button>
+        <Button variant="ghost" size="sm" onClick={onHelp}>
+          Shortcuts
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+type EditorModalProps = {
   drawerState: DrawerState;
   onClose: () => void;
   task: PlannerTask | null;
   block: PlannerCalendarItem | null;
   event: EventRecord | null;
   plannerData: PlannerPayload;
-  onSaveTask: (taskId: string, input: Partial<NewTaskInput> & { status?: "todo" | "done" }) => void;
+  onSaveTask: (taskId: string, input: Partial<NewTaskInput> & { status?: TaskStatus }) => void;
   onDeleteTask: (taskId: string) => void;
-  onToggleTask: (taskId: string, status: "todo" | "done") => void;
   onUnscheduleTask: (blockId: string) => void;
   onSaveEvent: (eventId: string, input: Partial<EventRecord>) => void;
   onDeleteEvent: (eventId: string) => void;
   onSaveSettings: (input: UpdateSettingsInput) => void;
 };
 
-function EditorDrawer({
+function EditorModal({
   drawerState,
   onClose,
   task,
@@ -1089,75 +2086,124 @@ function EditorDrawer({
   plannerData,
   onSaveTask,
   onDeleteTask,
-  onToggleTask,
   onUnscheduleTask,
   onSaveEvent,
   onDeleteEvent,
   onSaveSettings,
-}: EditorDrawerProps) {
-  const open = Boolean(drawerState);
+}: EditorModalProps) {
+  if (!drawerState) {
+    return null;
+  }
+
+  const eyebrow =
+    drawerState.type === "task"
+      ? "Task details"
+      : drawerState.type === "event"
+        ? "Event details"
+        : "Planning settings";
+  const title =
+    drawerState.type === "task"
+      ? task?.title ?? "Task details"
+      : drawerState.type === "event"
+        ? event?.title ?? "Event details"
+        : "Planning settings";
+  const description =
+    drawerState.type === "task"
+      ? "Review schedule, notes, and organization without leaving the board."
+      : drawerState.type === "event"
+        ? "Adjust timing, location, and notes in one floating panel."
+        : "Tune the planning defaults that shape the calendar.";
+  const maxWidth = drawerState.type === "settings" ? "max-w-[760px]" : "max-w-[720px]";
+  const shellClassName =
+    drawerState.type === "settings"
+      ? "border-[var(--border-strong)] bg-[var(--surface-elevated)]"
+      : "border-[var(--task-modal-border)] bg-[var(--task-modal-shell)] text-[var(--foreground)] backdrop-blur-md";
 
   return (
-    <div
-      className={cn(
-        "pointer-events-none fixed inset-0 z-30 bg-[rgba(20,22,18,0.12)] transition",
-        open ? "opacity-100" : "opacity-0",
-      )}
-    >
+    <div className="fixed inset-0 z-40 flex items-center justify-center p-2 sm:p-5">
+      <button
+        type="button"
+        className="absolute inset-0 bg-[var(--modal-backdrop)]"
+        onClick={onClose}
+        aria-label="Close details"
+      />
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={eyebrow}
         className={cn(
-          "pointer-events-auto absolute inset-y-0 right-0 w-full max-w-[420px] overflow-y-auto border-l border-[var(--border)] bg-[var(--surface)] p-6 shadow-[0_40px_120px_-48px_rgba(23,23,23,0.5)] transition duration-300",
-          open ? "translate-x-0" : "translate-x-full",
+          "relative z-10 flex w-full flex-col overflow-hidden rounded-[26px] border shadow-[var(--shadow-float)]",
+          drawerState.type !== "settings" &&
+            "before:pointer-events-none before:absolute before:inset-x-0 before:top-0 before:h-20 before:bg-[linear-gradient(180deg,rgba(255,255,255,0.12),rgba(255,255,255,0))]",
+          shellClassName,
+          maxWidth,
         )}
       >
-        <div className="mb-5 flex items-center justify-between">
-          <div>
-            <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted-foreground)]">
-              {drawerState?.type === "task"
-                ? "Task details"
-                : drawerState?.type === "event"
-                  ? "Event details"
-                  : drawerState?.type === "settings"
-                    ? "Planning settings"
-                    : ""}
-            </p>
+        <div className="border-b border-[var(--task-modal-border)] px-4 py-3 sm:px-5">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
+                {eyebrow}
+              </p>
+              <h2 className="mt-1 line-clamp-2 text-[1.08rem] font-semibold tracking-[-0.04em] text-[var(--foreground-strong)]">
+                {title}
+              </h2>
+              {drawerState.type === "settings" ? (
+                <p className="mt-1 text-[13px] text-[var(--muted-foreground)]">
+                  {description}
+                </p>
+              ) : null}
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 shrink-0 rounded-full"
+              onClick={onClose}
+              aria-label="Close details"
+            >
+              <X className="h-3.5 w-3.5" />
+            </Button>
           </div>
-          <Button variant="ghost" onClick={onClose}>
-            Close
-          </Button>
         </div>
 
-        {drawerState?.type === "task" && task ? (
-          <TaskEditor
-            key={`${task.id}:${block?.sourceId ?? "inbox"}`}
-            task={task}
-            block={block}
-            plannerData={plannerData}
-            onSave={(input) => onSaveTask(task.id, input)}
-            onDelete={() => onDeleteTask(task.id)}
-            onToggle={(status) => onToggleTask(task.id, status)}
-            onUnschedule={() => (block ? onUnscheduleTask(block.sourceId) : undefined)}
-          />
-        ) : null}
+        <div
+          className={cn(
+            "overflow-y-auto px-3.5 py-3.5 sm:px-4 sm:py-4",
+            drawerState.type === "settings"
+              ? "max-h-[min(82svh,720px)]"
+              : "max-h-[min(76svh,620px)]",
+          )}
+        >
+          {drawerState.type === "task" && task ? (
+            <TaskEditor
+              key={`${task.id}:${block?.sourceId ?? "inbox"}`}
+              task={task}
+              block={block}
+              plannerData={plannerData}
+              onSave={(input) => onSaveTask(task.id, input)}
+              onDelete={() => onDeleteTask(task.id)}
+              onUnschedule={() => (block ? onUnscheduleTask(block.sourceId) : undefined)}
+            />
+          ) : null}
 
-        {drawerState?.type === "event" && event ? (
-          <EventEditor
-            key={event.id}
-            event={event}
-            onSave={(input) => onSaveEvent(event.id, input)}
-            onDelete={() => onDeleteEvent(event.id)}
-          />
-        ) : null}
+          {drawerState.type === "event" && event ? (
+            <EventEditor
+              key={event.id}
+              event={event}
+              onSave={(input) => onSaveEvent(event.id, input)}
+              onDelete={() => onDeleteEvent(event.id)}
+            />
+          ) : null}
 
-        {drawerState?.type === "settings" ? (
-          <SettingsEditor
-            key={plannerData.settings.updatedAt}
-            settings={plannerData.settings}
-            onSave={onSaveSettings}
-          />
-        ) : null}
+          {drawerState.type === "settings" ? (
+            <SettingsEditor
+              key={plannerData.settings.updatedAt}
+              settings={plannerData.settings}
+              onSave={onSaveSettings}
+            />
+          ) : null}
+        </div>
       </div>
-      {open ? <button type="button" className="absolute inset-0 -z-10" onClick={onClose} /> : null}
     </div>
   );
 }
@@ -1168,33 +2214,23 @@ function TaskEditor({
   plannerData,
   onSave,
   onDelete,
-  onToggle,
   onUnschedule,
 }: {
   task: PlannerTask;
   block: PlannerCalendarItem | null;
   plannerData: PlannerPayload;
-  onSave: (input: Partial<NewTaskInput> & { status?: "todo" | "done" }) => void;
+  onSave: (input: Partial<NewTaskInput> & { status?: TaskStatus }) => void;
   onDelete: () => void;
-  onToggle: (status: "todo" | "done") => void;
   onUnschedule: () => void;
 }) {
   const [title, setTitle] = useState(task.title);
   const [notes, setNotes] = useState(task.notes);
+  const [status, setStatus] = useState<TaskStatus>(task.status);
   const [priority, setPriority] = useState<Priority>(task.priority);
   const [estimatedMinutes, setEstimatedMinutes] = useState(task.estimatedMinutes);
   const [dueAt, setDueAt] = useState(toDateTimeInput(task.dueAt));
   const [startsAt, setStartsAt] = useState(toDateTimeInput(block?.start ?? null));
   const [endsAt, setEndsAt] = useState(toDateTimeInput(block?.end ?? null));
-  const [preferredTimeBand, setPreferredTimeBand] = useState<PreferredTimeBand>(
-    task.preferredTimeBand,
-  );
-  const [preferredWindowStart, setPreferredWindowStart] = useState(
-    task.preferredWindowStart ?? "",
-  );
-  const [preferredWindowEnd, setPreferredWindowEnd] = useState(
-    task.preferredWindowEnd ?? "",
-  );
   const [areaId, setAreaId] = useState(task.areaId ?? "");
   const [projectId, setProjectId] = useState(task.projectId ?? "");
   const [tagIds, setTagIds] = useState(task.tags.map((tag) => tag.id));
@@ -1212,225 +2248,296 @@ function TaskEditor({
   const [recurrence, setRecurrence] = useState<RecurrenceRule | null>(
     task.recurrence ?? null,
   );
+  const compactFieldClassName =
+    "h-9 rounded-[14px] border-[var(--task-modal-border)] bg-[var(--task-modal-neutral)] px-3 text-[13px] shadow-none";
+  const compactTextAreaClassName =
+    "min-h-[88px] rounded-[18px] border-[var(--task-modal-border)] bg-[var(--task-modal-neutral)] px-3 py-2.5 text-[13px] leading-5 shadow-none";
 
   return (
-    <div className="grid gap-5">
-      <div className="flex items-center gap-2">
-        <Button
-          variant={task.status === "done" ? "outline" : "solid"}
-          onClick={() => onToggle(task.status === "done" ? "todo" : "done")}
-        >
-          {task.status === "done" ? "Reopen task" : "Mark complete"}
-        </Button>
-        {block ? (
-          <Button variant="outline" onClick={onUnschedule}>
-            Move to inbox
-          </Button>
-        ) : null}
-      </div>
-
-      <Field label="Title">
-        <Input value={title} onChange={(event) => setTitle(event.target.value)} />
-      </Field>
-
-      <Field label="Notes">
-        <Textarea value={notes} onChange={(event) => setNotes(event.target.value)} />
-      </Field>
-
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Priority">
-          <Select value={priority} onChange={(event) => setPriority(event.target.value as Priority)}>
-            {PRIORITIES.map((item) => (
-              <option key={item} value={item}>
-                {PRIORITY_LABELS[item]}
-              </option>
-            ))}
-          </Select>
-        </Field>
-        <Field label="Estimated duration">
+    <div className="grid gap-3">
+      <div className="grid gap-3 rounded-[22px] border border-[var(--task-modal-border)] bg-[var(--task-modal-neutral)] p-3">
+        <Field label="Task name">
           <Input
-            type="number"
-            min={15}
-            step={15}
-            value={estimatedMinutes}
-            onChange={(event) => setEstimatedMinutes(Number(event.target.value))}
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+            className={compactFieldClassName}
           />
         </Field>
-      </div>
-
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Due date">
-          <Input
-            type="datetime-local"
-            value={dueAt}
-            onChange={(event) => setDueAt(event.target.value)}
-          />
-        </Field>
-        <Field label="Preferred band">
-          <Select
-            value={preferredTimeBand}
-            onChange={(event) =>
-              setPreferredTimeBand(event.target.value as PreferredTimeBand)
-            }
-          >
-            {TIME_BANDS.map((item) => (
-              <option key={item} value={item}>
-                {TIME_BAND_LABELS[item]}
-              </option>
-            ))}
-          </Select>
-        </Field>
-      </div>
-
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Preferred window start">
-          <Input
-            type="time"
-            value={preferredWindowStart}
-            onChange={(event) => setPreferredWindowStart(event.target.value)}
-          />
-        </Field>
-        <Field label="Preferred window end">
-          <Input
-            type="time"
-            value={preferredWindowEnd}
-            onChange={(event) => setPreferredWindowEnd(event.target.value)}
-          />
-        </Field>
-      </div>
-
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Scheduled start">
-          <Input
-            type="datetime-local"
-            value={startsAt}
-            onChange={(event) => setStartsAt(event.target.value)}
-          />
-        </Field>
-        <Field label="Scheduled end">
-          <Input
-            type="datetime-local"
-            value={endsAt}
-            onChange={(event) => setEndsAt(event.target.value)}
-          />
-        </Field>
-      </div>
-
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Area">
-          <Select value={areaId} onChange={(event) => setAreaId(event.target.value)}>
-            <option value="">No area</option>
-            {plannerData.areas.map((area) => (
-              <option key={area.id} value={area.id}>
-                {area.name}
-              </option>
-            ))}
-          </Select>
-        </Field>
-        <Field label="Project">
-          <Select value={projectId} onChange={(event) => setProjectId(event.target.value)}>
-            <option value="">No project</option>
-            {plannerData.projects
-              .filter((project) => !areaId || project.areaId === areaId)
-              .map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.name}
-                </option>
-              ))}
-          </Select>
-        </Field>
-      </div>
-
-      <Field label="Tags">
-        <div className="flex flex-wrap gap-2">
-          {plannerData.tags.map((tag) => {
-            const active = tagIds.includes(tag.id);
-            return (
-              <button
-                key={tag.id}
-                type="button"
-                onClick={() =>
-                  setTagIds((current) =>
-                    current.includes(tag.id)
-                      ? current.filter((item) => item !== tag.id)
-                      : [...current, tag.id],
-                  )
-                }
-                className={cn(
-                  "rounded-full border px-3 py-2 text-xs font-medium uppercase tracking-[0.16em]",
-                  active
-                    ? "border-[var(--accent-strong)] bg-[var(--accent-soft)] text-[var(--accent-stronger)]"
-                    : "border-[var(--border)] bg-white text-[var(--muted-foreground)]",
-                )}
-              >
-                {tag.name}
-              </button>
-            );
-          })}
-        </div>
-      </Field>
-
-      <Field label="Checklist">
-        <div className="grid gap-2 rounded-[24px] border border-[var(--border)] bg-white p-4">
-          {checklist.map((item, index) => (
-            <div key={item.id ?? `${index}-${item.label}`} className="flex items-center gap-3">
-              <Checkbox
-                checked={item.completed}
-                onChange={(event) =>
-                  setChecklist((current) =>
-                    current.map((entry, entryIndex) =>
-                      entryIndex === index
-                        ? { ...entry, completed: event.target.checked }
-                        : entry,
-                    ),
-                  )
-                }
-              />
-              <Input
-                value={item.label}
-                onChange={(event) =>
-                  setChecklist((current) =>
-                    current.map((entry, entryIndex) =>
-                      entryIndex === index
-                        ? { ...entry, label: event.target.value }
-                        : entry,
-                    ),
-                  )
-                }
-              />
-              <Button
-                variant="ghost"
-                onClick={() =>
-                  setChecklist((current) =>
-                    current.filter((_, entryIndex) => entryIndex !== index),
-                  )
-                }
-              >
-                <Trash2 className="h-4 w-4" />
-              </Button>
-            </div>
+        <div className="flex flex-wrap gap-1.5">
+          {BOARD_COLUMNS.map((column) => (
+            <Button
+              key={column.id}
+              type="button"
+              variant={status === column.id ? "solid" : "outline"}
+              size="sm"
+              onClick={() => setStatus(column.id)}
+            >
+              {column.label}
+            </Button>
           ))}
-          <Button
-            variant="outline"
-            onClick={() =>
-              setChecklist((current) => [
-                ...current,
-                { label: "", completed: false },
-              ])
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          <Badge tone={block ? "accent" : "neutral"}>
+            {block
+              ? `${format(parseISO(block.start), "EEE h:mm a")} - ${format(parseISO(block.end), "h:mm a")}`
+              : "Unscheduled"}
+          </Badge>
+          <Badge tone="neutral">{formatMinutes(estimatedMinutes)}</Badge>
+          {task.project ? <Badge tone="neutral">{task.project.name}</Badge> : null}
+          {task.dueAt ? (
+            <Badge tone={isTaskOverdue(task) ? "danger" : "neutral"}>
+              Due {format(parseISO(task.dueAt), "MMM d, h:mm a")}
+            </Badge>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,0.96fr)]">
+        <div className="grid gap-3">
+          <TaskDetailSection
+            title="Schedule"
+            caption="Time, duration, and queue placement."
+            action={
+              block ? (
+                <Button variant="outline" size="sm" onClick={onUnschedule}>
+                  Move to queue
+                </Button>
+              ) : null
             }
           >
-            Add checklist item
-          </Button>
+            <Field label="Due date">
+              <DateTimePicker
+                value={dueAt}
+                onChange={setDueAt}
+                className={compactFieldClassName}
+              />
+            </Field>
+            <Field label="Estimated mins">
+              <Input
+                type="number"
+                min={15}
+                step={15}
+                value={estimatedMinutes}
+                onChange={(event) => {
+                  const newDuration = Number(event.target.value);
+                  setEstimatedMinutes(newDuration);
+                  if (startsAt) {
+                    const dt = parseISO(startsAt);
+                    if (!isNaN(dt.getTime())) {
+                      setEndsAt(toDateTimeInput(addMinutes(dt, newDuration).toISOString()));
+                    }
+                  }
+                }}
+                className={compactFieldClassName}
+              />
+            </Field>
+            <Field label="Start">
+              <DateTimePicker
+                value={startsAt}
+                onChange={(val) => {
+                  setStartsAt(val);
+                  if (val && estimatedMinutes) {
+                    const dt = parseISO(val);
+                    if (!isNaN(dt.getTime())) {
+                      setEndsAt(toDateTimeInput(addMinutes(dt, estimatedMinutes).toISOString()));
+                    }
+                  }
+                }}
+                className={compactFieldClassName}
+              />
+            </Field>
+            <Field label="End">
+              <DateTimePicker
+                value={endsAt}
+                onChange={(val) => {
+                  setEndsAt(val);
+                  if (startsAt && val) {
+                    const startDt = parseISO(startsAt);
+                    const endDt = parseISO(val);
+                    if (!isNaN(startDt.getTime()) && !isNaN(endDt.getTime())) {
+                      const diff = differenceInMinutes(endDt, startDt);
+                      if (diff > 0) {
+                        setEstimatedMinutes(diff);
+                      }
+                    }
+                  }
+                }}
+                className={compactFieldClassName}
+              />
+            </Field>
+          </TaskDetailSection>
+
+          <TaskDetailSection
+            title="Notes & focus"
+            caption="Context for the work."
+          >
+            <Field label="Notes">
+              <Textarea
+                value={notes}
+                onChange={(event) => setNotes(event.target.value)}
+                className={compactTextAreaClassName}
+              />
+            </Field>
+            <Field label="Priority">
+              <Select
+                value={priority}
+                onChange={(event) => setPriority(event.target.value as Priority)}
+                className={compactFieldClassName}
+              >
+                {PRIORITIES.map((item) => (
+                  <option key={item} value={item}>
+                    {PRIORITY_LABELS[item]}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          </TaskDetailSection>
         </div>
-      </Field>
+        <div className="grid gap-3">
+          <TaskDetailSection
+            title="Organization"
+            caption="Area, project, and tags."
+          >
+            <Field label="Area">
+              <Select
+                value={areaId}
+                onChange={(event) => setAreaId(event.target.value)}
+                className={compactFieldClassName}
+              >
+                <option value="">No area</option>
+                {plannerData.areas.map((area) => (
+                  <option key={area.id} value={area.id}>
+                    {area.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Project">
+              <Select
+                value={projectId}
+                onChange={(event) => setProjectId(event.target.value)}
+                className={compactFieldClassName}
+              >
+                <option value="">No project</option>
+                {plannerData.projects
+                  .filter((project) => !areaId || project.areaId === areaId)
+                  .map((project) => (
+                    <option key={project.id} value={project.id}>
+                      {project.name}
+                    </option>
+                  ))}
+              </Select>
+            </Field>
+            <Field label="Tags">
+              <div className="flex flex-wrap gap-1.5">
+                {plannerData.tags.map((tag) => {
+                  const active = tagIds.includes(tag.id);
+                  return (
+                    <button
+                      key={tag.id}
+                      type="button"
+                      onClick={() =>
+                        setTagIds((current) =>
+                          current.includes(tag.id)
+                            ? current.filter((item) => item !== tag.id)
+                            : [...current, tag.id],
+                        )
+                      }
+                      className={cn(
+                        "rounded-full border px-2.5 py-1.5 text-[11px] font-medium transition",
+                        active
+                          ? "border-[var(--accent-strong)] bg-[var(--accent-soft)] text-[var(--accent-stronger)]"
+                          : "border-[var(--task-modal-border)] bg-[var(--task-modal-neutral)] text-[var(--muted-foreground)]",
+                      )}
+                    >
+                      {tag.name}
+                    </button>
+                  );
+                })}
+              </div>
+            </Field>
+          </TaskDetailSection>
 
-      <RecurrenceFields recurrence={recurrence} onChange={setRecurrence} />
+          <TaskDetailSection
+            title="Checklist"
+            caption="Keep subtasks readable."
+          >
+            <div className="grid max-h-32 gap-2 overflow-y-auto pr-1">
+              {checklist.length ? (
+                checklist.map((item, index) => (
+                  <div
+                    key={item.id ?? `${index}-${item.label}`}
+                    className="flex items-center gap-2 rounded-[16px] border border-[var(--task-modal-border)] bg-[var(--task-modal-neutral)] px-2.5 py-2"
+                  >
+                    <Checkbox
+                      checked={item.completed}
+                      onChange={(event) =>
+                        setChecklist((current) =>
+                          current.map((entry, entryIndex) =>
+                            entryIndex === index
+                              ? { ...entry, completed: event.target.checked }
+                              : entry,
+                          ),
+                        )
+                      }
+                    />
+                    <Input
+                      value={item.label}
+                      onChange={(event) =>
+                        setChecklist((current) =>
+                          current.map((entry, entryIndex) =>
+                            entryIndex === index
+                              ? { ...entry, label: event.target.value }
+                              : entry,
+                          ),
+                        )
+                      }
+                      className="h-8 border-0 bg-transparent px-0 text-[13px] shadow-none focus:ring-0"
+                    />
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 rounded-full"
+                      onClick={() =>
+                        setChecklist((current) =>
+                          current.filter((_, entryIndex) => entryIndex !== index),
+                        )
+                      }
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                ))
+              ) : (
+                <div className="rounded-[16px] border border-dashed border-[var(--task-modal-border)] px-3 py-3 text-[12px] text-[var(--muted-foreground)]">
+                  No checklist items yet.
+                </div>
+              )}
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                setChecklist((current) => [
+                  ...current,
+                  { label: "", completed: false },
+                ])
+              }
+            >
+              Add checklist item
+            </Button>
+          </TaskDetailSection>
 
-      <div className="flex flex-wrap justify-between gap-3 border-t border-[var(--border)] pt-4">
-        <Button variant="danger" onClick={onDelete}>
+          <RecurrenceFields recurrence={recurrence} onChange={setRecurrence} />
+        </div>
+      </div>
+
+      <div className="flex flex-wrap justify-between gap-2 border-t border-[var(--border)] pt-3">
+        <Button variant="danger" size="sm" onClick={onDelete}>
           Delete task
         </Button>
         <Button
+          size="sm"
           onClick={() =>
             onSave({
               title,
@@ -1438,11 +2545,9 @@ function TaskEditor({
               priority,
               estimatedMinutes,
               dueAt: dueAt ? new Date(dueAt).toISOString() : null,
-              preferredTimeBand,
-              preferredWindowStart: preferredWindowStart || null,
-              preferredWindowEnd: preferredWindowEnd || null,
               areaId: areaId || null,
               projectId: projectId || null,
+              status,
               tagIds,
               checklist: checklist.filter((item) => item.label.trim()),
               recurrence,
@@ -1455,6 +2560,40 @@ function TaskEditor({
         </Button>
       </div>
     </div>
+  );
+}
+
+function TaskDetailSection({
+  title,
+  caption,
+  action,
+  children,
+  className,
+}: {
+  title: string;
+  caption: string;
+  action?: ReactNode;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <section
+      className={cn(
+        "grid gap-3 rounded-[20px] border border-[var(--task-modal-border)] bg-[var(--task-modal-card)] p-3",
+        className,
+      )}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--foreground-strong)]">
+            {title}
+          </p>
+          <p className="mt-1 text-[12px] leading-5 text-[var(--muted-foreground)]">{caption}</p>
+        </div>
+        {action}
+      </div>
+      {children}
+    </section>
   );
 }
 
@@ -1475,36 +2614,58 @@ function EventEditor({
   const [recurrence, setRecurrence] = useState<RecurrenceRule | null>(
     event.recurrence ?? null,
   );
+  const compactFieldClassName =
+    "h-9 rounded-[14px] border-[var(--task-modal-border)] bg-[var(--task-modal-neutral)] px-3 text-[13px] shadow-none";
+  const compactTextAreaClassName =
+    "min-h-[88px] rounded-[18px] border-[var(--task-modal-border)] bg-[var(--task-modal-neutral)] px-3 py-2.5 text-[13px] leading-5 shadow-none";
 
   return (
-    <div className="grid gap-5">
-      <Field label="Title">
-        <Input value={title} onChange={(event) => setTitle(event.target.value)} />
-      </Field>
-      <Field label="Notes">
-        <Textarea value={notes} onChange={(event) => setNotes(event.target.value)} />
-      </Field>
-      <Field label="Location">
-        <Input value={location} onChange={(event) => setLocation(event.target.value)} />
-      </Field>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Start">
-          <Input
-            type="datetime-local"
-            value={startsAt}
-            onChange={(event) => setStartsAt(event.target.value)}
-          />
-        </Field>
-        <Field label="End">
-          <Input
-            type="datetime-local"
-            value={endsAt}
-            onChange={(event) => setEndsAt(event.target.value)}
-          />
-        </Field>
+    <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,0.92fr)]">
+      <div className="grid gap-3">
+        <TaskDetailSection title="Details" caption="Edit the essentials.">
+          <Field label="Title">
+            <Input
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+              className={compactFieldClassName}
+            />
+          </Field>
+          <Field label="Notes">
+            <Textarea
+              value={notes}
+              onChange={(event) => setNotes(event.target.value)}
+              className={compactTextAreaClassName}
+            />
+          </Field>
+          <Field label="Location">
+            <Input
+              value={location}
+              onChange={(event) => setLocation(event.target.value)}
+              className={compactFieldClassName}
+            />
+          </Field>
+        </TaskDetailSection>
       </div>
-      <RecurrenceFields recurrence={recurrence} onChange={setRecurrence} />
-      <div className="flex flex-wrap justify-between gap-3 border-t border-[var(--border)] pt-4">
+      <div className="grid gap-3">
+        <TaskDetailSection title="Schedule" caption="Start and end stay stacked.">
+          <Field label="Start">
+            <DateTimePicker
+              value={startsAt}
+              onChange={setStartsAt}
+              className={compactFieldClassName}
+            />
+          </Field>
+          <Field label="End">
+            <DateTimePicker
+              value={endsAt}
+              onChange={setEndsAt}
+              className={compactFieldClassName}
+            />
+          </Field>
+        </TaskDetailSection>
+        <RecurrenceFields recurrence={recurrence} onChange={setRecurrence} />
+      </div>
+      <div className="flex flex-wrap justify-between gap-3 border-t border-[var(--border)] pt-3 md:col-span-2">
         <Button variant="danger" onClick={onDelete}>
           Delete event
         </Button>
@@ -1540,7 +2701,7 @@ function SettingsEditor({
   const [workHours, setWorkHours] = useState(settings.workHours);
 
   return (
-    <div className="grid gap-5">
+    <div className="grid gap-4">
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Timezone">
           <Input value={timezone} onChange={(event) => setTimezone(event.target.value)} />
@@ -1573,7 +2734,7 @@ function SettingsEditor({
       </Field>
 
       <Field label="Weekly work hours">
-        <div className="grid gap-3 rounded-[24px] border border-[var(--border)] bg-white p-4">
+        <div className="grid gap-3 rounded-[22px] border border-[var(--border)] bg-[var(--surface-elevated)] p-3.5">
           {DAY_LABELS.map((day, index) => {
             const current = workHours[index];
             return (
@@ -1639,15 +2800,11 @@ function RecurrenceFields({
   const current = recurrence ?? { frequency: "none" as const };
 
   return (
-    <div className="grid gap-4 rounded-[24px] border border-[var(--border)] bg-[var(--panel-subtle)] p-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-sm font-semibold">Recurrence</p>
-          <p className="text-sm text-[var(--muted-foreground)]">{recurrenceLabel(recurrence)}</p>
-        </div>
-        <Badge tone="neutral">Simple rules</Badge>
-      </div>
-
+    <TaskDetailSection
+      title="Recurrence"
+      caption={recurrenceLabel(recurrence)}
+      action={<Badge tone="neutral">Simple rules</Badge>}
+    >
       <Field label="Repeat">
         <Select
           value={current.frequency}
@@ -1664,6 +2821,7 @@ function RecurrenceFields({
               frequency,
             });
           }}
+          className="h-9 rounded-[14px] border-[var(--task-modal-border)] bg-[var(--task-modal-neutral)] px-3 text-[13px] shadow-none"
         >
           <option value="none">Does not repeat</option>
           <option value="daily">Daily</option>
@@ -1691,10 +2849,10 @@ function RecurrenceFields({
                     })
                   }
                   className={cn(
-                    "rounded-full border px-3 py-2 text-xs font-medium uppercase tracking-[0.16em]",
+                    "rounded-full border px-3 py-2 text-xs font-medium transition",
                     active
                       ? "border-[var(--accent-strong)] bg-[var(--accent-soft)] text-[var(--accent-stronger)]"
-                      : "border-[var(--border)] bg-white text-[var(--muted-foreground)]",
+                      : "border-[var(--task-modal-border)] bg-[var(--task-modal-neutral)] text-[var(--muted-foreground)]",
                   )}
                 >
                   {day}
@@ -1718,10 +2876,11 @@ function RecurrenceFields({
                   : null,
               })
             }
+            className="h-9 rounded-[14px] border-[var(--task-modal-border)] bg-[var(--task-modal-neutral)] px-3 text-[13px] shadow-none"
           />
         </Field>
       ) : null}
-    </div>
+    </TaskDetailSection>
   );
 }
 
@@ -1739,24 +2898,44 @@ function QuickAddDialog({
   onSubmit: (kind: Exclude<QuickAddKind, null>, payload: Record<string, unknown>) => void;
 }) {
   const visible = Boolean(open);
-  const fallbackStart = new Date();
-  const fallbackEnd = new Date(fallbackStart.getTime() + 60 * 60 * 1000);
+  const initialTaskScheduled = Boolean(defaults.startsAt && defaults.endsAt);
   const [taskTitle, setTaskTitle] = useState("");
   const [eventTitle, setEventTitle] = useState("");
   const [notes, setNotes] = useState("");
   const [location, setLocation] = useState("");
-  const [startsAt, setStartsAt] = useState(
-    toDateTimeInput(defaults.startsAt ?? fallbackStart.toISOString()),
-  );
-  const [endsAt, setEndsAt] = useState(
-    toDateTimeInput(defaults.endsAt ?? fallbackEnd.toISOString()),
-  );
+  const [scheduleTaskNow, setScheduleTaskNow] = useState(initialTaskScheduled);
   const [projectName, setProjectName] = useState("");
   const [areaName, setAreaName] = useState("");
   const [tagName, setTagName] = useState("");
   const [taskPriority, setTaskPriority] = useState<Priority>("medium");
   const [estimatedMinutes, setEstimatedMinutes] = useState(60);
   const [projectAreaId, setProjectAreaId] = useState("");
+  const suggestedWindow = (durationMinutes = 60) =>
+    buildDefaultEventWindow(plannerData.settings, new Date(), {
+      durationMinutes,
+      busyWindows: plannerData.scheduledItems.map((item) => ({
+        startsAt: item.start,
+        endsAt: item.end,
+      })),
+    });
+  const eventDefaultPlanningWindow = suggestedWindow();
+  const defaultDateTimes =
+    open === "task"
+      ? {
+          startsAt: initialTaskScheduled ? toDateTimeInput(defaults.startsAt ?? null) : "",
+          endsAt: initialTaskScheduled ? toDateTimeInput(defaults.endsAt ?? null) : "",
+        }
+      : open === "event"
+        ? {
+            startsAt: toDateTimeInput(defaults.startsAt ?? eventDefaultPlanningWindow.startsAt),
+            endsAt: toDateTimeInput(defaults.endsAt ?? eventDefaultPlanningWindow.endsAt),
+          }
+        : {
+            startsAt: "",
+            endsAt: "",
+          };
+  const [startsAt, setStartsAt] = useState(defaultDateTimes.startsAt);
+  const [endsAt, setEndsAt] = useState(defaultDateTimes.endsAt);
 
   if (!visible || !open) {
     return null;
@@ -1773,9 +2952,37 @@ function QuickAddDialog({
             ? "New area"
             : "New tag";
 
+  const submitLabel =
+    open === "task"
+      ? scheduleTaskNow
+        ? "Add to calendar"
+        : "Add to inbox"
+      : open === "event"
+        ? "Create event"
+        : open === "project"
+          ? "Add project"
+          : open === "area"
+            ? "Add area"
+            : "Add tag";
+
+  const submitDisabled =
+    (open === "task" &&
+      (!taskTitle.trim() || (scheduleTaskNow && (!startsAt || !endsAt)))) ||
+    (open === "event" && (!eventTitle.trim() || !startsAt || !endsAt)) ||
+    (open === "project" && !projectName.trim()) ||
+    (open === "area" && !areaName.trim()) ||
+    (open === "tag" && !tagName.trim());
+
+  const hydrateSuggestedSchedule = () => {
+    const window = suggestedWindow(estimatedMinutes);
+    setStartsAt(toDateTimeInput(defaults.startsAt ?? window.startsAt));
+    setEndsAt(toDateTimeInput(defaults.endsAt ?? window.endsAt));
+  };
+
   return (
-    <div className="fixed inset-0 z-40 bg-[rgba(22,24,18,0.18)]">
-      <div className="absolute inset-x-0 top-10 mx-auto w-full max-w-xl rounded-[32px] border border-[var(--border)] bg-[var(--surface)] p-6 shadow-[0_40px_120px_-48px_rgba(23,23,23,0.45)]">
+    <div className="fixed inset-0 z-40 bg-[var(--modal-backdrop)]">
+      <button type="button" className="absolute inset-0" onClick={onClose} aria-label="Close quick add" />
+      <div className="absolute inset-x-3 bottom-3 top-6 max-h-[calc(100svh-2.25rem)] overflow-y-auto rounded-[32px] border border-[var(--border-strong)] bg-[var(--surface)] p-6 shadow-[var(--shadow-float)] sm:inset-x-0 sm:top-10 sm:mx-auto sm:max-h-[calc(100svh-5rem)] sm:w-full sm:max-w-xl">
         <div className="mb-5 flex items-center justify-between">
           <div>
             <p className="text-xs uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
@@ -1790,6 +2997,46 @@ function QuickAddDialog({
 
         {open === "task" ? (
           <div className="grid gap-4">
+            <div className="grid gap-3 rounded-[24px] border border-[var(--border)] bg-[var(--panel-subtle)] p-4">
+              <div>
+                <p className="text-sm font-semibold text-[var(--foreground-strong)]">
+                  Decide later or place it now
+                </p>
+                <p className="text-sm text-[var(--muted-foreground)]">
+                  New tasks can stay in the inbox until you drag them onto the calendar.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant={scheduleTaskNow ? "outline" : "solid"}
+                  size="sm"
+                  onClick={() => setScheduleTaskNow(false)}
+                >
+                  Keep in inbox
+                </Button>
+                <Button
+                  variant={scheduleTaskNow ? "solid" : "outline"}
+                  size="sm"
+                  onClick={() => {
+                    setScheduleTaskNow(true);
+                    if (!startsAt || !endsAt) {
+                      hydrateSuggestedSchedule();
+                    }
+                  }}
+                >
+                  Schedule now
+                </Button>
+                {scheduleTaskNow ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={hydrateSuggestedSchedule}
+                  >
+                    Use next work slot
+                  </Button>
+                ) : null}
+              </div>
+            </div>
             <Field label="Task name">
               <Input value={taskTitle} onChange={(event) => setTaskTitle(event.target.value)} />
             </Field>
@@ -1815,26 +3062,55 @@ function QuickAddDialog({
                   step={15}
                   min={15}
                   value={estimatedMinutes}
-                  onChange={(event) => setEstimatedMinutes(Number(event.target.value))}
+                  onChange={(event) => {
+                    const newDuration = Number(event.target.value);
+                    setEstimatedMinutes(newDuration);
+                    if (startsAt) {
+                      const dt = parseISO(startsAt);
+                      if (!isNaN(dt.getTime())) {
+                        setEndsAt(toDateTimeInput(addMinutes(dt, newDuration).toISOString()));
+                      }
+                    }
+                  }}
                 />
               </Field>
             </div>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="Start">
-                <Input
-                  type="datetime-local"
-                  value={startsAt}
-                  onChange={(event) => setStartsAt(event.target.value)}
-                />
-              </Field>
-              <Field label="End">
-                <Input
-                  type="datetime-local"
-                  value={endsAt}
-                  onChange={(event) => setEndsAt(event.target.value)}
-                />
-              </Field>
-            </div>
+            {scheduleTaskNow ? (
+              <div className="grid gap-4">
+                <Field label="Scheduled start">
+                  <DateTimePicker
+                    value={startsAt}
+                    onChange={(val) => {
+                      setStartsAt(val);
+                      if (val && estimatedMinutes) {
+                        const dt = parseISO(val);
+                        if (!isNaN(dt.getTime())) {
+                          setEndsAt(toDateTimeInput(addMinutes(dt, estimatedMinutes).toISOString()));
+                        }
+                      }
+                    }}
+                  />
+                </Field>
+                <Field label="Scheduled end">
+                  <DateTimePicker
+                    value={endsAt}
+                    onChange={(val) => {
+                      setEndsAt(val);
+                      if (startsAt && val) {
+                        const startDt = parseISO(startsAt);
+                        const endDt = parseISO(val);
+                        if (!isNaN(startDt.getTime()) && !isNaN(endDt.getTime())) {
+                          const diff = differenceInMinutes(endDt, startDt);
+                          if (diff > 0) {
+                            setEstimatedMinutes(diff);
+                          }
+                        }
+                      }
+                    }}
+                  />
+                </Field>
+              </div>
+            ) : null}
           </div>
         ) : null}
 
@@ -1849,19 +3125,17 @@ function QuickAddDialog({
             <Field label="Notes">
               <Textarea value={notes} onChange={(event) => setNotes(event.target.value)} />
             </Field>
-            <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid gap-4">
               <Field label="Start">
-                <Input
-                  type="datetime-local"
+                <DateTimePicker
                   value={startsAt}
-                  onChange={(event) => setStartsAt(event.target.value)}
+                  onChange={setStartsAt}
                 />
               </Field>
               <Field label="End">
-                <Input
-                  type="datetime-local"
+                <DateTimePicker
                   value={endsAt}
-                  onChange={(event) => setEndsAt(event.target.value)}
+                  onChange={setEndsAt}
                 />
               </Field>
             </div>
@@ -1906,6 +3180,7 @@ function QuickAddDialog({
             Cancel
           </Button>
           <Button
+            disabled={submitDisabled}
             onClick={() => {
               if (open === "task") {
                 onSubmit("task", {
@@ -1913,8 +3188,10 @@ function QuickAddDialog({
                   notes,
                   priority: taskPriority,
                   estimatedMinutes,
-                  startsAt: startsAt ? new Date(startsAt).toISOString() : null,
-                  endsAt: endsAt ? new Date(endsAt).toISOString() : null,
+                  startsAt:
+                    scheduleTaskNow && startsAt ? new Date(startsAt).toISOString() : null,
+                  endsAt:
+                    scheduleTaskNow && endsAt ? new Date(endsAt).toISOString() : null,
                 });
               }
               if (open === "event") {
@@ -1944,7 +3221,7 @@ function QuickAddDialog({
               }
             }}
           >
-            Add
+            {submitLabel}
           </Button>
         </div>
       </div>
@@ -1954,8 +3231,9 @@ function QuickAddDialog({
 
 function KeyboardShortcuts({ onClose }: { onClose: () => void }) {
   return (
-    <div className="fixed inset-0 z-50 bg-[rgba(22,24,18,0.18)]">
-      <div className="absolute inset-x-0 top-16 mx-auto w-full max-w-md rounded-[28px] border border-[var(--border)] bg-[var(--surface)] p-6 shadow-[0_40px_120px_-48px_rgba(23,23,23,0.45)]">
+    <div className="fixed inset-0 z-50 bg-[var(--modal-backdrop)]">
+      <button type="button" className="absolute inset-0" onClick={onClose} aria-label="Close keyboard shortcuts" />
+      <div className="absolute inset-x-3 bottom-3 top-16 max-h-[calc(100svh-4.75rem)] overflow-y-auto rounded-[28px] border border-[var(--border-strong)] bg-[var(--surface)] p-6 shadow-[var(--shadow-float)] sm:inset-x-0 sm:mx-auto sm:w-full sm:max-w-md">
         <div className="mb-4 flex items-center justify-between">
           <div>
             <p className="text-xs uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
@@ -1968,16 +3246,24 @@ function KeyboardShortcuts({ onClose }: { onClose: () => void }) {
           </Button>
         </div>
         <div className="grid gap-3 text-sm">
+          <p className="rounded-[16px] border border-[var(--border)] bg-[var(--surface-muted)] px-4 py-3 text-[12px] leading-5 text-[var(--muted-foreground)]">
+            Use `Cmd/Ctrl + Alt + Shift` with the key shown below.
+          </p>
           {[
-            ["N", "New task"],
-            ["E", "New event"],
-            ["D", "Switch to day view"],
-            ["W", "Switch to week view"],
-            ["?", "Toggle this help"],
+            ["Cmd/Ctrl+Alt+Shift+N", "New task"],
+            ["Cmd/Ctrl+Alt+Shift+E", "New event"],
+            ["Cmd/Ctrl+Alt+Shift+D", "Switch to day view"],
+            ["Cmd/Ctrl+Alt+Shift+W", "Switch to week view"],
+            ["Cmd/Ctrl+Alt+Shift+A", "Switch to agenda view"],
+            ["Cmd/Ctrl+Alt+Shift+T", "Jump to today"],
+            ["Cmd/Ctrl+Alt+Shift+F", "Focus inbox search"],
+            ["Cmd/Ctrl+Alt+Shift+← / →", "Move backward or forward"],
+            ["Esc", "Close the active panel or dialog"],
+            ["Cmd/Ctrl+Alt+Shift+/", "Toggle this help"],
           ].map(([key, label]) => (
             <div
               key={key}
-              className="flex items-center justify-between rounded-[18px] border border-[var(--border)] bg-white px-4 py-3"
+              className="flex items-center justify-between rounded-[18px] border border-[var(--border)] bg-[var(--surface)] px-4 py-3"
             >
               <span>{label}</span>
               <Badge tone="neutral">{key}</Badge>

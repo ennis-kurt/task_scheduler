@@ -16,6 +16,7 @@ import {
   users,
 } from "@/db/schema";
 import { DEFAULT_SETTINGS } from "@/lib/planner/constants";
+import { calculateMinutes } from "@/lib/planner/date";
 import type {
   AppUserRecord,
   AreaRecord,
@@ -334,6 +335,11 @@ export const databaseRepository = {
     await ensureDbUser(userId);
     const db = getDb();
     const taskId = id("task");
+    const syncedEstimate =
+      input.estimatedMinutes ??
+      (input.startsAt && input.endsAt
+        ? calculateMinutes(input.startsAt, input.endsAt)
+        : 60);
 
     await db.insert(tasks).values({
       id: taskId,
@@ -341,7 +347,7 @@ export const databaseRepository = {
       title: input.title,
       notes: input.notes ?? "",
       priority: input.priority ?? "medium",
-      estimatedMinutes: input.estimatedMinutes ?? 60,
+      estimatedMinutes: syncedEstimate,
       dueAt: input.dueAt ? new Date(input.dueAt) : null,
       preferredTimeBand: input.preferredTimeBand ?? "anytime",
       preferredWindowStart: input.preferredWindowStart ?? null,
@@ -365,6 +371,11 @@ export const databaseRepository = {
   async updateTask(userId: string, taskId: string, input: UpdateTaskInput) {
     await ensureDbUser(userId);
     const db = getDb();
+    const syncedEstimate =
+      input.estimatedMinutes ??
+      (input.startsAt && input.endsAt
+        ? calculateMinutes(input.startsAt, input.endsAt)
+        : undefined);
 
     await db
       .update(tasks)
@@ -372,7 +383,7 @@ export const databaseRepository = {
         title: input.title,
         notes: input.notes,
         priority: input.priority,
-        estimatedMinutes: input.estimatedMinutes,
+        estimatedMinutes: syncedEstimate,
         dueAt: input.dueAt === undefined ? undefined : input.dueAt ? new Date(input.dueAt) : null,
         preferredTimeBand: input.preferredTimeBand,
         preferredWindowStart: input.preferredWindowStart,
@@ -429,6 +440,14 @@ export const databaseRepository = {
       updatedAt: now(),
     });
 
+    await db
+      .update(tasks)
+      .set({
+        estimatedMinutes: calculateMinutes(input.startsAt, input.endsAt),
+        updatedAt: now(),
+      })
+      .where(and(eq(tasks.id, input.taskId), eq(tasks.userId, userId)));
+
     const [record] = await db.select().from(taskBlocks).where(eq(taskBlocks.id, blockId)).limit(1);
     return mapTaskBlock(record);
   },
@@ -452,6 +471,14 @@ export const databaseRepository = {
     if (!record) {
       throw new Error("NOT_FOUND");
     }
+
+    await db
+      .update(tasks)
+      .set({
+        estimatedMinutes: calculateMinutes(iso(record.startsAt)!, iso(record.endsAt)!),
+        updatedAt: now(),
+      })
+      .where(and(eq(tasks.id, record.taskId), eq(tasks.userId, userId)));
 
     return mapTaskBlock(record);
   },

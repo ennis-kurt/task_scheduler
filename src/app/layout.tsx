@@ -31,8 +31,12 @@ export default function RootLayout({
     <html
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      suppressHydrationWarning
     >
-      <body className="min-h-full bg-[var(--surface)] text-[var(--foreground)]">
+      <body
+        className="min-h-full bg-[var(--surface)] text-[var(--foreground)]"
+        suppressHydrationWarning
+      >
         <Providers clerkEnabled={isClerkConfigured()}>{children}</Providers>
       </body>
     </html>

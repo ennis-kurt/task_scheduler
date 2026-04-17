@@ -112,7 +112,7 @@ export function createSeedSnapshot(userId = "demo-user"): WorkspaceSnapshot {
       preferredTimeBand: "evening",
       preferredWindowStart: "17:30",
       preferredWindowEnd: "20:30",
-      status: "todo",
+      status: "in_progress",
       completedAt: null,
       areaId: "area-health",
       projectId: "project-wellness",

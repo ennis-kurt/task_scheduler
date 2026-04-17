@@ -4,25 +4,24 @@ import { ClerkProvider } from "@clerk/nextjs";
 import { Toaster } from "sonner";
 import type { ReactNode } from "react";
 
+import { ThemeProvider } from "next-themes";
+
 type ProvidersProps = {
   children: ReactNode;
   clerkEnabled: boolean;
 };
 
 export function Providers({ children, clerkEnabled }: ProvidersProps) {
-  if (clerkEnabled) {
-    return (
-      <ClerkProvider>
-        {children}
-        <Toaster position="top-right" richColors />
-      </ClerkProvider>
-    );
-  }
-
-  return (
-    <>
+  const content = (
+    <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
       {children}
       <Toaster position="top-right" richColors />
-    </>
+    </ThemeProvider>
   );
+
+  if (clerkEnabled) {
+    return <ClerkProvider>{content}</ClerkProvider>;
+  }
+
+  return content;
 }
