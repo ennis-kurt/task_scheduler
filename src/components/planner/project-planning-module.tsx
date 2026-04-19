@@ -829,6 +829,16 @@ export function ProjectPlanningModule({
       : activeProject.health === "done"
         ? "success"
         : "accent";
+  const openMilestoneEditor = (milestone: PlannerMilestone) => {
+    setEditorState({
+      milestoneId: milestone.id,
+      projectId: milestone.projectId,
+      name: milestone.name,
+      description: milestone.description,
+      startDate: toInputDate(milestone.startDate),
+      deadline: toInputDate(milestone.deadline),
+    });
+  };
 
   return (
     <section className="relative grid min-w-0 gap-5">
@@ -908,27 +918,39 @@ export function ProjectPlanningModule({
                 {activeProject.milestones.map((milestone) => (
                   <article
                     key={milestone.id}
-                    className="grid gap-3 rounded-[24px] border border-[var(--border)] bg-[var(--surface-muted)] p-4 transition duration-150 hover:-translate-y-[1px] hover:border-[var(--border-strong)] hover:bg-[var(--surface-elevated)]"
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`Edit milestone ${milestone.name}`}
+                    onClick={(event) => {
+                      const target = event.target as HTMLElement;
+
+                      if (target.closest('[data-milestone-ignore-click="true"]')) {
+                        return;
+                      }
+
+                      openMilestoneEditor(milestone);
+                    }}
+                    onKeyDown={(event) => {
+                      const target = event.target as HTMLElement;
+
+                      if (
+                        target.closest('[data-milestone-ignore-click="true"]') ||
+                        (event.key !== "Enter" && event.key !== " ")
+                      ) {
+                        return;
+                      }
+
+                      event.preventDefault();
+                      openMilestoneEditor(milestone);
+                    }}
+                    className="grid gap-3 rounded-[24px] border border-[var(--border)] bg-[var(--surface-muted)] p-4 text-left transition duration-150 hover:-translate-y-[1px] hover:border-[var(--border-strong)] hover:bg-[var(--surface-elevated)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-soft)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--surface)]"
                   >
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            className="truncate text-left text-[15px] font-semibold text-[var(--foreground-strong)] transition hover:text-[var(--accent-strong)]"
-                            onClick={() =>
-                              setEditorState({
-                                milestoneId: milestone.id,
-                                projectId: milestone.projectId,
-                                name: milestone.name,
-                                description: milestone.description,
-                                startDate: toInputDate(milestone.startDate),
-                                deadline: toInputDate(milestone.deadline),
-                              })
-                            }
-                          >
+                          <span className="truncate text-[15px] font-semibold text-[var(--foreground-strong)]">
                             {milestone.name}
-                          </button>
+                          </span>
                           <Badge tone={milestoneTone(milestone.health)}>
                             {formatPercent(milestone.completionPercentage)}
                           </Badge>
@@ -942,25 +964,18 @@ export function ProjectPlanningModule({
                           {format(parseISO(milestone.startDate), "MMM d")} -{" "}
                           {format(parseISO(milestone.deadline), "MMM d")}
                         </Badge>
-                        <MilestoneActionMenu
-                          milestone={milestone}
-                          onEdit={() =>
-                            setEditorState({
-                              milestoneId: milestone.id,
-                              projectId: milestone.projectId,
-                              name: milestone.name,
-                              description: milestone.description,
-                              startDate: toInputDate(milestone.startDate),
-                              deadline: toInputDate(milestone.deadline),
-                            })
-                          }
-                          onDelete={async () => {
-                            if (!window.confirm(`Delete ${milestone.name}?`)) {
-                              return;
-                            }
-                            await onDeleteMilestone(milestone.id);
-                          }}
-                        />
+                        <div data-milestone-ignore-click="true">
+                          <MilestoneActionMenu
+                            milestone={milestone}
+                            onEdit={() => openMilestoneEditor(milestone)}
+                            onDelete={async () => {
+                              if (!window.confirm(`Delete ${milestone.name}?`)) {
+                                return;
+                              }
+                              await onDeleteMilestone(milestone.id);
+                            }}
+                          />
+                        </div>
                       </div>
                     </div>
 
@@ -980,7 +995,7 @@ export function ProjectPlanningModule({
                     </div>
 
                     {milestone.tasks.length ? (
-                      <div className="grid gap-2">
+                      <div className="grid gap-2" data-milestone-ignore-click="true">
                         {milestone.tasks.map((task) => (
                           <MilestoneTaskCard
                             key={task.id}
@@ -1000,6 +1015,7 @@ export function ProjectPlanningModule({
                       <Button
                         variant="ghost"
                         size="sm"
+                        data-milestone-ignore-click="true"
                         onClick={() =>
                           onOpenNewTask({
                             projectId: activeProject.project.id,
