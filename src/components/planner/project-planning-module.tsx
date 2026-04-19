@@ -29,9 +29,7 @@ import {
 import {
   CalendarClock,
   CheckCircle2,
-  FolderKanban,
   GripVertical,
-  ListTodo,
   MoreHorizontal,
   Pencil,
   Plus,
@@ -74,6 +72,9 @@ type ProjectPlanningModuleProps = {
   onOpenTask: (taskId: string) => void;
   onOpenNewTask: (defaults?: { projectId?: string; milestoneId?: string | null }) => void;
   onOpenNewProject: () => void;
+  milestoneComposerOpen: boolean;
+  onOpenMilestoneComposer: () => void;
+  onCloseMilestoneComposer: () => void;
   onCreateMilestone: (input: NewMilestoneInput) => Promise<void>;
   onUpdateMilestone: (
     milestoneId: string,
@@ -670,12 +671,14 @@ export function ProjectPlanningModule({
   onOpenTask,
   onOpenNewTask,
   onOpenNewProject,
+  milestoneComposerOpen,
+  onOpenMilestoneComposer,
+  onCloseMilestoneComposer,
   onCreateMilestone,
   onUpdateMilestone,
   onDeleteMilestone,
 }: ProjectPlanningModuleProps) {
   const [expandedMilestoneId, setExpandedMilestoneId] = useState<string | null>(null);
-  const [composerOpen, setComposerOpen] = useState(false);
   const [editorState, setEditorState] = useState<MilestoneEditorState | null>(null);
   const [draftMilestones, setDraftMilestones] = useState<
     Record<string, { startDate: string; deadline: string }>
@@ -830,10 +833,10 @@ export function ProjectPlanningModule({
   return (
     <section className="relative grid min-w-0 gap-5">
       <MilestoneComposer
-        open={composerOpen}
+        open={milestoneComposerOpen}
         projectPlans={projectPlans}
         initialProjectId={activeProject.project.id}
-        onClose={() => setComposerOpen(false)}
+        onClose={onCloseMilestoneComposer}
         onSubmit={onCreateMilestone}
       />
       <MilestoneEditor
@@ -846,71 +849,40 @@ export function ProjectPlanningModule({
 
       {surface === "plan" ? (
         <div className="grid min-w-0 gap-4">
-          <article className="grid min-w-0 gap-4 rounded-[28px] border border-[var(--border)] bg-[var(--surface)] p-5 shadow-[var(--shadow-soft)]">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div className="min-w-0">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
-                  Project plan
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            {[
+              {
+                label: "Progress",
+                value: formatPercent(activeProject.completionPercentage),
+              },
+              {
+                label: "Milestones",
+                value: String(activeProject.milestones.length || 1),
+              },
+              {
+                label: "Open tasks",
+                value: String(
+                  activeProject.totalTaskCount - activeProject.completedTaskCount,
+                ),
+              },
+              {
+                label: "Next deadline",
+                value: format(parseISO(nextDeadline), "MMM d"),
+              },
+            ].map((metric) => (
+              <div
+                key={metric.label}
+                className="rounded-[22px] border border-[var(--border)] bg-[var(--surface)] px-4 py-3 shadow-[var(--shadow-soft)] transition duration-150 hover:-translate-y-[1px] hover:border-[var(--border-strong)]"
+              >
+                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
+                  {metric.label}
                 </p>
-                <h3 className="mt-1 text-[1.55rem] font-semibold tracking-[-0.04em] text-[var(--foreground-strong)]">
-                  {activeProject.project.name}
-                </h3>
+                <p className="mt-2 text-[1.1rem] font-semibold text-[var(--foreground-strong)]">
+                  {metric.value}
+                </p>
               </div>
-              <div className="flex flex-wrap gap-2">
-                <Button variant="outline" size="sm" onClick={onOpenNewProject}>
-                  <FolderKanban className="h-4 w-4" />
-                  New project
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => onOpenNewTask({ projectId: activeProject.project.id })}
-                >
-                  <ListTodo className="h-4 w-4" />
-                  Add direct task
-                </Button>
-                <Button size="sm" onClick={() => setComposerOpen(true)}>
-                  <Plus className="h-4 w-4" />
-                  Add milestone
-                </Button>
-              </div>
-            </div>
-
-            <div className="grid gap-3 md:grid-cols-4">
-              {[
-                {
-                  label: "Progress",
-                  value: formatPercent(activeProject.completionPercentage),
-                },
-                {
-                  label: "Milestones",
-                  value: String(activeProject.milestones.length || 1),
-                },
-                {
-                  label: "Open tasks",
-                  value: String(
-                    activeProject.totalTaskCount - activeProject.completedTaskCount,
-                  ),
-                },
-                {
-                  label: "Next deadline",
-                  value: format(parseISO(nextDeadline), "MMM d"),
-                },
-              ].map((metric) => (
-                <div
-                  key={metric.label}
-                  className="rounded-[22px] border border-[var(--border)] bg-[var(--surface-muted)] px-4 py-3 transition duration-150 hover:-translate-y-[1px] hover:border-[var(--border-strong)] hover:bg-[var(--surface-elevated)]"
-                >
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
-                    {metric.label}
-                  </p>
-                  <p className="mt-2 text-[1.1rem] font-semibold text-[var(--foreground-strong)]">
-                    {metric.value}
-                  </p>
-                </div>
-              ))}
-            </div>
-          </article>
+            ))}
+          </div>
 
           <article className="grid gap-4 rounded-[28px] border border-[var(--border)] bg-[var(--surface)] p-5 shadow-[var(--shadow-soft)]">
             <div className="flex flex-wrap items-start justify-between gap-3">
@@ -1053,7 +1025,7 @@ export function ProjectPlanningModule({
                       This project will use a single project-wide phase until you add one.
                     </p>
                   </div>
-                  <Button size="sm" onClick={() => setComposerOpen(true)}>
+                  <Button size="sm" onClick={onOpenMilestoneComposer}>
                     <Plus className="h-4 w-4" />
                     Create milestone
                   </Button>

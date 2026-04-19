@@ -736,6 +736,7 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
     id: string;
     name: string;
   } | null>(null);
+  const [milestoneComposerOpen, setMilestoneComposerOpen] = useState(false);
   const [calendarCreateChoice, setCalendarCreateChoice] = useState<QuickAddDefaults | null>(null);
   const [pendingRecurringEdit, setPendingRecurringEdit] = useState<PendingRecurringEdit | null>(
     null,
@@ -1500,21 +1501,16 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
   return (
     <div className={cn("min-h-screen bg-[var(--background)]", isMobile && "pb-24")}>
       <header className="sticky top-0 z-20 border-b border-[var(--border)] bg-[var(--topbar-bg)]">
-        <div className="mx-auto flex max-w-[1600px] items-center gap-2.5 px-4 py-3 lg:px-5">
-          <div className="mr-auto">
+        <div className="mx-auto flex max-w-[1600px] items-center gap-2 px-4 py-2.5 lg:px-5">
+          <div className="mr-auto flex min-w-0 items-center gap-3">
             <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-[var(--muted-foreground)]">
               Daycraft planner
             </p>
-            <div className="mt-1 flex items-center gap-2.5">
-              <div className="text-[1.15rem] font-semibold tracking-[-0.04em] text-[var(--foreground-strong)]">
-                {plannerMode === "projects" ? "Project workspace" : "Schedule workspace"}
-              </div>
-              {plannerData.mode === "demo" ? (
-                <Badge tone="accent">Demo mode</Badge>
-              ) : (
-                <Badge tone="success">Private workspace</Badge>
-              )}
-            </div>
+            {plannerData.mode === "demo" ? (
+              <Badge tone="accent">Demo mode</Badge>
+            ) : (
+              <Badge tone="success">Private workspace</Badge>
+            )}
           </div>
 
           <div className="flex flex-wrap items-center gap-1.5">
@@ -1538,35 +1534,15 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
             </div>
           </div>
 
-          <div className="hidden items-center gap-1.5 md:flex">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => openQuickAdd("event")}
-              aria-label="New event"
-              title="New event"
-            >
-              <CalendarClock className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="solid"
-              size="sm"
-              onClick={() => openQuickAdd("task")}
-              aria-label="New task"
-              title="New task"
-            >
-              <Plus className="h-4 w-4" />
-            </Button>
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              onClick={() => setHelpOpen(true)}
-              aria-label="Shortcuts"
-              title="Shortcuts"
-            >
-              <Command className="h-4 w-4" />
-            </Button>
-          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setHelpOpen(true)}
+            aria-label="Shortcuts"
+            title="Shortcuts"
+          >
+            <Command className="h-4 w-4" />
+          </Button>
 
           <ThemeToggle />
 
@@ -1588,143 +1564,6 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
       </header>
 
       <main className="mx-auto max-w-[1600px] px-4 py-3 lg:px-5">
-        <section className="mb-3 rounded-[28px] border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[var(--shadow-soft)] sm:p-5">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div className="min-w-0">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--muted-foreground)]">
-                {plannerMode === "projects" ? "Project planning" : "Schedule"}
-              </p>
-              {plannerMode === "schedule" ? (
-                <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
-                  <PopoverTrigger asChild>
-                    <button className="mt-1 flex max-w-full items-center gap-1 text-left text-[clamp(1.8rem,2vw,2.6rem)] font-semibold tracking-[-0.05em] text-[var(--foreground-strong)] transition hover:text-[var(--accent-strong)]">
-                      <span className="truncate">{headerTitle}</span>
-                      <ChevronDown className="h-5 w-5 shrink-0 text-[var(--muted-foreground)]" />
-                    </button>
-                  </PopoverTrigger>
-                  <PopoverContent
-                    align="start"
-                    className="my-1 w-auto overflow-hidden rounded-[24px] border border-[var(--border-strong)] bg-[var(--surface-elevated)] p-0 shadow-[var(--shadow-soft)]"
-                  >
-                    {surface === "week" ? (
-                      <Calendar
-                        modifiers={selectedWeekModifiers}
-                        weekStartsOn={
-                          plannerData.settings.weekStart as 0 | 1 | 2 | 3 | 4 | 5 | 6
-                        }
-                        onDayClick={(date) => {
-                          moveToSurface(surface, format(date, "yyyy-MM-dd"));
-                          setPopoverOpen(false);
-                        }}
-                        initialFocus
-                      />
-                    ) : (
-                      <Calendar
-                        mode="single"
-                        selected={parseISO(focusedDate)}
-                        weekStartsOn={
-                          plannerData.settings.weekStart as 0 | 1 | 2 | 3 | 4 | 5 | 6
-                        }
-                        onDayClick={(date) => {
-                          moveToSurface(surface, format(date, "yyyy-MM-dd"));
-                          setPopoverOpen(false);
-                        }}
-                        initialFocus
-                      />
-                    )}
-                  </PopoverContent>
-                </Popover>
-              ) : (
-                <h1 className="mt-1 truncate text-[clamp(1.8rem,2vw,2.6rem)] font-semibold tracking-[-0.05em] text-[var(--foreground-strong)]">
-                  {headerTitle}
-                </h1>
-              )}
-            </div>
-
-            {plannerMode === "schedule" ? (
-              <div className="flex flex-wrap items-center gap-2">
-                <Button variant="outline" size="sm" onClick={() => navigateSurface("prev")}>
-                  Prev
-                </Button>
-                <Button variant="outline" size="sm" onClick={() => navigateSurface("today")}>
-                  Today
-                </Button>
-                <Button variant="outline" size="sm" onClick={() => navigateSurface("next")}>
-                  Next
-                </Button>
-                {surface === "week" ? (
-                  <Select
-                    value={showWeekends ? "full" : "work"}
-                    onChange={(e) => setShowWeekends(e.target.value === "full")}
-                    className="h-9 w-[134px] rounded-full bg-[var(--surface-elevated)] shadow-[var(--shadow-soft)]"
-                  >
-                    <option value="work">Work week</option>
-                    <option value="full">Full week</option>
-                  </Select>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-
-          <div className="mt-4 flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--surface-elevated)] p-1 shadow-[var(--shadow-soft)]">
-              {plannerMode === "schedule"
-                ? (Object.keys(SURFACE_LABELS) as PlannerSurface[]).map((view) => (
-                    <Button
-                      key={view}
-                      variant="ghost"
-                      size="sm"
-                      className={plannerAccentButtonClass(surface === view, "schedule")}
-                      data-testid={`surface-${view}`}
-                      onClick={() => moveToSurface(view)}
-                    >
-                      {SURFACE_LABELS[view]}
-                    </Button>
-                  ))
-                : (Object.keys(PROJECT_SURFACE_LABELS) as ProjectPlanningSurface[]).map((view) => (
-                    <Button
-                      key={view}
-                      variant="ghost"
-                      size="sm"
-                      className={plannerAccentButtonClass(projectSurface === view, "project")}
-                      data-testid={`project-surface-${view}`}
-                      onClick={() => setProjectSurface(view)}
-                    >
-                      {PROJECT_SURFACE_LABELS[view]}
-                    </Button>
-                  ))}
-            </div>
-
-            {plannerMode === "projects" ? (
-              <div className="flex gap-2 lg:hidden">
-                {plannerData.projectPlans.map((plan) => (
-                  <button
-                    key={plan.project.id}
-                    type="button"
-                    onClick={() => setActiveProjectId(plan.project.id)}
-                    className={cn(
-                      "rounded-full border px-3 py-1.5 text-[12px] font-medium transition",
-                      plan.project.id === selectedProjectId
-                        ? "border-transparent text-[var(--foreground-strong)]"
-                        : "border-[var(--border)] bg-[var(--surface-elevated)] text-[var(--muted-foreground)] hover:text-[var(--foreground-strong)]",
-                    )}
-                    style={
-                      plan.project.id === selectedProjectId
-                        ? {
-                            backgroundColor: withAlpha(plan.project.color, 0.14),
-                            color: plan.project.color,
-                          }
-                        : undefined
-                    }
-                  >
-                    {plan.project.name}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-          </div>
-        </section>
-
         <div
           className={cn(
             "grid gap-3",
@@ -1733,7 +1572,7 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
           )}
         >
         {plannerMode === "schedule" ? (
-        <aside className="hidden min-w-0 w-[198px] flex-col gap-3 overflow-y-auto pb-4 pr-1 lg:sticky lg:top-[78px] lg:flex lg:h-[calc(100vh-96px)]" style={{ scrollbarWidth: 'none' }}>
+        <aside className="hidden min-w-0 w-[198px] flex-col gap-3 overflow-y-auto pb-4 pr-1 lg:sticky lg:top-[66px] lg:flex lg:h-[calc(100vh-82px)]" style={{ scrollbarWidth: 'none' }}>
           {surface === "week" ? (
             <Calendar
               modifiers={selectedWeekModifiers}
@@ -1960,30 +1799,183 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
         />
         )}
 
-        {plannerMode === "schedule" ? (
-        <section className="relative rounded-[28px] border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[var(--shadow-soft)] sm:p-5">
-          <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <p className="text-[13px] font-medium text-[var(--muted-foreground)]">
-                {SURFACE_LABELS[surface]} view
-              </p>
-              <h2 className="mt-1 text-[1.55rem] font-semibold tracking-[-0.04em] text-[var(--foreground-strong)]">
-                {surfaceTitle}
-              </h2>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Button variant="outline" size="sm" onClick={() => openQuickAdd("event")}>
-                <CalendarClock className="h-4 w-4" />
-                New event
-              </Button>
-              <Button size="sm" onClick={() => openQuickAdd("task")}>
-                <Plus className="h-4 w-4" />
-                New task
-              </Button>
-            </div>
-          </div>
+        <div className="min-w-0">
+          <section className="sticky top-[66px] z-10 mb-3 rounded-[22px] border border-[var(--border)] bg-[var(--surface)] px-4 py-3 shadow-[var(--shadow-soft)]">
+            <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+              <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:items-center">
+                <div className="min-w-0">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
+                    {plannerMode === "projects" ? "Project planning" : "Schedule"}
+                  </p>
+                  {plannerMode === "schedule" ? (
+                    <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
+                      <PopoverTrigger asChild>
+                        <button className="mt-1 flex max-w-full items-center gap-1 text-left text-[1.6rem] font-semibold tracking-[-0.045em] text-[var(--foreground-strong)] transition hover:text-[var(--accent-strong)]">
+                          <span className="truncate">{headerTitle}</span>
+                          <ChevronDown className="h-4 w-4 shrink-0 text-[var(--muted-foreground)]" />
+                        </button>
+                      </PopoverTrigger>
+                      <PopoverContent
+                        align="start"
+                        className="my-1 w-auto overflow-hidden rounded-[24px] border border-[var(--border-strong)] bg-[var(--surface-elevated)] p-0 shadow-[var(--shadow-soft)]"
+                      >
+                        {surface === "week" ? (
+                          <Calendar
+                            modifiers={selectedWeekModifiers}
+                            weekStartsOn={
+                              plannerData.settings.weekStart as 0 | 1 | 2 | 3 | 4 | 5 | 6
+                            }
+                            onDayClick={(date) => {
+                              moveToSurface(surface, format(date, "yyyy-MM-dd"));
+                              setPopoverOpen(false);
+                            }}
+                            initialFocus
+                          />
+                        ) : (
+                          <Calendar
+                            mode="single"
+                            selected={parseISO(focusedDate)}
+                            weekStartsOn={
+                              plannerData.settings.weekStart as 0 | 1 | 2 | 3 | 4 | 5 | 6
+                            }
+                            onDayClick={(date) => {
+                              moveToSurface(surface, format(date, "yyyy-MM-dd"));
+                              setPopoverOpen(false);
+                            }}
+                            initialFocus
+                          />
+                        )}
+                      </PopoverContent>
+                    </Popover>
+                  ) : (
+                    <h1 className="mt-1 truncate text-[1.6rem] font-semibold tracking-[-0.045em] text-[var(--foreground-strong)]">
+                      {headerTitle}
+                    </h1>
+                  )}
+                </div>
 
-          <div className="flex h-full flex-col gap-4">
+                <div className="hidden h-8 w-px bg-[var(--border)] lg:block" />
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--surface-elevated)] p-1 shadow-[var(--shadow-soft)]">
+                    {plannerMode === "schedule"
+                      ? (Object.keys(SURFACE_LABELS) as PlannerSurface[]).map((view) => (
+                          <Button
+                            key={view}
+                            variant="ghost"
+                            size="sm"
+                            className={plannerAccentButtonClass(surface === view, "schedule")}
+                            data-testid={`surface-${view}`}
+                            onClick={() => moveToSurface(view)}
+                          >
+                            {SURFACE_LABELS[view]}
+                          </Button>
+                        ))
+                      : (Object.keys(PROJECT_SURFACE_LABELS) as ProjectPlanningSurface[]).map((view) => (
+                          <Button
+                            key={view}
+                            variant="ghost"
+                            size="sm"
+                            className={plannerAccentButtonClass(projectSurface === view, "project")}
+                            data-testid={`project-surface-${view}`}
+                            onClick={() => setProjectSurface(view)}
+                          >
+                            {PROJECT_SURFACE_LABELS[view]}
+                          </Button>
+                        ))}
+                  </div>
+
+                  {plannerMode === "projects" ? (
+                    <div className="flex gap-2 lg:hidden">
+                      {plannerData.projectPlans.map((plan) => (
+                        <button
+                          key={plan.project.id}
+                          type="button"
+                          onClick={() => setActiveProjectId(plan.project.id)}
+                          className={cn(
+                            "rounded-full border px-3 py-1.5 text-[12px] font-medium transition",
+                            plan.project.id === selectedProjectId
+                              ? "border-transparent text-[var(--foreground-strong)]"
+                              : "border-[var(--border)] bg-[var(--surface-elevated)] text-[var(--muted-foreground)] hover:text-[var(--foreground-strong)]",
+                          )}
+                          style={
+                            plan.project.id === selectedProjectId
+                              ? {
+                                  backgroundColor: withAlpha(plan.project.color, 0.14),
+                                  color: plan.project.color,
+                                }
+                              : undefined
+                          }
+                        >
+                          {plan.project.name}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                {plannerMode === "schedule" ? (
+                  <>
+                    <Button variant="outline" size="sm" onClick={() => navigateSurface("prev")}>
+                      Prev
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => navigateSurface("today")}>
+                      Today
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => navigateSurface("next")}>
+                      Next
+                    </Button>
+                    {surface === "week" ? (
+                      <Select
+                        value={showWeekends ? "full" : "work"}
+                        onChange={(e) => setShowWeekends(e.target.value === "full")}
+                        className="h-9 w-[134px] rounded-full bg-[var(--surface-elevated)] shadow-[var(--shadow-soft)]"
+                      >
+                        <option value="work">Work week</option>
+                        <option value="full">Full week</option>
+                      </Select>
+                    ) : null}
+                    <Button variant="outline" size="sm" onClick={() => openQuickAdd("event")}>
+                      <CalendarClock className="h-4 w-4" />
+                      New event
+                    </Button>
+                    <Button size="sm" onClick={() => openQuickAdd("task")}>
+                      <Plus className="h-4 w-4" />
+                      New task
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <Button variant="outline" size="sm" onClick={() => openQuickAdd("project")}>
+                      <FolderKanban className="h-4 w-4" />
+                      New project
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() =>
+                        openQuickAdd("task", {
+                          projectId: activeProjectPlan?.project.id ?? undefined,
+                        })
+                      }
+                    >
+                      <Plus className="h-4 w-4" />
+                      Add task
+                    </Button>
+                    <Button size="sm" onClick={() => setMilestoneComposerOpen(true)}>
+                      <Plus className="h-4 w-4" />
+                      Add milestone
+                    </Button>
+                  </>
+                )}
+              </div>
+            </div>
+          </section>
+
+          {plannerMode === "schedule" ? (
+          <section className="relative grid gap-4 rounded-[28px] border border-[var(--border)] bg-[var(--surface)] p-3 shadow-[var(--shadow-soft)] sm:p-4">
             {surface === "agenda" ? (
               <div className="grid gap-4">
                 <div className="flex snap-x snap-mandatory gap-3 overflow-x-auto px-0.5 pb-3" style={{ scrollbarWidth: 'thin' }}>
@@ -2058,28 +2050,31 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
                 select={handleCalendarSelect}
               />
             </div>
-          </div>
 
-          {isPending ? (
-            <div className="absolute right-6 top-6 rounded-full bg-[var(--button-solid-bg)] px-3 py-2 text-xs font-medium text-[var(--button-solid-fg)] shadow-[var(--shadow-soft)]">
-              Updating planner...
-            </div>
-          ) : null}
-        </section>
-        ) : (
-          <ProjectPlanningModule
-            projectPlans={plannerData.projectPlans}
-            activeProjectId={selectedProjectId}
-            isPending={isPending}
-            onOpenTask={(taskId) => setDrawerState({ type: "task", taskId })}
-            surface={projectSurface}
-            onOpenNewTask={(defaults) => openQuickAdd("task", defaults ?? {})}
-            onOpenNewProject={() => openQuickAdd("project")}
-            onCreateMilestone={createMilestone}
-            onUpdateMilestone={updateMilestone}
-            onDeleteMilestone={deleteMilestone}
-          />
-        )}
+            {isPending ? (
+              <div className="absolute right-5 top-5 rounded-full bg-[var(--button-solid-bg)] px-3 py-2 text-xs font-medium text-[var(--button-solid-fg)] shadow-[var(--shadow-soft)]">
+                Updating planner...
+              </div>
+            ) : null}
+          </section>
+          ) : (
+            <ProjectPlanningModule
+              projectPlans={plannerData.projectPlans}
+              activeProjectId={selectedProjectId}
+              isPending={isPending}
+              onOpenTask={(taskId) => setDrawerState({ type: "task", taskId })}
+              surface={projectSurface}
+              onOpenNewTask={(defaults) => openQuickAdd("task", defaults ?? {})}
+              onOpenNewProject={() => openQuickAdd("project")}
+              milestoneComposerOpen={milestoneComposerOpen}
+              onOpenMilestoneComposer={() => setMilestoneComposerOpen(true)}
+              onCloseMilestoneComposer={() => setMilestoneComposerOpen(false)}
+              onCreateMilestone={createMilestone}
+              onUpdateMilestone={updateMilestone}
+              onDeleteMilestone={deleteMilestone}
+            />
+          )}
+        </div>
         </div>
       </main>
 
@@ -2353,7 +2348,7 @@ function ProjectSidebar({
 }) {
   return (
     <aside
-      className="hidden min-w-0 w-[220px] flex-col gap-3 overflow-y-auto pb-4 pr-1 lg:sticky lg:top-[78px] lg:flex lg:h-[calc(100vh-96px)]"
+      className="hidden min-w-0 w-[220px] flex-col gap-3 overflow-y-auto pb-4 pr-1 lg:sticky lg:top-[66px] lg:flex lg:h-[calc(100vh-82px)]"
       style={{ scrollbarWidth: "none" }}
     >
       <div className="rounded-[24px] border border-[var(--border)] bg-[var(--surface)] p-3 shadow-[var(--shadow-soft)]">
