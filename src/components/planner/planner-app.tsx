@@ -1661,7 +1661,7 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
             ) : null}
           </div>
 
-          <section className="grid min-w-0 gap-2.5 overflow-hidden rounded-[20px] border border-[var(--border)] bg-[var(--surface)] px-2.5 py-2.5 shadow-[var(--shadow-soft)]">
+          <section className="flex flex-col flex-1 min-h-[200px] min-w-0 gap-2.5 overflow-hidden rounded-[20px] border border-[var(--border)] bg-[var(--surface)] px-2.5 py-2.5 shadow-[var(--shadow-soft)]">
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0 flex-1">
                 <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
@@ -1710,7 +1710,7 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
             </div>
 
             {queueTasks.length ? (
-              <div ref={queueRef} className="grid min-w-0 gap-2">
+              <div ref={queueRef} className="grid min-w-0 gap-2 overflow-y-auto flex-1 pr-1" style={{ scrollbarWidth: "thin" }}>
                 {queueTasks.map((task) => (
                   <QueueTaskCard
                     key={task.id}
