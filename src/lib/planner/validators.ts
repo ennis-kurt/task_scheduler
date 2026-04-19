@@ -6,6 +6,15 @@ const recurrenceSchema = z
     interval: z.number().int().positive().optional(),
     daysOfWeek: z.array(z.number().int().min(0).max(6)).optional(),
     until: z.string().datetime().nullable().optional(),
+    overrides: z
+      .record(
+        z.string(),
+        z.object({
+          startsAt: z.string().datetime(),
+          endsAt: z.string().datetime(),
+        }),
+      )
+      .optional(),
   })
   .nullable()
   .optional();
@@ -98,10 +107,24 @@ export const updateTaskBlockSchema = z
     taskId: z.string().optional(),
     startsAt: z.string().datetime().optional(),
     endsAt: z.string().datetime().optional(),
+    scope: z.enum(["series", "occurrence"]).optional(),
+    occurrenceKey: z.string().optional(),
+    originalStartsAt: z.string().datetime().optional(),
+    originalEndsAt: z.string().datetime().optional(),
   })
   .refine(
     (value) => validDateRange(value, { requireBoth: false }),
     "Task blocks must include both start and end times, and they must end after they start.",
+  )
+  .refine(
+    (value) => value.scope !== "occurrence" || Boolean(value.occurrenceKey),
+    "Recurring occurrence edits require an occurrence key.",
+  )
+  .refine(
+    (value) =>
+      (value.originalStartsAt == null && value.originalEndsAt == null) ||
+      Boolean(value.originalStartsAt && value.originalEndsAt && value.originalStartsAt < value.originalEndsAt),
+    "Original occurrence times must include both start and end times, and they must end after they start.",
   );
 
 export const eventSchema = eventBaseSchema.refine(
@@ -121,7 +144,10 @@ export const taxonomySchema = z.object({
   color: z.string().max(32).optional(),
   areaId: z.string().nullable().optional(),
   deadlineAt: z.string().datetime().nullable().optional(),
+  status: z.enum(["active", "completed", "archived"]).optional(),
 });
+
+export const updateProjectSchema = taxonomySchema.partial();
 
 const milestoneBaseSchema = z.object({
   projectId: z.string().min(1),

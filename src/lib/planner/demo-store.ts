@@ -18,6 +18,10 @@ function storePath() {
 function normalizeSnapshot(snapshot: WorkspaceSnapshot): WorkspaceSnapshot {
   return {
     ...snapshot,
+    projects: snapshot.projects.map((project) => ({
+      ...project,
+      status: project.status ?? "active",
+    })),
     milestones: Array.isArray(snapshot.milestones) ? snapshot.milestones : [],
     tasks: snapshot.tasks.map((task) => ({
       ...task,

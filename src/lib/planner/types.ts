@@ -1,4 +1,5 @@
 export type Priority = "low" | "medium" | "high" | "critical";
+export type ProjectStatus = "active" | "completed" | "archived";
 export type PreferredTimeBand =
   | "anytime"
   | "morning"
@@ -14,6 +15,13 @@ export type RecurrenceRule = {
   interval?: number;
   daysOfWeek?: number[];
   until?: string | null;
+  overrides?: Record<
+    string,
+    {
+      startsAt: string;
+      endsAt: string;
+    }
+  >;
 };
 
 export type AppUserRecord = {
@@ -54,6 +62,7 @@ export type ProjectRecord = {
   areaId: string | null;
   name: string;
   color: string;
+  status: ProjectStatus;
   deadlineAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -171,6 +180,7 @@ export type PlannerCalendarItem = {
   id: string;
   sourceId: string;
   instanceId: string;
+  occurrenceKey?: string | null;
   source: PlannerItemSource;
   taskId?: string;
   title: string;
@@ -213,6 +223,7 @@ export type PlannerMilestone = MilestoneRecord & {
   totalMinutes: number;
   remainingMinutes: number;
   health: MilestoneHealth;
+  synthetic?: boolean;
 };
 
 export type ProjectBurndownPoint = {
@@ -232,6 +243,8 @@ export type ProjectStatusBreakdown = {
 export type ProjectPlan = {
   project: ProjectRecord;
   milestones: PlannerMilestone[];
+  plottedMilestones: PlannerMilestone[];
+  hasFallbackMilestone: boolean;
   standaloneTasks: PlannerTask[];
   tasks: PlannerTask[];
   completionPercentage: number;
@@ -321,6 +334,14 @@ export type NewTaskBlockInput = {
 };
 
 export type UpdateTaskBlockInput = Partial<NewTaskBlockInput>;
+export type TaskBlockEditScope = "series" | "occurrence";
+
+export type UpdateRecurringTaskBlockInput = UpdateTaskBlockInput & {
+  scope?: TaskBlockEditScope;
+  occurrenceKey?: string | null;
+  originalStartsAt?: string;
+  originalEndsAt?: string;
+};
 
 export type NewEventInput = {
   title: string;
@@ -338,7 +359,10 @@ export type NewTaxonomyInput = {
   color?: string;
   areaId?: string | null;
   deadlineAt?: string | null;
+  status?: ProjectStatus;
 };
+
+export type UpdateProjectInput = Partial<NewTaxonomyInput>;
 
 export type UpdateSettingsInput = Partial<
   Pick<UserSettingsRecord, "timezone" | "weekStart" | "slotMinutes" | "workHours">

@@ -32,15 +32,19 @@ import {
   FolderKanban,
   GripVertical,
   ListTodo,
+  MoreHorizontal,
+  Pencil,
   Plus,
   Target,
   TrendingDown,
+  Trash2,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import type {
@@ -64,15 +68,18 @@ const CHART_COLORS = {
 
 type ProjectPlanningModuleProps = {
   projectPlans: ProjectPlan[];
+  activeProjectId: string;
+  surface: "plan" | "timeline" | "charts";
   isPending: boolean;
   onOpenTask: (taskId: string) => void;
-  onOpenNewTask: () => void;
+  onOpenNewTask: (defaults?: { projectId?: string; milestoneId?: string | null }) => void;
   onOpenNewProject: () => void;
   onCreateMilestone: (input: NewMilestoneInput) => Promise<void>;
   onUpdateMilestone: (
     milestoneId: string,
     input: UpdateMilestoneInput,
   ) => Promise<void>;
+  onDeleteMilestone: (milestoneId: string) => Promise<void>;
 };
 
 type MilestoneComposerState = {
@@ -87,6 +94,15 @@ type DragState = {
   milestoneId: string;
   mode: "move" | "start" | "end";
   pointerStartX: number;
+  startDate: string;
+  deadline: string;
+};
+
+type MilestoneEditorState = {
+  milestoneId: string;
+  projectId: string;
+  name: string;
+  description: string;
   startDate: string;
   deadline: string;
 };
@@ -217,7 +233,7 @@ function ChartCard({
   children,
 }: {
   title: string;
-  caption: string;
+  caption?: string;
   icon: ReactNode;
   children: ReactNode;
 }) {
@@ -228,9 +244,11 @@ function ChartCard({
           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
             {title}
           </p>
-          <p className="mt-1 text-[13px] leading-6 text-[var(--muted-foreground)]">
-            {caption}
-          </p>
+          {caption ? (
+            <p className="mt-1 text-[13px] leading-6 text-[var(--muted-foreground)]">
+              {caption}
+            </p>
+          ) : null}
         </div>
         <span className="flex h-10 w-10 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--surface-muted)] text-[var(--muted-foreground)]">
           {icon}
@@ -282,14 +300,14 @@ function MilestoneComposer({
   }
 
   return (
-    <div className="absolute inset-0 z-20 bg-[color:rgba(9,13,23,0.42)]">
-      <div className="absolute inset-x-3 top-8 rounded-[28px] border border-[var(--border-strong)] bg-[color:rgba(18,23,35,0.92)] p-5 shadow-[var(--shadow-float)] backdrop-blur-[14px] sm:left-1/2 sm:max-w-lg sm:-translate-x-1/2">
+    <div className="absolute inset-0 z-20 bg-[var(--modal-backdrop)]">
+      <div className="absolute inset-x-3 top-8 rounded-[28px] border border-[var(--task-modal-border)] bg-[var(--task-modal-shell)] p-5 text-[var(--foreground)] shadow-[var(--shadow-float)] backdrop-blur-[14px] sm:left-1/2 sm:max-w-lg sm:-translate-x-1/2">
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
               Project Planning
             </p>
-            <h3 className="mt-1 text-[1.45rem] font-semibold tracking-[-0.04em] text-white">
+            <h3 className="mt-1 text-[1.45rem] font-semibold tracking-[-0.04em] text-[var(--foreground-strong)]">
               New milestone
             </h3>
           </div>
@@ -356,10 +374,7 @@ function MilestoneComposer({
           </div>
         </div>
 
-        <div className="mt-5 flex flex-wrap justify-between gap-2 border-t border-[color:rgba(255,255,255,0.08)] pt-4">
-          <p className="max-w-sm text-[12px] leading-5 text-[var(--muted-foreground)]">
-            Milestones anchor the Gantt chart and let tasks roll up into project progress.
-          </p>
+        <div className="mt-5 flex flex-wrap justify-end gap-2 border-t border-[var(--border)] pt-4">
           <div className="flex gap-2">
             <Button variant="outline" size="sm" onClick={onClose}>
               Cancel
@@ -428,33 +443,249 @@ function MilestoneTaskCard({
   );
 }
 
+function MilestoneEditor({
+  milestone,
+  projectPlans,
+  onClose,
+  onSave,
+  onDelete,
+}: {
+  milestone: MilestoneEditorState | null;
+  projectPlans: ProjectPlan[];
+  onClose: () => void;
+  onSave: (milestoneId: string, input: UpdateMilestoneInput) => Promise<void>;
+  onDelete: (milestoneId: string) => Promise<void>;
+}) {
+  const [form, setForm] = useState<MilestoneEditorState | null>(milestone);
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    setForm(milestone);
+  }, [milestone]);
+
+  if (!form) {
+    return null;
+  }
+
+  return (
+    <div className="absolute inset-0 z-20 bg-[var(--modal-backdrop)]">
+      <div className="absolute inset-x-3 top-8 rounded-[28px] border border-[var(--task-modal-border)] bg-[var(--task-modal-shell)] p-5 text-[var(--foreground)] shadow-[var(--shadow-float)] sm:left-1/2 sm:max-w-lg sm:-translate-x-1/2">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
+              Milestone
+            </p>
+            <h3 className="mt-1 text-[1.45rem] font-semibold tracking-[-0.04em] text-[var(--foreground-strong)]">
+              Edit milestone
+            </h3>
+          </div>
+          <Button variant="ghost" size="sm" onClick={onClose}>
+            Close
+          </Button>
+        </div>
+
+        <div className="mt-5 grid gap-3">
+          <Field label="Project">
+            <Select
+              value={form.projectId}
+              onChange={(event) =>
+                setForm((current) =>
+                  current ? { ...current, projectId: event.target.value } : current,
+                )
+              }
+              className="h-10 rounded-[16px] bg-[var(--surface-muted)]"
+            >
+              {projectPlans.map((plan) => (
+                <option key={plan.project.id} value={plan.project.id}>
+                  {plan.project.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Milestone name">
+            <Input
+              value={form.name}
+              onChange={(event) =>
+                setForm((current) =>
+                  current ? { ...current, name: event.target.value } : current,
+                )
+              }
+              className="h-10 rounded-[16px] bg-[var(--surface-muted)]"
+            />
+          </Field>
+          <Field label="Description">
+            <Textarea
+              value={form.description}
+              onChange={(event) =>
+                setForm((current) =>
+                  current ? { ...current, description: event.target.value } : current,
+                )
+              }
+              className="min-h-[96px] rounded-[18px] bg-[var(--surface-muted)]"
+            />
+          </Field>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Start date">
+              <Input
+                type="date"
+                value={form.startDate}
+                onChange={(event) =>
+                  setForm((current) =>
+                    current ? { ...current, startDate: event.target.value } : current,
+                  )
+                }
+                className="h-10 rounded-[16px] bg-[var(--surface-muted)]"
+              />
+            </Field>
+            <Field label="Deadline">
+              <Input
+                type="date"
+                value={form.deadline}
+                onChange={(event) =>
+                  setForm((current) =>
+                    current ? { ...current, deadline: event.target.value } : current,
+                  )
+                }
+                className="h-10 rounded-[16px] bg-[var(--surface-muted)]"
+              />
+            </Field>
+          </div>
+        </div>
+
+        <div className="mt-5 flex flex-wrap items-center justify-between gap-2 border-t border-[var(--border)] pt-4">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-[color:#be123c] hover:bg-[rgba(225,29,72,0.08)] hover:text-[color:#9f1239] dark:text-[color:#fecdd3]"
+            onClick={async () => {
+              setSubmitting(true);
+              try {
+                await onDelete(form.milestoneId);
+                onClose();
+              } finally {
+                setSubmitting(false);
+              }
+            }}
+          >
+            <Trash2 className="h-4 w-4" />
+            Delete milestone
+          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              disabled={
+                submitting ||
+                !form.projectId ||
+                !form.name.trim() ||
+                !form.startDate ||
+                !form.deadline
+              }
+              onClick={async () => {
+                setSubmitting(true);
+                try {
+                  await onSave(form.milestoneId, {
+                    projectId: form.projectId,
+                    name: form.name.trim(),
+                    description: form.description.trim(),
+                    startDate: dateInputToIso(form.startDate),
+                    deadline: dateInputToIso(form.deadline),
+                  });
+                  onClose();
+                } finally {
+                  setSubmitting(false);
+                }
+              }}
+            >
+              Save changes
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MilestoneActionMenu({
+  milestone,
+  onEdit,
+  onDelete,
+}: {
+  milestone: PlannerMilestone;
+  onEdit: () => void;
+  onDelete: () => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+
+  if (milestone.synthetic) {
+    return null;
+  }
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button variant="ghost" size="sm" className="h-8 w-8 rounded-full p-0">
+          <MoreHorizontal className="h-4 w-4" />
+          <span className="sr-only">Open milestone actions</span>
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="end"
+        className="w-56 rounded-[18px] border border-[var(--border-strong)] bg-[var(--surface-elevated)] p-1.5 shadow-[var(--shadow-soft)]"
+      >
+        <button
+          type="button"
+          className="flex w-full items-center gap-2 rounded-[12px] px-3 py-2 text-left text-[13px] font-medium text-[var(--foreground-strong)] transition hover:bg-[var(--button-ghost-hover)]"
+          onClick={() => {
+            setOpen(false);
+            onEdit();
+          }}
+        >
+          <Pencil className="h-4 w-4 text-[var(--muted-foreground)]" />
+          Edit milestone
+        </button>
+        <button
+          type="button"
+          className="mt-1 flex w-full items-center gap-2 rounded-[12px] px-3 py-2 text-left text-[13px] font-medium text-[color:#be123c] transition hover:bg-[rgba(225,29,72,0.08)] dark:text-[color:#fecdd3]"
+          onClick={async () => {
+            setOpen(false);
+            await onDelete();
+          }}
+        >
+          <Trash2 className="h-4 w-4" />
+          Remove milestone
+        </button>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 export function ProjectPlanningModule({
   projectPlans,
+  activeProjectId,
+  surface,
   isPending,
   onOpenTask,
   onOpenNewTask,
   onOpenNewProject,
   onCreateMilestone,
   onUpdateMilestone,
+  onDeleteMilestone,
 }: ProjectPlanningModuleProps) {
-  const [activeProjectId, setActiveProjectId] = useState(projectPlans[0]?.project.id ?? "");
   const [expandedMilestoneId, setExpandedMilestoneId] = useState<string | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
+  const [editorState, setEditorState] = useState<MilestoneEditorState | null>(null);
   const [draftMilestones, setDraftMilestones] = useState<
     Record<string, { startDate: string; deadline: string }>
   >({});
   const [dragState, setDragState] = useState<DragState | null>(null);
 
   useEffect(() => {
-    if (!projectPlans.length) {
-      setActiveProjectId("");
-      return;
-    }
-
-    if (!projectPlans.some((plan) => plan.project.id === activeProjectId)) {
-      setActiveProjectId(projectPlans[0].project.id);
-    }
-  }, [activeProjectId, projectPlans]);
+    setExpandedMilestoneId(null);
+    setEditorState(null);
+  }, [activeProjectId]);
 
   useEffect(() => {
     if (!dragState) {
@@ -523,7 +754,10 @@ export function ProjectPlanningModule({
   }, [activeProjectId, draftMilestones, dragState, onUpdateMilestone, projectPlans]);
 
   const activeProject = useMemo(
-    () => projectPlans.find((plan) => plan.project.id === activeProjectId) ?? projectPlans[0] ?? null,
+    () =>
+      projectPlans.find((plan) => plan.project.id === activeProjectId) ??
+      projectPlans[0] ??
+      null,
     [activeProjectId, projectPlans],
   );
 
@@ -579,10 +813,19 @@ export function ProjectPlanningModule({
           ? CHART_COLORS.accent
           : CHART_COLORS.warning,
   }));
-  const milestoneChartData = activeProject.milestones.map((milestone) => ({
+  const plottedMilestones = activeProject.plottedMilestones;
+  const milestoneChartData = plottedMilestones.map((milestone) => ({
     name: milestone.name,
     progress: milestone.completionPercentage,
   }));
+  const nextDeadline =
+    plottedMilestones[0]?.deadline ?? activeProject.project.deadlineAt ?? activeProject.scheduleRange.end;
+  const projectHealthTone =
+    activeProject.health === "at_risk"
+      ? "danger"
+      : activeProject.health === "done"
+        ? "success"
+        : "accent";
 
   return (
     <section className="relative grid min-w-0 gap-5">
@@ -593,74 +836,278 @@ export function ProjectPlanningModule({
         onClose={() => setComposerOpen(false)}
         onSubmit={onCreateMilestone}
       />
+      <MilestoneEditor
+        milestone={editorState}
+        projectPlans={projectPlans}
+        onClose={() => setEditorState(null)}
+        onSave={onUpdateMilestone}
+        onDelete={onDeleteMilestone}
+      />
 
-      <div className="min-w-0 rounded-[28px] border border-[var(--border)] bg-[var(--surface)] p-5 shadow-[var(--shadow-soft)]">
-        <div className="flex min-w-0 flex-wrap items-start justify-between gap-4">
-          <div className="min-w-0">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
-              Project Planning
-            </p>
-            <h2 className="mt-1 text-[1.8rem] font-semibold tracking-[-0.05em] text-[var(--foreground-strong)]">
-              {activeProject.project.name}
-            </h2>
-            <p className="mt-2 max-w-3xl text-[14px] leading-7 text-[var(--muted-foreground)]">
-              Coordinate milestones, inspect project progress, and adjust delivery windows directly
-              in the Gantt timeline. Tasks can live under milestones or stay independent at the
-              project level.
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button variant="outline" size="sm" onClick={onOpenNewProject}>
-              <FolderKanban className="h-4 w-4" />
-              New project
-            </Button>
-            <Button variant="outline" size="sm" onClick={onOpenNewTask}>
-              <ListTodo className="h-4 w-4" />
-              New task
-            </Button>
-            <Button size="sm" onClick={() => setComposerOpen(true)}>
-              <Plus className="h-4 w-4" />
-              New milestone
-            </Button>
-          </div>
-        </div>
-
-        <div className="mt-4 flex snap-x snap-mandatory gap-2 overflow-x-auto pb-1">
-          {projectPlans.map((plan) => (
-            <button
-              key={plan.project.id}
-              type="button"
-              onClick={() => {
-                setActiveProjectId(plan.project.id);
-                setExpandedMilestoneId(null);
-              }}
-              className={cn(
-                "min-w-[168px] snap-start rounded-[20px] border px-4 py-3 text-left transition",
-                plan.project.id === activeProject.project.id
-                  ? "border-[var(--border-strong)] bg-[var(--surface-elevated)] shadow-[var(--shadow-soft)]"
-                  : "border-[var(--border)] bg-[var(--surface)] hover:border-[var(--border-strong)]",
-              )}
-            >
-              <div className="flex items-center justify-between gap-3">
-                <span className="truncate text-[13px] font-semibold text-[var(--foreground-strong)]">
-                  {plan.project.name}
-                </span>
-                <Badge tone={plan.health === "at_risk" ? "danger" : plan.health === "done" ? "success" : "accent"}>
-                  {formatPercent(plan.completionPercentage)}
-                </Badge>
+      {surface === "plan" ? (
+        <div className="grid min-w-0 gap-4">
+          <article className="grid min-w-0 gap-4 rounded-[28px] border border-[var(--border)] bg-[var(--surface)] p-5 shadow-[var(--shadow-soft)]">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="min-w-0">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
+                  Project plan
+                </p>
+                <h3 className="mt-1 text-[1.55rem] font-semibold tracking-[-0.04em] text-[var(--foreground-strong)]">
+                  {activeProject.project.name}
+                </h3>
               </div>
-              <p className="mt-2 text-[12px] leading-5 text-[var(--muted-foreground)]">
-                {plan.milestones.length} milestones, {plan.totalTaskCount} tasks
-              </p>
-            </button>
-          ))}
-        </div>
-      </div>
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" size="sm" onClick={onOpenNewProject}>
+                  <FolderKanban className="h-4 w-4" />
+                  New project
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onOpenNewTask({ projectId: activeProject.project.id })}
+                >
+                  <ListTodo className="h-4 w-4" />
+                  Add direct task
+                </Button>
+                <Button size="sm" onClick={() => setComposerOpen(true)}>
+                  <Plus className="h-4 w-4" />
+                  Add milestone
+                </Button>
+              </div>
+            </div>
 
+            <div className="grid gap-3 md:grid-cols-4">
+              {[
+                {
+                  label: "Progress",
+                  value: formatPercent(activeProject.completionPercentage),
+                },
+                {
+                  label: "Milestones",
+                  value: String(activeProject.milestones.length || 1),
+                },
+                {
+                  label: "Open tasks",
+                  value: String(
+                    activeProject.totalTaskCount - activeProject.completedTaskCount,
+                  ),
+                },
+                {
+                  label: "Next deadline",
+                  value: format(parseISO(nextDeadline), "MMM d"),
+                },
+              ].map((metric) => (
+                <div
+                  key={metric.label}
+                  className="rounded-[22px] border border-[var(--border)] bg-[var(--surface-muted)] px-4 py-3 transition duration-150 hover:-translate-y-[1px] hover:border-[var(--border-strong)] hover:bg-[var(--surface-elevated)]"
+                >
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
+                    {metric.label}
+                  </p>
+                  <p className="mt-2 text-[1.1rem] font-semibold text-[var(--foreground-strong)]">
+                    {metric.value}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </article>
+
+          <article className="grid gap-4 rounded-[28px] border border-[var(--border)] bg-[var(--surface)] p-5 shadow-[var(--shadow-soft)]">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
+                  Milestones
+                </p>
+                <h3 className="mt-1 text-[1.3rem] font-semibold tracking-[-0.04em] text-[var(--foreground-strong)]">
+                  Delivery phases
+                </h3>
+              </div>
+              <Badge tone={projectHealthTone}>
+                {activeProject.health === "at_risk"
+                  ? "At risk"
+                  : activeProject.health === "done"
+                    ? "Complete"
+                    : "On track"}
+              </Badge>
+            </div>
+
+            {activeProject.milestones.length ? (
+              <div className="grid gap-4">
+                {activeProject.milestones.map((milestone) => (
+                  <article
+                    key={milestone.id}
+                    className="grid gap-3 rounded-[24px] border border-[var(--border)] bg-[var(--surface-muted)] p-4 transition duration-150 hover:-translate-y-[1px] hover:border-[var(--border-strong)] hover:bg-[var(--surface-elevated)]"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            className="truncate text-left text-[15px] font-semibold text-[var(--foreground-strong)] transition hover:text-[var(--accent-strong)]"
+                            onClick={() =>
+                              setEditorState({
+                                milestoneId: milestone.id,
+                                projectId: milestone.projectId,
+                                name: milestone.name,
+                                description: milestone.description,
+                                startDate: toInputDate(milestone.startDate),
+                                deadline: toInputDate(milestone.deadline),
+                              })
+                            }
+                          >
+                            {milestone.name}
+                          </button>
+                          <Badge tone={milestoneTone(milestone.health)}>
+                            {formatPercent(milestone.completionPercentage)}
+                          </Badge>
+                        </div>
+                        <p className="mt-1 text-[12px] leading-5 text-[var(--muted-foreground)]">
+                          {milestone.description || "No brief added yet."}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <Badge tone="neutral">
+                          {format(parseISO(milestone.startDate), "MMM d")} -{" "}
+                          {format(parseISO(milestone.deadline), "MMM d")}
+                        </Badge>
+                        <MilestoneActionMenu
+                          milestone={milestone}
+                          onEdit={() =>
+                            setEditorState({
+                              milestoneId: milestone.id,
+                              projectId: milestone.projectId,
+                              name: milestone.name,
+                              description: milestone.description,
+                              startDate: toInputDate(milestone.startDate),
+                              deadline: toInputDate(milestone.deadline),
+                            })
+                          }
+                          onDelete={async () => {
+                            if (!window.confirm(`Delete ${milestone.name}?`)) {
+                              return;
+                            }
+                            await onDeleteMilestone(milestone.id);
+                          }}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="h-2 overflow-hidden rounded-full bg-[var(--surface)]">
+                      <div
+                        className="h-full rounded-full transition-[width]"
+                        style={{
+                          width: `${milestone.completionPercentage}%`,
+                          backgroundColor: milestoneFill(milestone.health),
+                        }}
+                      />
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      <Badge tone="neutral">{milestone.totalTaskCount} tasks</Badge>
+                      <Badge tone="neutral">{formatHours(milestone.remainingMinutes)} left</Badge>
+                    </div>
+
+                    {milestone.tasks.length ? (
+                      <div className="grid gap-2">
+                        {milestone.tasks.map((task) => (
+                          <MilestoneTaskCard
+                            key={task.id}
+                            taskTitle={task.title}
+                            meta={`${task.status.replace("_", " ")} • ${formatHours(task.estimatedMinutes)}${task.dueAt ? ` • due ${format(parseISO(task.dueAt), "MMM d")}` : ""}`}
+                            onClick={() => onOpenTask(task.id)}
+                          />
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="rounded-[18px] border border-dashed border-[var(--border)] bg-[var(--surface)] px-4 py-4 text-[13px] text-[var(--muted-foreground)]">
+                        No tasks assigned yet.
+                      </div>
+                    )}
+
+                    <div className="flex justify-end">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() =>
+                          onOpenNewTask({
+                            projectId: activeProject.project.id,
+                            milestoneId: milestone.id,
+                          })
+                        }
+                      >
+                        <Plus className="h-4 w-4" />
+                        Add task to milestone
+                      </Button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-[24px] border border-dashed border-[var(--border-strong)] bg-[var(--panel-subtle)] px-5 py-5">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-[15px] font-semibold text-[var(--foreground-strong)]">
+                      No milestones yet
+                    </p>
+                    <p className="mt-1 text-[13px] text-[var(--muted-foreground)]">
+                      This project will use a single project-wide phase until you add one.
+                    </p>
+                  </div>
+                  <Button size="sm" onClick={() => setComposerOpen(true)}>
+                    <Plus className="h-4 w-4" />
+                    Create milestone
+                  </Button>
+                </div>
+              </div>
+            )}
+          </article>
+
+          <article className="grid gap-3 rounded-[28px] border border-[var(--border)] bg-[var(--surface)] p-5 shadow-[var(--shadow-soft)]">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--muted-foreground)]">
+                  Direct project tasks
+                </p>
+                <h4 className="mt-1 text-[1.1rem] font-semibold tracking-[-0.03em] text-[var(--foreground-strong)]">
+                  Tasks outside milestones
+                </h4>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => onOpenNewTask({ projectId: activeProject.project.id })}
+              >
+                <Plus className="h-4 w-4" />
+                Add task
+              </Button>
+            </div>
+            {activeProject.standaloneTasks.length ? (
+              <div className="grid gap-2">
+                {activeProject.standaloneTasks.map((task) => (
+                  <MilestoneTaskCard
+                    key={task.id}
+                    taskTitle={task.title}
+                    meta={`${task.status.replace("_", " ")} • ${formatHours(task.estimatedMinutes)}${task.dueAt ? ` • due ${format(parseISO(task.dueAt), "MMM d")}` : ""}`}
+                    onClick={() => onOpenTask(task.id)}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-[18px] border border-dashed border-[var(--border)] bg-[var(--surface-muted)] px-4 py-4 text-[13px] text-[var(--muted-foreground)]">
+                {activeProject.milestones.length
+                  ? "All current tasks are already grouped into milestones."
+                  : "No direct project tasks yet."}
+              </div>
+            )}
+          </article>
+        </div>
+      ) : null}
+
+      {surface === "charts" ? (
+        <>
       <div className="grid min-w-0 gap-4 md:grid-cols-2 2xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,1fr)]">
         <ChartCard
           title="Overall Progress"
-          caption="Weighted by estimated task effort across the active project."
           icon={<Target className="h-4 w-4" />}
         >
           <div className="grid min-w-0 items-center gap-4 md:grid-cols-[172px_minmax(0,1fr)]">
@@ -713,7 +1160,6 @@ export function ProjectPlanningModule({
 
         <ChartCard
           title="Status Breakdown"
-          caption="See how work is distributed across to-do, active, and done states."
           icon={<CheckCircle2 className="h-4 w-4" />}
         >
           <div className="grid min-w-0 items-center gap-4 md:grid-cols-[170px_minmax(0,1fr)]">
@@ -759,7 +1205,6 @@ export function ProjectPlanningModule({
 
         <ChartCard
           title="Milestone Progress"
-          caption="Roll up completion across each milestone in the selected project."
           icon={<CalendarClock className="h-4 w-4" />}
         >
           <div className="h-[220px]">
@@ -789,7 +1234,6 @@ export function ProjectPlanningModule({
 
         <ChartCard
           title="Burndown"
-          caption="Track planned remaining effort against actual task completion."
           icon={<TrendingDown className="h-4 w-4" />}
         >
           <div className="h-[220px]">
@@ -842,6 +1286,47 @@ export function ProjectPlanningModule({
         </ChartCard>
       </div>
 
+      <article className="grid min-w-0 gap-3 rounded-[28px] border border-[var(--border)] bg-[var(--surface)] p-5 shadow-[var(--shadow-soft)]">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
+              Timeline Summary
+            </p>
+            <h3 className="mt-1 text-[1.35rem] font-semibold tracking-[-0.04em] text-[var(--foreground-strong)]">
+              Phases at a glance
+            </h3>
+          </div>
+          <Badge tone={activeProject.hasFallbackMilestone ? "neutral" : "accent"}>
+            {activeProject.hasFallbackMilestone ? "Project-wide phase" : `${plottedMilestones.length} plotted phases`}
+          </Badge>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2">
+          {plottedMilestones.map((milestone) => (
+            <div
+              key={milestone.id}
+              className="rounded-[20px] border border-[var(--border)] bg-[var(--surface-muted)] px-4 py-3"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-[14px] font-semibold text-[var(--foreground-strong)]">
+                  {milestone.name}
+                </p>
+                <Badge tone={milestoneTone(milestone.health)}>
+                  {formatPercent(milestone.completionPercentage)}
+                </Badge>
+              </div>
+              <p className="mt-2 text-[12px] leading-5 text-[var(--muted-foreground)]">
+                {format(parseISO(milestone.startDate), "MMM d")} -{" "}
+                {format(parseISO(milestone.deadline), "MMM d")}
+              </p>
+            </div>
+          ))}
+        </div>
+      </article>
+        </>
+      ) : null}
+
+      {surface === "timeline" ? (
+        <>
       <article className="min-w-0 rounded-[28px] border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[var(--shadow-soft)] sm:p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
@@ -851,17 +1336,19 @@ export function ProjectPlanningModule({
             <h3 className="mt-1 text-[1.5rem] font-semibold tracking-[-0.04em] text-[var(--foreground-strong)]">
               Milestones and delivery windows
             </h3>
-            <p className="mt-2 max-w-3xl text-[13px] leading-6 text-[var(--muted-foreground)]">
-              Drag a milestone by its grip to move it, or use the side handles to resize its
-              duration. Click the body of a milestone to reveal the tasks nested beneath it.
-            </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Badge tone={activeProject.health === "at_risk" ? "danger" : activeProject.health === "done" ? "success" : "accent"}>
-              {activeProject.health === "at_risk" ? "At risk" : activeProject.health === "done" ? "Complete" : "On track"}
+            <Badge tone={projectHealthTone}>
+              {activeProject.health === "at_risk"
+                ? "At risk"
+                : activeProject.health === "done"
+                  ? "Complete"
+                  : "On track"}
             </Badge>
             <Badge tone="neutral">
-              {activeProject.milestones.length} milestones
+              {activeProject.hasFallbackMilestone
+                ? "Project-wide timeline"
+                : `${plottedMilestones.length} milestones`}
             </Badge>
           </div>
         </div>
@@ -901,8 +1388,8 @@ export function ProjectPlanningModule({
               </div>
             </div>
 
-            {activeProject.milestones.length ? (
-              activeProject.milestones.map((milestone) => {
+            {plottedMilestones.length ? (
+              plottedMilestones.map((milestone) => {
                 const effectiveDates = draftMilestones[milestone.id] ?? {
                   startDate: milestone.startDate,
                   deadline: milestone.deadline,
@@ -924,6 +1411,7 @@ export function ProjectPlanningModule({
                 const left = startOffset * DAY_WIDTH + 4;
                 const width = Math.max(durationDays * DAY_WIDTH - 8, 44);
                 const isExpanded = expandedMilestoneId === milestone.id;
+                const canEditMilestone = !milestone.synthetic;
 
                 return (
                   <Fragment key={milestone.id}>
@@ -931,7 +1419,7 @@ export function ProjectPlanningModule({
                       className="grid border-b border-[var(--border)]"
                       style={{ gridTemplateColumns: `${LABEL_WIDTH}px ${timelineWidth}px` }}
                     >
-                      <div className="sticky left-0 z-[1] border-r border-[var(--border)] bg-[var(--surface)] px-4 py-4">
+                      <div className="sticky left-0 z-[1] border-r border-[var(--border)] bg-[var(--surface)] px-4 py-4 transition duration-150 hover:bg-[var(--surface-muted)]">
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
                             <p className="truncate text-[14px] font-semibold text-[var(--foreground-strong)]">
@@ -941,9 +1429,30 @@ export function ProjectPlanningModule({
                               {milestone.description || "Milestone without a short brief yet."}
                             </p>
                           </div>
-                          <Badge tone={milestoneTone(milestone.health)} className="shrink-0">
-                            {formatPercent(milestone.completionPercentage)}
-                          </Badge>
+                          <div className="flex items-center gap-1">
+                            <Badge tone={milestoneTone(milestone.health)} className="shrink-0">
+                              {formatPercent(milestone.completionPercentage)}
+                            </Badge>
+                            <MilestoneActionMenu
+                              milestone={milestone}
+                              onEdit={() =>
+                                setEditorState({
+                                  milestoneId: milestone.id,
+                                  projectId: milestone.projectId,
+                                  name: milestone.name,
+                                  description: milestone.description,
+                                  startDate: toInputDate(milestone.startDate),
+                                  deadline: toInputDate(milestone.deadline),
+                                })
+                              }
+                              onDelete={async () => {
+                                if (!window.confirm(`Delete ${milestone.name}?`)) {
+                                  return;
+                                }
+                                await onDeleteMilestone(milestone.id);
+                              }}
+                            />
+                          </div>
                         </div>
                         <div className="mt-3 flex flex-wrap gap-1.5">
                           <Badge tone="neutral">{milestone.totalTaskCount} tasks</Badge>
@@ -992,56 +1501,63 @@ export function ProjectPlanningModule({
                                 opacity: 0.9,
                               }}
                             />
+                            {canEditMilestone ? (
+                              <>
+                                <button
+                                  type="button"
+                                  className="absolute left-2 top-1/2 z-[2] flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full border border-[color:rgba(255,255,255,0.12)] bg-[color:rgba(255,255,255,0.08)] text-white/80"
+                                  onPointerDown={(event) => {
+                                    event.preventDefault();
+                                    setDragState({
+                                      milestoneId: milestone.id,
+                                      mode: "move",
+                                      pointerStartX: event.clientX,
+                                      startDate: effectiveDates.startDate,
+                                      deadline: effectiveDates.deadline,
+                                    });
+                                  }}
+                                  aria-label={`Move ${milestone.name}`}
+                                >
+                                  <GripVertical className="h-3.5 w-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  className="absolute inset-y-0 left-0 z-[3] w-3 cursor-ew-resize bg-transparent"
+                                  onPointerDown={(event) => {
+                                    event.preventDefault();
+                                    setDragState({
+                                      milestoneId: milestone.id,
+                                      mode: "start",
+                                      pointerStartX: event.clientX,
+                                      startDate: effectiveDates.startDate,
+                                      deadline: effectiveDates.deadline,
+                                    });
+                                  }}
+                                  aria-label={`Resize start of ${milestone.name}`}
+                                />
+                                <button
+                                  type="button"
+                                  className="absolute inset-y-0 right-0 z-[3] w-3 cursor-ew-resize bg-transparent"
+                                  onPointerDown={(event) => {
+                                    event.preventDefault();
+                                    setDragState({
+                                      milestoneId: milestone.id,
+                                      mode: "end",
+                                      pointerStartX: event.clientX,
+                                      startDate: effectiveDates.startDate,
+                                      deadline: effectiveDates.deadline,
+                                    });
+                                  }}
+                                  aria-label={`Resize end of ${milestone.name}`}
+                                />
+                              </>
+                            ) : null}
                             <button
                               type="button"
-                              className="absolute left-2 top-1/2 z-[2] flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full border border-[color:rgba(255,255,255,0.12)] bg-[color:rgba(255,255,255,0.08)] text-white/80"
-                              onPointerDown={(event) => {
-                                event.preventDefault();
-                                setDragState({
-                                  milestoneId: milestone.id,
-                                  mode: "move",
-                                  pointerStartX: event.clientX,
-                                  startDate: effectiveDates.startDate,
-                                  deadline: effectiveDates.deadline,
-                                });
-                              }}
-                              aria-label={`Move ${milestone.name}`}
-                            >
-                              <GripVertical className="h-3.5 w-3.5" />
-                            </button>
-                            <button
-                              type="button"
-                              className="absolute inset-y-0 left-0 z-[3] w-3 cursor-ew-resize bg-transparent"
-                              onPointerDown={(event) => {
-                                event.preventDefault();
-                                setDragState({
-                                  milestoneId: milestone.id,
-                                  mode: "start",
-                                  pointerStartX: event.clientX,
-                                  startDate: effectiveDates.startDate,
-                                  deadline: effectiveDates.deadline,
-                                });
-                              }}
-                              aria-label={`Resize start of ${milestone.name}`}
-                            />
-                            <button
-                              type="button"
-                              className="absolute inset-y-0 right-0 z-[3] w-3 cursor-ew-resize bg-transparent"
-                              onPointerDown={(event) => {
-                                event.preventDefault();
-                                setDragState({
-                                  milestoneId: milestone.id,
-                                  mode: "end",
-                                  pointerStartX: event.clientX,
-                                  startDate: effectiveDates.startDate,
-                                  deadline: effectiveDates.deadline,
-                                });
-                              }}
-                              aria-label={`Resize end of ${milestone.name}`}
-                            />
-                            <button
-                              type="button"
-                              className="relative z-[1] flex h-full w-full items-center justify-between gap-3 pl-12 pr-4 text-left"
+                              className={cn(
+                                "relative z-[1] flex h-full w-full items-center justify-between gap-3 pr-4 text-left",
+                                canEditMilestone ? "pl-12" : "pl-4",
+                              )}
                               onClick={() =>
                                 setExpandedMilestoneId((current) =>
                                   current === milestone.id ? null : milestone.id,
@@ -1071,14 +1587,10 @@ export function ProjectPlanningModule({
                         className="grid border-b border-[var(--border)]"
                         style={{ gridTemplateColumns: `${LABEL_WIDTH}px ${timelineWidth}px` }}
                       >
-                        <div className="sticky left-0 border-r border-[var(--border)] bg-[var(--surface)] px-4 py-4">
-                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
-                            Task drill-down
-                          </p>
-                          <p className="mt-2 text-[12px] leading-6 text-[var(--muted-foreground)]">
-                            Tasks directly assigned to this milestone. Project tasks without a
-                            milestone remain in the independent list below.
-                          </p>
+                      <div className="sticky left-0 border-r border-[var(--border)] bg-[var(--surface)] px-4 py-4">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
+                          Task drill-down
+                        </p>
                         </div>
                         <div className="grid gap-3 bg-[var(--surface)] p-4 md:grid-cols-2">
                           {milestone.tasks.length ? (
@@ -1101,39 +1613,13 @@ export function ProjectPlanningModule({
                   </Fragment>
                 );
               })
-            ) : (
-              <div
-                className="grid"
-                style={{ gridTemplateColumns: `${LABEL_WIDTH}px ${timelineWidth}px` }}
-              >
-                <div className="sticky left-0 border-r border-[var(--border)] bg-[var(--surface)] px-4 py-6">
-                  <p className="text-[14px] font-semibold text-[var(--foreground-strong)]">
-                    No milestones yet
-                  </p>
-                </div>
-                <div className="flex items-center justify-center bg-[var(--surface-muted)] px-6 py-10">
-                  <div className="max-w-md text-center">
-                    <p className="text-[14px] font-medium text-[var(--foreground-strong)]">
-                      Start plotting this project with its first milestone.
-                    </p>
-                    <p className="mt-2 text-[13px] leading-6 text-[var(--muted-foreground)]">
-                      The Gantt chart will populate as soon as a milestone is created.
-                    </p>
-                    <div className="mt-4">
-                      <Button size="sm" onClick={() => setComposerOpen(true)}>
-                        <Plus className="h-4 w-4" />
-                        New milestone
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
+            ) : null}
           </div>
         </div>
       </article>
 
       <div className="grid min-w-0 gap-4 2xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
+        {!activeProject.hasFallbackMilestone ? (
         <article className="grid min-w-0 gap-3 rounded-[24px] border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[var(--shadow-soft)]">
           <div className="flex items-start justify-between gap-4">
             <div>
@@ -1164,6 +1650,7 @@ export function ProjectPlanningModule({
             </div>
           )}
         </article>
+        ) : null}
 
         <article className="grid min-w-0 gap-3 rounded-[24px] border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[var(--shadow-soft)]">
           <div className="flex items-start justify-between gap-4">
@@ -1181,8 +1668,8 @@ export function ProjectPlanningModule({
           <div className="grid gap-2">
             {[
               {
-                label: "Milestones on track",
-                value: `${activeProject.milestones.filter((milestone) => milestone.health === "on_track" || milestone.health === "done").length} / ${activeProject.milestones.length}`,
+                label: activeProject.hasFallbackMilestone ? "Phases on track" : "Milestones on track",
+                value: `${plottedMilestones.filter((milestone) => milestone.health === "on_track" || milestone.health === "done").length} / ${plottedMilestones.length}`,
               },
               {
                 label: "Tasks completed",
@@ -1210,6 +1697,8 @@ export function ProjectPlanningModule({
           </div>
         </article>
       </div>
+        </>
+      ) : null}
     </section>
   );
 }

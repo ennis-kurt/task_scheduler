@@ -46,6 +46,7 @@ export const projects = pgTable("projects", {
   areaId: text("area_id").references(() => areas.id, { onDelete: "set null" }),
   name: text("name").notNull(),
   color: text("color").notNull(),
+  status: text("status").notNull().default("active"),
   deadlineAt: timestamp("deadline_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
