@@ -69,10 +69,11 @@ export async function getInitialPlannerPayload(range?: PlannerRange) {
       block.endsAt,
       task.recurrence,
       effectiveRange,
-    ).map((occurrence, index) => ({
-      id: `task:${block.id}:${index}`,
+    ).map((occurrence) => ({
+      id: `task:${block.id}:${occurrence.occurrenceKey}`,
       sourceId: block.id,
-      instanceId: `${block.id}-${occurrence.start}`,
+      instanceId: `${block.id}-${occurrence.occurrenceKey}`,
+      occurrenceKey: occurrence.occurrenceKey,
       source: "task" as const,
       taskId: task.id,
       title: task.title,
@@ -84,16 +85,17 @@ export async function getInitialPlannerPayload(range?: PlannerRange) {
       areaId: task.areaId,
       projectId: task.projectId,
       recurring: occurrence.recurring,
-      readOnly: occurrence.recurring,
+      readOnly: false,
     }));
   });
 
   const scheduledEvents: PlannerCalendarItem[] = workspace.events.flatMap((event) =>
     expandRecurrence(event.startsAt, event.endsAt, event.recurrence, effectiveRange).map(
-      (occurrence, index) => ({
-        id: `event:${event.id}:${index}`,
+      (occurrence) => ({
+        id: `event:${event.id}:${occurrence.occurrenceKey}`,
         sourceId: event.id,
-        instanceId: `${event.id}-${occurrence.start}`,
+        instanceId: `${event.id}-${occurrence.occurrenceKey}`,
+        occurrenceKey: occurrence.occurrenceKey,
         source: "event" as const,
         title: event.title,
         start: occurrence.start,

@@ -23,6 +23,13 @@ import type {
   UserSettingsRecord,
 } from "@/lib/planner/types";
 
+type ExpandedRecurrenceOccurrence = {
+  start: string;
+  end: string;
+  recurring: boolean;
+  occurrenceKey: string;
+};
+
 export function startOfCurrentWeek(weekStartsOn: number) {
   return startOfWeek(new Date(), { weekStartsOn: weekStartsOn as 0 | 1 | 2 | 3 | 4 | 5 | 6 });
 }
@@ -75,6 +82,46 @@ export function calculateMinutes(start: string, end: string) {
   );
 }
 
+function shiftWeekday(day: number, offset: number) {
+  return (day + offset + 7) % 7;
+}
+
+function recurrenceMatchesDay(
+  day: Date,
+  baseStart: Date,
+  recurrence: RecurrenceRule,
+  interval: number,
+  baseWeekStart: Date,
+) {
+  const weekday = day.getDay();
+
+  switch (recurrence.frequency) {
+    case "daily":
+      return differenceInCalendarDays(day, startOfDay(baseStart)) % interval === 0;
+    case "weekdays":
+      return weekday >= 1 && weekday <= 5;
+    case "weekly": {
+      const days = recurrence.daysOfWeek?.length
+        ? recurrence.daysOfWeek
+        : [baseStart.getDay()];
+      const weekOffset =
+        differenceInCalendarWeeks(
+          startOfWeek(day, { weekStartsOn: 1 }),
+          baseWeekStart,
+          { weekStartsOn: 1 },
+        ) % interval;
+      return weekOffset === 0 && days.includes(weekday);
+    }
+    case "monthly":
+      return (
+        day.getDate() === baseStart.getDate() &&
+        differenceInCalendarMonths(day, baseStart) % interval === 0
+      );
+    default:
+      return false;
+  }
+}
+
 export function overlapsRange(
   start: string,
   end: string,
@@ -100,7 +147,7 @@ export function expandRecurrence(
 ) {
   if (!recurrence || recurrence.frequency === "none") {
     return overlapsRange(startsAt, endsAt, range)
-      ? [{ start: startsAt, end: endsAt, recurring: false }]
+      ? [{ start: startsAt, end: endsAt, recurring: false, occurrenceKey: startsAt }]
       : [];
   }
 
@@ -113,49 +160,23 @@ export function expandRecurrence(
   const baseDurationMinutes = calculateMinutes(startsAt, endsAt);
   const interval = recurrence.interval ?? 1;
   const baseWeekStart = startOfWeek(baseStart, { weekStartsOn: 1 });
+  const occurrences = new Map<string, ExpandedRecurrenceOccurrence>();
 
-  return visibleDays.flatMap((day) => {
+  const addOccurrence = (day: Date) => {
     if (isBefore(day, startOfDay(baseStart))) {
-      return [];
+      return;
     }
 
     if (untilDate && isAfter(day, endOfDay(untilDate))) {
-      return [];
+      return;
     }
 
-    const weekday = day.getDay();
-    const matches = (() => {
-      switch (recurrence.frequency) {
-        case "daily":
-          return differenceInCalendarDays(day, startOfDay(baseStart)) % interval === 0;
-        case "weekdays":
-          return weekday >= 1 && weekday <= 5;
-        case "weekly": {
-          const days = recurrence.daysOfWeek?.length
-            ? recurrence.daysOfWeek
-            : [baseStart.getDay()];
-          const weekOffset =
-            differenceInCalendarWeeks(
-              startOfWeek(day, { weekStartsOn: 1 }),
-              baseWeekStart,
-              { weekStartsOn: 1 },
-            ) % interval;
-          return weekOffset === 0 && days.includes(weekday);
-        }
-        case "monthly":
-          return (
-            day.getDate() === baseStart.getDate() &&
-            differenceInCalendarMonths(day, baseStart) % interval === 0
-          );
-        default:
-          return false;
-      }
-    })();
-
-    if (!matches) {
-      return [];
+    if (!recurrenceMatchesDay(day, baseStart, recurrence, interval, baseWeekStart)) {
+      return;
     }
 
+    const occurrenceKey = format(day, "yyyy-MM-dd");
+    const override = recurrence.overrides?.[occurrenceKey];
     const occurrenceStart = set(day, {
       hours: baseStart.getHours(),
       minutes: baseStart.getMinutes(),
@@ -168,16 +189,92 @@ export function expandRecurrence(
       isEqual(occurrenceStart, baseStart) ||
       isAfter(occurrenceStart, baseStart)
     ) {
-      const start = occurrenceStart.toISOString();
-      const end = occurrenceEnd.toISOString();
+      const start = override?.startsAt ?? occurrenceStart.toISOString();
+      const end = override?.endsAt ?? occurrenceEnd.toISOString();
 
-      return overlapsRange(start, end, range)
-        ? [{ start, end, recurring: true }]
-        : [];
+      if (overlapsRange(start, end, range)) {
+        occurrences.set(occurrenceKey, {
+          start,
+          end,
+          recurring: true,
+          occurrenceKey,
+        });
+      }
     }
+  };
 
-    return [];
+  visibleDays.forEach(addOccurrence);
+
+  Object.keys(recurrence.overrides ?? {}).forEach((occurrenceKey) => {
+    addOccurrence(parseISO(`${occurrenceKey}T00:00:00`));
   });
+
+  return Array.from(occurrences.values()).sort((left, right) =>
+    left.start.localeCompare(right.start),
+  );
+}
+
+export function applyRecurrenceOverride(
+  recurrence: RecurrenceRule | null,
+  occurrenceKey: string,
+  startsAt: string,
+  endsAt: string,
+) {
+  if (!recurrence || recurrence.frequency === "none") {
+    return recurrence;
+  }
+
+  return {
+    ...recurrence,
+    overrides: {
+      ...(recurrence.overrides ?? {}),
+      [occurrenceKey]: {
+        startsAt,
+        endsAt,
+      },
+    },
+  } satisfies RecurrenceRule;
+}
+
+export function shiftRecurringSeries(
+  baseStartsAt: string,
+  baseEndsAt: string,
+  recurrence: RecurrenceRule | null,
+  originalOccurrenceStartsAt: string,
+  originalOccurrenceEndsAt: string,
+  nextOccurrenceStartsAt: string,
+  nextOccurrenceEndsAt: string,
+) {
+  const startShift =
+    parseISO(nextOccurrenceStartsAt).getTime() -
+    parseISO(originalOccurrenceStartsAt).getTime();
+  const endShift =
+    parseISO(nextOccurrenceEndsAt).getTime() -
+    parseISO(originalOccurrenceEndsAt).getTime();
+  const dayShift = differenceInCalendarDays(
+    startOfDay(parseISO(nextOccurrenceStartsAt)),
+    startOfDay(parseISO(originalOccurrenceStartsAt)),
+  );
+  const nextRecurrence =
+    recurrence && recurrence.frequency !== "none"
+      ? {
+          ...recurrence,
+          overrides: undefined,
+          daysOfWeek:
+            recurrence.frequency === "weekly" && recurrence.daysOfWeek?.length && dayShift
+              ? recurrence.daysOfWeek
+                  .map((day) => shiftWeekday(day, dayShift))
+                  .filter((day, index, collection) => collection.indexOf(day) === index)
+                  .sort((left, right) => left - right)
+              : recurrence.daysOfWeek,
+        }
+      : recurrence;
+
+  return {
+    startsAt: new Date(parseISO(baseStartsAt).getTime() + startShift).toISOString(),
+    endsAt: new Date(parseISO(baseEndsAt).getTime() + endShift).toISOString(),
+    recurrence: nextRecurrence,
+  };
 }
 
 export function todayDateString() {

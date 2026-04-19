@@ -1,7 +1,11 @@
 import crypto from "node:crypto";
 
 import { isDatabaseConfigured } from "@/lib/env";
-import { calculateMinutes } from "@/lib/planner/date";
+import {
+  applyRecurrenceOverride,
+  calculateMinutes,
+  shiftRecurringSeries,
+} from "@/lib/planner/date";
 import { databaseRepository } from "@/lib/planner/database-repository";
 import { readDemoSnapshot, writeDemoSnapshot } from "@/lib/planner/demo-store";
 import type {
@@ -15,8 +19,9 @@ import type {
   TaskRecord,
   UpdateEventInput,
   UpdateMilestoneInput,
+  UpdateProjectInput,
   UpdateSettingsInput,
-  UpdateTaskBlockInput,
+  UpdateRecurringTaskBlockInput,
   UpdateTaskInput,
   WorkspaceSnapshot,
 } from "@/lib/planner/types";
@@ -292,7 +297,7 @@ const demoRepository = {
     });
   },
 
-  async updateTaskBlock(userId: string, blockId: string, input: UpdateTaskBlockInput) {
+  async updateTaskBlock(userId: string, blockId: string, input: UpdateRecurringTaskBlockInput) {
     return withSnapshot(userId, (snapshot) => {
       const block = snapshot.taskBlocks.find(
         (candidate) => candidate.id === blockId && candidate.userId === userId,
@@ -302,12 +307,58 @@ const demoRepository = {
         throw new Error("NOT_FOUND");
       }
 
-      block.startsAt = input.startsAt ?? block.startsAt;
-      block.endsAt = input.endsAt ?? block.endsAt;
-      block.updatedAt = now();
       const task = snapshot.tasks.find(
         (candidate) => candidate.id === block.taskId && candidate.userId === userId,
       );
+
+      if (
+        task?.recurrence &&
+        task.recurrence.frequency !== "none" &&
+        input.scope === "occurrence"
+      ) {
+        if (!input.startsAt || !input.endsAt || !input.occurrenceKey) {
+          throw new Error("INVALID_RECURRENCE_EDIT");
+        }
+
+        task.recurrence = applyRecurrenceOverride(
+          task.recurrence,
+          input.occurrenceKey,
+          input.startsAt,
+          input.endsAt,
+        );
+        task.updatedAt = now();
+
+        return block;
+      }
+
+      if (
+        task?.recurrence &&
+        task.recurrence.frequency !== "none" &&
+        input.scope === "series" &&
+        input.startsAt &&
+        input.endsAt &&
+        input.originalStartsAt &&
+        input.originalEndsAt
+      ) {
+        const shifted = shiftRecurringSeries(
+          block.startsAt,
+          block.endsAt,
+          task.recurrence,
+          input.originalStartsAt,
+          input.originalEndsAt,
+          input.startsAt,
+          input.endsAt,
+        );
+
+        block.startsAt = shifted.startsAt;
+        block.endsAt = shifted.endsAt;
+        block.updatedAt = now();
+        task.recurrence = shifted.recurrence;
+      } else {
+        block.startsAt = input.startsAt ?? block.startsAt;
+        block.endsAt = input.endsAt ?? block.endsAt;
+        block.updatedAt = now();
+      }
 
       if (task) {
         task.estimatedMinutes = calculateMinutes(block.startsAt, block.endsAt);
@@ -400,12 +451,60 @@ const demoRepository = {
         areaId: input.areaId ?? null,
         name: input.name,
         color: input.color ?? "#0f766e",
+        status: input.status ?? "active",
         deadlineAt: input.deadlineAt ?? null,
         createdAt: now(),
         updatedAt: now(),
       };
       snapshot.projects.push(project);
       return project;
+    });
+  },
+
+  async updateProject(userId: string, projectId: string, input: UpdateProjectInput) {
+    return withSnapshot(userId, (snapshot) => {
+      const project = snapshot.projects.find(
+        (candidate) => candidate.id === projectId && candidate.userId === userId,
+      );
+
+      if (!project) {
+        throw new Error("NOT_FOUND");
+      }
+
+      project.name = input.name ?? project.name;
+      project.color = input.color ?? project.color;
+      project.areaId = input.areaId === undefined ? project.areaId : input.areaId;
+      project.status = input.status ?? project.status;
+      project.deadlineAt =
+        input.deadlineAt === undefined ? project.deadlineAt : input.deadlineAt;
+      project.updatedAt = now();
+      return project;
+    });
+  },
+
+  async deleteProject(userId: string, projectId: string) {
+    return withSnapshot(userId, (snapshot) => {
+      const milestoneIds = snapshot.milestones
+        .filter((milestone) => milestone.projectId === projectId && milestone.userId === userId)
+        .map((milestone) => milestone.id);
+
+      snapshot.projects = snapshot.projects.filter(
+        (project) => !(project.id === projectId && project.userId === userId),
+      );
+      snapshot.milestones = snapshot.milestones.filter(
+        (milestone) => !(milestone.projectId === projectId && milestone.userId === userId),
+      );
+      snapshot.tasks = snapshot.tasks.map((task) =>
+        task.projectId === projectId || (task.milestoneId && milestoneIds.includes(task.milestoneId))
+          ? {
+              ...task,
+              projectId: null,
+              milestoneId: null,
+              updatedAt: now(),
+            }
+          : task,
+      );
+      return { ok: true };
     });
   },
 

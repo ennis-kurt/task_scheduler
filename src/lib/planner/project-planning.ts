@@ -82,6 +82,7 @@ function buildMilestonePlan(
   milestone: MilestoneRecord,
   project: ProjectRecord,
   tasks: PlannerTask[],
+  options?: { synthetic?: boolean },
 ): PlannerMilestone {
   const completedMinutes = tasks
     .filter((task) => task.status === "done")
@@ -100,7 +101,40 @@ function buildMilestonePlan(
     totalMinutes,
     remainingMinutes: Math.max(totalMinutes - completedMinutes, 0),
     health: toHealth(milestone.startDate, milestone.deadline, completionPercentage),
+    synthetic: options?.synthetic ?? false,
   };
+}
+
+function buildSyntheticMilestone(
+  project: ProjectRecord,
+  tasks: PlannerTask[],
+  start: Date,
+  end: Date,
+) {
+  const fallbackEnd =
+    project.deadlineAt != null
+      ? endOfDay(parseISO(project.deadlineAt))
+      : end.getTime() > start.getTime()
+        ? endOfDay(end)
+        : endOfDay(addDays(start, 14));
+
+  return buildMilestonePlan(
+    {
+      id: `project-scope:${project.id}`,
+      userId: project.userId,
+      projectId: project.id,
+      name: project.name,
+      description:
+        "Project-wide timeline. Add milestones to break this plan into named phases.",
+      startDate: startOfDay(start).toISOString(),
+      deadline: fallbackEnd.toISOString(),
+      createdAt: project.createdAt,
+      updatedAt: project.updatedAt,
+    },
+    project,
+    tasks.sort((left, right) => left.title.localeCompare(right.title)),
+    { synthetic: true },
+  );
 }
 
 function buildBurndown(
@@ -145,6 +179,12 @@ export function buildProjectPlans(
   milestones: MilestoneRecord[],
   tasks: PlannerTask[],
 ): ProjectPlan[] {
+  const statusOrder: Record<ProjectRecord["status"], number> = {
+    active: 0,
+    completed: 1,
+    archived: 2,
+  };
+
   return projects
     .map((project) => {
       const projectTasks = tasks.filter((task) => task.projectId === project.id);
@@ -180,16 +220,33 @@ export function buildProjectPlans(
       ];
       const scheduleStart = minDate(scheduleCandidates);
       const scheduleEnd = maxDate(scheduleCandidates);
+      const plottedMilestones = projectMilestones.length
+        ? projectMilestones
+        : [buildSyntheticMilestone(project, projectTasks, scheduleStart, scheduleEnd)];
+      const plottedScheduleCandidates = [
+        project.createdAt,
+        ...plottedMilestones.flatMap((milestone) => [milestone.startDate, milestone.deadline]),
+        ...projectTasks.flatMap((task) =>
+          [task.dueAt, task.primaryBlock?.startsAt, task.primaryBlock?.endsAt].filter(
+            Boolean,
+          ) as string[],
+        ),
+        ...(project.deadlineAt ? [project.deadlineAt] : []),
+      ];
+      const plottedScheduleStart = minDate(plottedScheduleCandidates);
+      const plottedScheduleEnd = maxDate(plottedScheduleCandidates);
       const health =
         completionPercentage >= 100
           ? "done"
-          : projectMilestones.some((milestone) => milestone.health === "at_risk")
+          : plottedMilestones.some((milestone) => milestone.health === "at_risk")
             ? "at_risk"
             : "on_track";
 
       return {
         project,
         milestones: projectMilestones,
+        plottedMilestones,
+        hasFallbackMilestone: projectMilestones.length === 0,
         standaloneTasks,
         tasks: projectTasks.sort((left, right) => left.title.localeCompare(right.title)),
         completionPercentage,
@@ -208,15 +265,19 @@ export function buildProjectPlans(
         })),
         burndown: buildBurndown(
           projectTasks,
-          scheduleStart.toISOString(),
-          (project.deadlineAt ? parseISO(project.deadlineAt) : scheduleEnd).toISOString(),
+          plottedScheduleStart.toISOString(),
+          (project.deadlineAt ? parseISO(project.deadlineAt) : plottedScheduleEnd).toISOString(),
         ),
         scheduleRange: {
-          start: subDays(scheduleStart, 3).toISOString(),
-          end: addDays(scheduleEnd, 7).toISOString(),
+          start: subDays(plottedScheduleStart, 3).toISOString(),
+          end: addDays(plottedScheduleEnd, 7).toISOString(),
         },
         health,
       } satisfies ProjectPlan;
     })
-    .sort((left, right) => left.project.name.localeCompare(right.project.name));
+    .sort(
+      (left, right) =>
+        statusOrder[left.project.status] - statusOrder[right.project.status] ||
+        left.project.name.localeCompare(right.project.name),
+    );
 }

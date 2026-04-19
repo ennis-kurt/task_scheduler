@@ -4,6 +4,7 @@ import { DEFAULT_SETTINGS } from "@/lib/planner/constants";
 import type {
   EventRecord,
   MilestoneRecord,
+  ProjectRecord,
   TaskBlockRecord,
   TaskChecklistItemRecord,
   TaskRecord,
@@ -36,13 +37,14 @@ export function createSeedSnapshot(userId = "demo-user"): WorkspaceSnapshot {
       updatedAt: createdAt,
     },
   ];
-  const projects = [
+  const projects: ProjectRecord[] = [
     {
       id: "project-launch",
       userId,
       areaId: "area-work",
       name: "Planner MVP",
       color: "#0f766e",
+      status: "active",
       deadlineAt: addDays(new Date(), 10).toISOString(),
       createdAt,
       updatedAt: createdAt,
@@ -53,6 +55,7 @@ export function createSeedSnapshot(userId = "demo-user"): WorkspaceSnapshot {
       areaId: "area-health",
       name: "Training Block",
       color: "#b45309",
+      status: "active",
       deadlineAt: addDays(new Date(), 30).toISOString(),
       createdAt,
       updatedAt: createdAt,

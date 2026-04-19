@@ -1,0 +1,1 @@
+ALTER TABLE "projects" ADD COLUMN "status" text DEFAULT 'active' NOT NULL;

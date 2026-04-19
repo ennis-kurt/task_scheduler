@@ -17,7 +17,11 @@ import {
   users,
 } from "@/db/schema";
 import { DEFAULT_SETTINGS } from "@/lib/planner/constants";
-import { calculateMinutes } from "@/lib/planner/date";
+import {
+  applyRecurrenceOverride,
+  calculateMinutes,
+  shiftRecurringSeries,
+} from "@/lib/planner/date";
 import type {
   AppUserRecord,
   AreaRecord,
@@ -36,8 +40,9 @@ import type {
   TaskTagRecord,
   UpdateEventInput,
   UpdateMilestoneInput,
+  UpdateProjectInput,
   UpdateSettingsInput,
-  UpdateTaskBlockInput,
+  UpdateRecurringTaskBlockInput,
   UpdateTaskInput,
   UserSettingsRecord,
   WorkspaceSnapshot,
@@ -128,6 +133,7 @@ function mapProject(record: typeof projects.$inferSelect): ProjectRecord {
     areaId: record.areaId,
     name: record.name,
     color: record.color,
+    status: record.status as ProjectRecord["status"],
     deadlineAt: iso(record.deadlineAt),
     createdAt: iso(record.createdAt)!,
     updatedAt: iso(record.updatedAt)!,
@@ -503,16 +509,87 @@ export const databaseRepository = {
     return mapTaskBlock(record);
   },
 
-  async updateTaskBlock(userId: string, blockId: string, input: UpdateTaskBlockInput) {
+  async updateTaskBlock(userId: string, blockId: string, input: UpdateRecurringTaskBlockInput) {
     await ensureDbUser(userId);
     const db = getDb();
+    const [existingBlock] = await db
+      .select()
+      .from(taskBlocks)
+      .where(and(eq(taskBlocks.id, blockId), eq(taskBlocks.userId, userId)))
+      .limit(1);
+
+    if (!existingBlock) {
+      throw new Error("NOT_FOUND");
+    }
+
+    const [taskRecord] = await db
+      .select()
+      .from(tasks)
+      .where(and(eq(tasks.id, existingBlock.taskId), eq(tasks.userId, userId)))
+      .limit(1);
+    const currentRecurrence = taskRecord
+      ? ((taskRecord.recurrence ?? null) as TaskRecord["recurrence"])
+      : null;
+
+    if (
+      currentRecurrence &&
+      currentRecurrence.frequency !== "none" &&
+      input.scope === "occurrence"
+    ) {
+      if (!input.startsAt || !input.endsAt || !input.occurrenceKey) {
+        throw new Error("NOT_FOUND");
+      }
+
+      await db
+        .update(tasks)
+        .set({
+          recurrence: applyRecurrenceOverride(
+            currentRecurrence,
+            input.occurrenceKey,
+            input.startsAt,
+            input.endsAt,
+          ),
+          updatedAt: now(),
+        })
+        .where(and(eq(tasks.id, existingBlock.taskId), eq(tasks.userId, userId)));
+
+      return mapTaskBlock(existingBlock);
+    }
+
+    let nextStartsAt = input.startsAt ? new Date(input.startsAt) : undefined;
+    let nextEndsAt = input.endsAt ? new Date(input.endsAt) : undefined;
+    let nextRecurrence = currentRecurrence;
+
+    if (
+      currentRecurrence &&
+      currentRecurrence.frequency !== "none" &&
+      input.scope === "series" &&
+      input.startsAt &&
+      input.endsAt &&
+      input.originalStartsAt &&
+      input.originalEndsAt
+    ) {
+      const shifted = shiftRecurringSeries(
+        iso(existingBlock.startsAt)!,
+        iso(existingBlock.endsAt)!,
+        currentRecurrence,
+        input.originalStartsAt,
+        input.originalEndsAt,
+        input.startsAt,
+        input.endsAt,
+      );
+
+      nextStartsAt = new Date(shifted.startsAt);
+      nextEndsAt = new Date(shifted.endsAt);
+      nextRecurrence = shifted.recurrence;
+    }
 
     await db
       .update(taskBlocks)
       .set({
         taskId: input.taskId,
-        startsAt: input.startsAt ? new Date(input.startsAt) : undefined,
-        endsAt: input.endsAt ? new Date(input.endsAt) : undefined,
+        startsAt: nextStartsAt,
+        endsAt: nextEndsAt,
         updatedAt: now(),
       })
       .where(and(eq(taskBlocks.id, blockId), eq(taskBlocks.userId, userId)));
@@ -527,6 +604,7 @@ export const databaseRepository = {
       .update(tasks)
       .set({
         estimatedMinutes: calculateMinutes(iso(record.startsAt)!, iso(record.endsAt)!),
+        recurrence: nextRecurrence,
         updatedAt: now(),
       })
       .where(and(eq(tasks.id, record.taskId), eq(tasks.userId, userId)));
@@ -625,6 +703,7 @@ export const databaseRepository = {
       areaId: input.areaId ?? null,
       name: input.name,
       color: input.color ?? "#0f766e",
+      status: input.status ?? "active",
       deadlineAt: input.deadlineAt ? new Date(input.deadlineAt) : null,
       createdAt: now(),
       updatedAt: now(),
@@ -632,6 +711,47 @@ export const databaseRepository = {
 
     const [record] = await db.select().from(projects).where(eq(projects.id, projectId)).limit(1);
     return mapProject(record);
+  },
+
+  async updateProject(userId: string, projectId: string, input: UpdateProjectInput) {
+    await ensureDbUser(userId);
+    const db = getDb();
+
+    await db
+      .update(projects)
+      .set({
+        name: input.name,
+        color: input.color,
+        areaId: input.areaId,
+        status: input.status,
+        deadlineAt:
+          input.deadlineAt === undefined
+            ? undefined
+            : input.deadlineAt
+              ? new Date(input.deadlineAt)
+              : null,
+        updatedAt: now(),
+      })
+      .where(and(eq(projects.id, projectId), eq(projects.userId, userId)));
+
+    const [record] = await db
+      .select()
+      .from(projects)
+      .where(and(eq(projects.id, projectId), eq(projects.userId, userId)))
+      .limit(1);
+
+    if (!record) {
+      throw new Error("NOT_FOUND");
+    }
+
+    return mapProject(record);
+  },
+
+  async deleteProject(userId: string, projectId: string) {
+    await ensureDbUser(userId);
+    const db = getDb();
+    await db.delete(projects).where(and(eq(projects.id, projectId), eq(projects.userId, userId)));
+    return { ok: true };
   },
 
   async createMilestone(userId: string, input: NewMilestoneInput) {
