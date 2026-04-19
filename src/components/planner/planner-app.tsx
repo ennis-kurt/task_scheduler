@@ -1573,34 +1573,7 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
         >
         {plannerMode === "schedule" ? (
         <aside className="hidden min-w-0 w-[198px] flex-col gap-3 overflow-y-auto pb-4 pr-1 lg:sticky lg:top-[66px] lg:flex lg:h-[calc(100vh-82px)]" style={{ scrollbarWidth: 'none' }}>
-          {surface === "week" ? (
-            <Calendar
-              modifiers={selectedWeekModifiers}
-              weekStartsOn={
-                plannerData.settings.weekStart as 0 | 1 | 2 | 3 | 4 | 5 | 6
-              }
-              onDayClick={(date) => moveToSurface(surface, format(date, "yyyy-MM-dd"))}
-              className="bg-transparent p-0 text-[12px] [--cell-size:1.55rem]"
-              classNames={{
-                caption_label: "text-[11px] font-semibold text-[var(--foreground-strong)]",
-                weekday: "text-[0.66rem] font-medium text-[var(--muted-foreground)]",
-              }}
-            />
-          ) : (
-            <Calendar
-              mode="single"
-              selected={parseISO(focusedDate)}
-              weekStartsOn={
-                plannerData.settings.weekStart as 0 | 1 | 2 | 3 | 4 | 5 | 6
-              }
-              onDayClick={(date) => moveToSurface(surface, format(date, "yyyy-MM-dd"))}
-              className="bg-transparent p-0 text-[12px] [--cell-size:1.55rem]"
-              classNames={{
-                caption_label: "text-[11px] font-semibold text-[var(--foreground-strong)]",
-                weekday: "text-[0.66rem] font-medium text-[var(--muted-foreground)]",
-              }}
-            />
-          )}
+
 
           <div className="flex flex-col gap-0.5">
             <div className="mb-1.5 px-2 text-[9px] font-bold uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
@@ -2647,50 +2620,6 @@ function QueueTaskCard({
             {task.title}
           </p>
         </button>
-        <div className="mt-1.5 flex flex-wrap gap-1">
-          <span
-            className={cn(
-              "rounded-full border px-1.5 py-0.5 text-[8px] font-semibold uppercase tracking-[0.08em]",
-              priorityClass(task.priority),
-            )}
-          >
-            {PRIORITY_LABELS[task.priority]}
-          </span>
-          <Badge tone="neutral" className="px-1.5 py-0.5 text-[9px]">
-            {formatMinutes(task.estimatedMinutes)}
-          </Badge>
-          {task.project ? (
-            <Badge tone="neutral" className="px-2 py-0.5 text-[10px]">
-              {task.project.name}
-            </Badge>
-          ) : null}
-          {task.dueAt ? (
-            <Badge
-              tone={isTaskOverdue(task) ? "danger" : "neutral"}
-              className="px-1.5 py-0.5 text-[9px]"
-            >
-              Due {format(parseISO(task.dueAt), "MMM d")}
-            </Badge>
-          ) : null}
-          {queueMode === "overdue" && task.primaryBlock ? (
-            <Badge tone="accent" className="px-1.5 py-0.5 text-[9px]">
-              {format(parseISO(task.primaryBlock.startsAt), "EEE h:mm a")}
-            </Badge>
-          ) : null}
-        </div>
-        <div className="mt-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 w-full justify-center rounded-[12px] px-2 text-[11px] text-[var(--muted-foreground)]"
-            onClick={onPlaceNext}
-            aria-label={queueMode === "overdue" ? `Reschedule ${task.title}` : `Place ${task.title}`}
-            title={queueMode === "overdue" ? "Reschedule" : "Place next"}
-          >
-            <CalendarClock className="h-3.5 w-3.5" />
-            {queueMode === "overdue" ? "Reschedule" : "Place next"}
-          </Button>
-        </div>
       </div>
     </article>
   );
