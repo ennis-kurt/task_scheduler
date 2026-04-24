@@ -6,6 +6,7 @@
   --surface-elevated: #ffffff;
   --surface-muted: #f5f6f8;
   --surface-glass: rgba(255, 255, 255, 0.9);
+  --card: #ffffff;
   --foreground: #1d2128;
   --foreground-strong: #111318;
   --muted-foreground: #6b7280;
@@ -56,6 +57,11 @@
   --task-modal-border: rgba(17, 24, 39, 0.12);
   --task-modal-neutral: rgba(255, 255, 255, 0.58);
   --task-modal-card: rgba(255, 255, 255, 0.72);
+  --auth-page-bg: #ffffff;
+  --auth-backdrop: radial-gradient(circle at top left, rgba(255, 106, 97, 0.12), transparent 28%),
+    radial-gradient(circle at bottom right, rgba(79, 100, 255, 0.16), transparent 34%);
+  --auth-intro-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(255, 255, 255, 0.68));
+  --auth-panel-bg: rgba(255, 255, 255, 0.76);
 
   /* Shadcn UI primitive colors */
   --popover: #ffffff;
@@ -73,6 +79,7 @@
   --surface-elevated: #10141a;
   --surface-muted: #0d1116;
   --surface-glass: rgba(12, 15, 20, 0.9);
+  --card: #10141a;
   --foreground: #d9dee8;
   --foreground-strong: #f5f7fb;
   --muted-foreground: #97a0ae;
@@ -123,6 +130,11 @@
   --task-modal-border: rgba(255, 255, 255, 0.08);
   --task-modal-neutral: rgba(255, 255, 255, 0.04);
   --task-modal-card: rgba(18, 22, 29, 0.76);
+  --auth-page-bg: #090b0f;
+  --auth-backdrop: radial-gradient(circle at top left, rgba(255, 106, 97, 0.08), transparent 28%),
+    radial-gradient(circle at bottom right, rgba(79, 100, 255, 0.11), transparent 34%);
+  --auth-intro-bg: linear-gradient(180deg, rgba(15, 23, 42, 0.9), rgba(9, 11, 15, 0.92));
+  --auth-panel-bg: rgba(11, 15, 24, 0.82);
 
   --popover: #10141a;
   --popover-foreground: #d4d4d8;
@@ -131,6 +143,80 @@
   --muted: #11151c;
   --accent: rgba(255, 255, 255, 0.08);
   --accent-foreground: #fafafa;
+}
+
+.aura {
+  color-scheme: light;
+  --background: #f5f2ec;
+  --surface: rgba(255, 255, 255, 0.64);
+  --surface-elevated: rgba(255, 255, 255, 0.82);
+  --surface-muted: rgba(241, 238, 232, 0.76);
+  --surface-glass: rgba(255, 255, 255, 0.68);
+  --card: rgba(255, 255, 255, 0.78);
+  --foreground: #2b3037;
+  --foreground-strong: #151923;
+  --muted-foreground: #6f7581;
+  --accent-soft: rgba(94, 126, 118, 0.16);
+  --accent-strong: #426d64;
+  --accent-stronger: #203e39;
+  --panel-subtle: rgba(232, 238, 234, 0.68);
+  --border: rgba(78, 91, 110, 0.14);
+  --border-strong: rgba(78, 91, 110, 0.24);
+  --danger: #d94b69;
+  --danger-soft: rgba(217, 75, 105, 0.14);
+  --success: #2e9d78;
+  --success-soft: rgba(46, 157, 120, 0.14);
+  --shadow-soft: 0 18px 42px -32px rgba(78, 91, 110, 0.34);
+  --shadow-float: 0 38px 96px -58px rgba(67, 83, 110, 0.48);
+  --topbar-bg: rgba(250, 248, 244, 0.78);
+  --input-bg: rgba(255, 255, 255, 0.72);
+  --button-solid-bg: #243b48;
+  --button-solid-hover: #172a34;
+  --button-solid-fg: #ffffff;
+  --button-outline-bg: rgba(255, 255, 255, 0.58);
+  --button-outline-hover: rgba(255, 255, 255, 0.86);
+  --button-ghost-hover: rgba(88, 112, 126, 0.1);
+  --calendar-task-bg: rgba(240, 244, 242, 0.78);
+  --calendar-task-border: rgba(82, 111, 131, 0.2);
+  --calendar-task-text: #21303a;
+  --calendar-time-text: rgba(250, 250, 247, 0.72);
+  --calendar-task-shell: linear-gradient(
+    90deg,
+    rgba(134, 180, 168, 0.86) 0%,
+    rgba(89, 117, 143, 0.9) 39%,
+    rgba(49, 66, 91, 0.98) 100%
+  );
+  --calendar-task-shell-border: rgba(82, 111, 131, 0.24);
+  --calendar-task-shell-text: #fffdf8;
+  --calendar-task-shell-time: rgba(255, 253, 248, 0.76);
+  --calendar-task-handle-bg: linear-gradient(
+    180deg,
+    rgba(245, 176, 151, 0.96) 0%,
+    rgba(140, 181, 169, 0.72) 100%
+  );
+  --calendar-task-handle-border: rgba(255, 255, 255, 0.46);
+  --calendar-event-bg: rgba(255, 255, 255, 0.62);
+  --calendar-event-border: rgba(78, 91, 110, 0.18);
+  --calendar-event-text: #26323b;
+  --modal-backdrop: rgba(77, 85, 99, 0.22);
+  --task-modal-shell: rgba(255, 255, 255, 0.68);
+  --task-modal-border: rgba(78, 91, 110, 0.16);
+  --task-modal-neutral: rgba(255, 255, 255, 0.48);
+  --task-modal-card: rgba(255, 255, 255, 0.56);
+  --auth-page-bg: #f5f2ec;
+  --auth-backdrop: linear-gradient(135deg, rgba(245, 176, 151, 0.14), transparent 32%),
+    linear-gradient(315deg, rgba(140, 181, 169, 0.18), transparent 38%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.36), rgba(229, 235, 244, 0.3));
+  --auth-intro-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.62), rgba(255, 255, 255, 0.42));
+  --auth-panel-bg: rgba(255, 255, 255, 0.48);
+
+  --popover: rgba(255, 255, 255, 0.86);
+  --popover-foreground: #151923;
+  --primary: #243b48;
+  --primary-foreground: #ffffff;
+  --muted: rgba(241, 238, 232, 0.76);
+  --accent: rgba(94, 126, 118, 0.16);
+  --accent-foreground: #203e39;
 }
 
 @theme inline {

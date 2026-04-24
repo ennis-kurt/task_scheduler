@@ -25,6 +25,7 @@ import {
   Monitor,
   MoreHorizontal,
   Moon,
+  Palette,
   Pencil,
   Plus,
   Search,
@@ -251,7 +252,13 @@ function ThemeToggle() {
   const activeVisualTheme =
     selectedTheme === "system" ? resolvedTheme ?? "light" : selectedTheme;
   const TriggerIcon =
-    selectedTheme === "system" ? Monitor : activeVisualTheme === "dark" ? Moon : Sun;
+    selectedTheme === "system"
+      ? Monitor
+      : selectedTheme === "aura"
+        ? Palette
+        : activeVisualTheme === "dark"
+          ? Moon
+          : Sun;
 
   const options = [
     {
@@ -271,6 +278,12 @@ function ThemeToggle() {
       label: "Dark",
       description: "Always use the dark theme",
       icon: Moon,
+    },
+    {
+      value: "aura" as const,
+      label: "Aura",
+      description: "Pastel glass workspace",
+      icon: Palette,
     },
   ];
 
@@ -1501,7 +1514,7 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
 
   return (
     <div className={cn("min-h-screen bg-[var(--background)]", isMobile && "pb-24")}>
-      <header className="sticky top-0 z-20 border-b border-[var(--border)] bg-[var(--topbar-bg)]">
+      <header className="sticky top-0 z-20 border-b border-[var(--border)] bg-[var(--topbar-bg)] backdrop-blur-xl">
         <div className="mx-auto flex max-w-[1600px] items-center gap-2 px-4 py-2.5 lg:px-5">
           <div className="mr-auto flex min-w-0 items-center gap-3">
             <InflaraLogo compactWordmark markClassName="h-8 w-8" wordmarkClassName="text-sm" />
@@ -1772,7 +1785,7 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
         )}
 
         <div className="min-w-0">
-          <section className="sticky top-[66px] z-10 mb-3 rounded-[22px] border border-[var(--border)] bg-[var(--surface)] px-4 py-3 shadow-[var(--shadow-soft)]">
+          <section className="sticky top-[66px] z-10 mb-3 rounded-[22px] border border-[var(--border)] bg-[var(--surface)] px-4 py-3 shadow-[var(--shadow-soft)] backdrop-blur-xl">
             <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
               <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:items-center">
                 <div className="min-w-0">
@@ -1947,7 +1960,7 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
           </section>
 
           {plannerMode === "schedule" ? (
-          <section className="relative grid gap-4 rounded-[28px] border border-[var(--border)] bg-[var(--surface)] p-3 shadow-[var(--shadow-soft)] sm:p-4">
+          <section className="relative grid gap-4 rounded-[28px] border border-[var(--border)] bg-[var(--surface)] p-3 shadow-[var(--shadow-soft)] backdrop-blur-md sm:p-4">
             {surface === "agenda" ? (
               <div className="grid gap-4">
                 <div className="flex snap-x snap-mandatory gap-3 overflow-x-auto px-0.5 pb-3" style={{ scrollbarWidth: 'thin' }}>

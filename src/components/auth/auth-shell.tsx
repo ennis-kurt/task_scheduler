@@ -26,11 +26,11 @@ export function AuthShell({ mode, title, description, children }: AuthShellProps
   return (
     <main
       data-auth-shell
-      className="relative min-h-screen overflow-hidden bg-[var(--surface)] text-[var(--foreground)]"
+      className="relative min-h-screen overflow-hidden bg-[var(--auth-page-bg)] text-[var(--foreground)]"
     >
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,106,97,0.12),transparent_28%),radial-gradient(circle_at_bottom_right,rgba(79,100,255,0.16),transparent_34%)]" />
+      <div className="pointer-events-none absolute inset-0 bg-[image:var(--auth-backdrop)]" />
       <div className="mx-auto grid min-h-screen w-full max-w-7xl gap-10 px-6 py-8 lg:grid-cols-[0.85fr_1.15fr] lg:px-10">
-        <section className="relative flex flex-col justify-between rounded-[36px] border border-[var(--border)] bg-[linear-gradient(180deg,rgba(255,255,255,0.86),rgba(255,255,255,0.68))] p-8 shadow-[var(--shadow-soft)] dark:bg-[linear-gradient(180deg,rgba(15,23,42,0.9),rgba(9,11,15,0.92))]">
+        <section className="relative flex flex-col justify-between rounded-[36px] border border-[var(--border)] bg-[image:var(--auth-intro-bg)] p-8 shadow-[var(--shadow-soft)] backdrop-blur-md">
           <div className="grid gap-14">
             <InflaraLogo />
 
@@ -55,7 +55,7 @@ export function AuthShell({ mode, title, description, children }: AuthShellProps
         </section>
 
         <section className="relative flex items-center justify-center">
-          <div className="w-full max-w-[560px] rounded-[40px] border border-[var(--border)] bg-[rgba(255,255,255,0.76)] p-5 shadow-[var(--shadow-float)] backdrop-blur-sm dark:bg-[rgba(11,15,24,0.82)]">
+          <div className="w-full max-w-[560px] rounded-[40px] border border-[var(--border)] bg-[var(--auth-panel-bg)] p-5 shadow-[var(--shadow-float)] backdrop-blur-md">
             <div className="mb-5 flex rounded-full border border-[var(--border)] bg-[var(--surface-elevated)] p-1">
               {AUTH_NAV.map((item) => {
                 const active = pathname.startsWith(item.href) || mode === item.mode;
