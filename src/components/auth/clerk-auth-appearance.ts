@@ -10,13 +10,19 @@ export const clerkAuthAppearance = {
     header: "!hidden",
     headerTitle: "!hidden",
     headerSubtitle: "!hidden",
-    socialButtonsRoot: "!hidden",
-    socialButtons: "!hidden",
-    socialButtonsBlockButton: "!hidden",
-    socialButtonsIconButton: "!hidden",
-    dividerRow: "!hidden",
-    dividerLine: "!hidden",
-    dividerText: "!hidden",
+    socialButtonsRoot: "grid gap-3",
+    socialButtons: "grid gap-3",
+    socialButtonsBlockButton:
+      "h-12 rounded-2xl border border-[var(--border-strong)] bg-[var(--button-outline-bg)] px-4 text-[15px] font-medium text-[var(--foreground-strong)] shadow-none transition hover:bg-[var(--button-outline-hover)]",
+    socialButtonsBlockButtonText: "text-[15px] font-medium text-[var(--foreground-strong)]",
+    socialButtonsBlockButtonArrow: "hidden",
+    socialButtonsProviderIcon: "h-4 w-4",
+    socialButtonsIconButton:
+      "h-12 rounded-2xl border border-[var(--border-strong)] bg-[var(--button-outline-bg)] text-[var(--foreground-strong)] shadow-none transition hover:bg-[var(--button-outline-hover)]",
+    dividerRow: "my-1 flex items-center gap-3",
+    dividerLine: "h-px flex-1 bg-[var(--border)]",
+    dividerText:
+      "text-[11px] uppercase tracking-[0.24em] text-[var(--muted-foreground)]",
     formFieldLabel:
       "mb-2 text-[11px] font-medium uppercase tracking-[0.24em] text-[var(--muted-foreground)]",
     formFieldInput:
