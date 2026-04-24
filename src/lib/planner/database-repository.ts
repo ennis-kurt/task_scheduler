@@ -69,8 +69,8 @@ async function ensureDbUser(userId: string) {
   const db = getDb();
   const timestamp = now();
   const profile = await getSessionUserProfile();
-  const email = profile.email ?? `${userId}@daycraft.local`;
-  const fullName = profile.fullName ?? "Daycraft User";
+  const email = profile.email ?? `${userId}@inflara.local`;
+  const fullName = profile.fullName ?? "Inflara User";
 
   await db
     .insert(users)

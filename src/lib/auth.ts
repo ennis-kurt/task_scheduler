@@ -45,7 +45,7 @@ async function getClerkUserProfile(): Promise<SessionUserProfile> {
 export async function getSessionUserProfile(): Promise<SessionUserProfile> {
   if (!isClerkConfigured()) {
     return {
-      email: "demo@daycraft.local",
+      email: "demo@inflara.local",
       fullName: "Demo User",
     };
   }
@@ -68,7 +68,7 @@ export async function getSessionContext(): Promise<SessionContext> {
       clerkConfigured: false,
       mode: "demo",
       userId: "demo-user",
-      email: "demo@daycraft.local",
+      email: "demo@inflara.local",
       fullName: "Demo User",
     };
   }

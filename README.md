@@ -1,6 +1,6 @@
-# Daycraft Planner
+# Inflara
 
-Daycraft Planner is a desktop-first personal planning app built with Next.js App Router. It combines unscheduled tasks, hour-by-hour calendar scheduling, fixed events, and workload review in one visual planner.
+Inflara is a desktop-first personal planning app built with Next.js App Router. It combines unscheduled tasks, hour-by-hour calendar scheduling, fixed events, and workload review in one visual planner.
 
 ## What is implemented
 

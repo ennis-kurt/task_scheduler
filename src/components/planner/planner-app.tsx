@@ -60,6 +60,7 @@ import { toast } from "sonner";
 import { useTheme } from "next-themes";
 
 import { Badge } from "@/components/ui/badge";
+import { InflaraLogo } from "@/components/brand/inflara-logo";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -1503,9 +1504,7 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
       <header className="sticky top-0 z-20 border-b border-[var(--border)] bg-[var(--topbar-bg)]">
         <div className="mx-auto flex max-w-[1600px] items-center gap-2 px-4 py-2.5 lg:px-5">
           <div className="mr-auto flex min-w-0 items-center gap-3">
-            <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-[var(--muted-foreground)]">
-              Daycraft planner
-            </p>
+            <InflaraLogo compactWordmark markClassName="h-8 w-8" wordmarkClassName="text-sm" />
             {plannerData.mode === "demo" ? (
               <Badge tone="accent">Demo mode</Badge>
             ) : (

@@ -17,9 +17,14 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Daycraft Planner",
+  title: "Inflara",
   description:
-    "A visual task planner that combines unscheduled work, hour-by-hour scheduling, and calendar-based planning in one workspace.",
+    "Inflara is a visual planning workspace for calendar scheduling, project timelines, and structured execution.",
+  icons: {
+    icon: [{ url: "/icon.svg", type: "image/svg+xml" }],
+    apple: [{ url: "/icon.svg", type: "image/svg+xml" }],
+    shortcut: ["/icon.svg"],
+  },
 };
 
 export default function RootLayout({

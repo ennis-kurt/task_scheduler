@@ -17,7 +17,7 @@ export default async function HomePage() {
             Authentication setup required
           </p>
           <h1 className="mt-4 text-3xl font-semibold tracking-[-0.05em] text-[var(--foreground-strong)]">
-            Daycraft is ready for real accounts, but Clerk is not connected yet.
+            Inflara is ready for real accounts, but Clerk is not connected yet.
           </h1>
           <p className="mt-4 text-sm leading-7 text-[var(--muted-foreground)]">
             Add `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`, and

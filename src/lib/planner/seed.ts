@@ -372,7 +372,7 @@ export function createSeedSnapshot(userId = "demo-user"): WorkspaceSnapshot {
     user: {
       id: userId,
       email: "planner@example.com",
-      fullName: "Daycraft User",
+      fullName: "Inflara User",
       createdAt,
       updatedAt: createdAt,
     },

@@ -4,6 +4,7 @@ import { SignInButton, SignUpButton } from "@clerk/nextjs";
 import { ArrowRight, CalendarRange, Clock3, Sparkles } from "lucide-react";
 import type { ReactNode } from "react";
 
+import { InflaraLogo } from "@/components/brand/inflara-logo";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
@@ -12,11 +13,7 @@ export function LandingShell() {
     <main className="flex min-h-screen flex-col bg-[radial-gradient(circle_at_top_left,_rgba(15,118,110,0.14),_transparent_32%),linear-gradient(180deg,_#f6f3ec_0%,_#fdfcf9_42%,_#f4efe5_100%)] text-[var(--foreground)]">
       <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col px-6 py-8 lg:px-10">
         <header className="flex items-center justify-between py-4">
-          <div>
-            <p className="font-mono text-xs uppercase tracking-[0.28em] text-[var(--muted-foreground)]">
-              Daycraft Planner
-            </p>
-          </div>
+          <InflaraLogo compactWordmark />
           <div className="flex items-center gap-3">
             <SignInButton mode="modal">
               <Button variant="ghost">Sign in</Button>
@@ -37,8 +34,8 @@ export function LandingShell() {
                 Shape your day block by block instead of chasing a flat task list.
               </h1>
               <p className="max-w-2xl text-lg leading-8 text-[var(--muted-foreground)]">
-                Daycraft combines an inbox for unscheduled work with a real hourly planner,
-                so tasks, meetings, and realistic workload all live in one calm workspace.
+                Inflara combines an inbox for unscheduled work with a real hourly planner, so
+                tasks, meetings, and realistic workload all live in one calm workspace.
               </p>
             </div>
             <div className="flex flex-wrap gap-3">
