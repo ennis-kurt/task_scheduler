@@ -1,5 +1,6 @@
 import { SignIn } from "@clerk/nextjs";
 
+import { AuthShell } from "@/components/auth/auth-shell";
 import { isClerkConfigured } from "@/lib/env";
 
 export default function SignInPage() {
@@ -18,8 +19,15 @@ export default function SignInPage() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-[var(--surface)] px-6">
-      <SignIn path="/sign-in" />
-    </main>
+    <AuthShell
+      eyebrow="Sign in"
+      title="Sign in to Daycraft"
+      description="Use your existing account to access your planner, projects, and future production workspace."
+      alternateHref="/sign-up"
+      alternateLabel="Create account"
+      alternateText="New here? Create an account instead."
+    >
+      <SignIn path="/sign-in" routing="path" signUpUrl="/sign-up" />
+    </AuthShell>
   );
 }

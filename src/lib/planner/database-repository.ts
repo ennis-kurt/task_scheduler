@@ -16,6 +16,7 @@ import {
   userSettings,
   users,
 } from "@/db/schema";
+import { getSessionUserProfile } from "@/lib/auth";
 import { DEFAULT_SETTINGS } from "@/lib/planner/constants";
 import {
   applyRecurrenceOverride,
@@ -67,17 +68,27 @@ function id(prefix: string) {
 async function ensureDbUser(userId: string) {
   const db = getDb();
   const timestamp = now();
+  const profile = await getSessionUserProfile();
+  const email = profile.email ?? `${userId}@daycraft.local`;
+  const fullName = profile.fullName ?? "Daycraft User";
 
   await db
     .insert(users)
     .values({
       id: userId,
-      email: `${userId}@daycraft.local`,
-      fullName: "Daycraft User",
+      email,
+      fullName,
       createdAt: timestamp,
       updatedAt: timestamp,
     })
-    .onConflictDoNothing();
+    .onConflictDoUpdate({
+      target: users.id,
+      set: {
+        email,
+        fullName,
+        updatedAt: timestamp,
+      },
+    });
 
   await db
     .insert(userSettings)

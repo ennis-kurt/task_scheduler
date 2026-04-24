@@ -20,7 +20,11 @@ export function Providers({ children, clerkEnabled }: ProvidersProps) {
   );
 
   if (clerkEnabled) {
-    return <ClerkProvider>{content}</ClerkProvider>;
+    return (
+      <ClerkProvider signInUrl="/sign-in" signUpUrl="/sign-up">
+        {content}
+      </ClerkProvider>
+    );
   }
 
   return content;
