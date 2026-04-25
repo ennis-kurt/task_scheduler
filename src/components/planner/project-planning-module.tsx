@@ -777,7 +777,10 @@ export function ProjectPlanningModule({
 
   if (!projectPlans.length || !activeProject) {
     return (
-      <section className="grid gap-4 rounded-[28px] border border-[var(--border)] bg-[var(--surface)] p-6 shadow-[var(--shadow-soft)]">
+      <section
+        data-project-planning-module
+        className="grid gap-4 rounded-[28px] border border-[var(--border)] bg-[var(--surface)] p-6 shadow-[var(--shadow-soft)]"
+      >
         <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
           Project Planning
         </p>
@@ -841,7 +844,7 @@ export function ProjectPlanningModule({
   };
 
   return (
-    <section className="relative grid min-w-0 gap-5">
+    <section data-project-planning-module className="relative grid min-w-0 gap-5">
       <MilestoneComposer
         open={milestoneComposerOpen}
         projectPlans={projectPlans}

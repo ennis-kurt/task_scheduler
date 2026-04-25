@@ -30,6 +30,7 @@ import {
   Plus,
   Search,
   Settings2,
+  Sparkles,
   Sun,
   Trash2,
   X,
@@ -254,11 +255,13 @@ function ThemeToggle() {
   const TriggerIcon =
     selectedTheme === "system"
       ? Monitor
-      : selectedTheme === "aura"
-        ? Palette
-        : activeVisualTheme === "dark"
-          ? Moon
-          : Sun;
+      : selectedTheme === "pulse"
+        ? Sparkles
+        : selectedTheme === "aura"
+          ? Palette
+          : activeVisualTheme === "dark"
+            ? Moon
+            : Sun;
 
   const options = [
     {
@@ -284,6 +287,12 @@ function ThemeToggle() {
       label: "Aura",
       description: "Pastel glass workspace",
       icon: Palette,
+    },
+    {
+      value: "pulse" as const,
+      label: "Pulse",
+      description: "Vivid energetic workspace",
+      icon: Sparkles,
     },
   ];
 
@@ -1513,8 +1522,14 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
   }
 
   return (
-    <div className={cn("min-h-screen bg-[var(--background)]", isMobile && "pb-24")}>
-      <header className="sticky top-0 z-20 border-b border-[var(--border)] bg-[var(--topbar-bg)] backdrop-blur-xl">
+    <div
+      data-planner-root
+      className={cn("min-h-screen bg-[var(--background)]", isMobile && "pb-24")}
+    >
+      <header
+        data-planner-topbar
+        className="sticky top-0 z-20 border-b border-[var(--border)] bg-[var(--topbar-bg)] backdrop-blur-xl"
+      >
         <div className="mx-auto flex max-w-[1600px] items-center gap-2 px-4 py-2.5 lg:px-5">
           <div className="mr-auto flex min-w-0 items-center gap-3">
             <InflaraLogo compactWordmark markClassName="h-8 w-8" wordmarkClassName="text-sm" />
@@ -1575,7 +1590,7 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
         </div>
       </header>
 
-      <main className="mx-auto max-w-[1600px] px-4 py-3 lg:px-5">
+      <main data-planner-main className="mx-auto max-w-[1600px] px-4 py-3 lg:px-5">
         <div
           className={cn(
             "grid gap-3",
@@ -1785,7 +1800,10 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
         )}
 
         <div className="min-w-0">
-          <section className="sticky top-[66px] z-10 mb-3 rounded-[22px] border border-[var(--border)] bg-[var(--surface)] px-4 py-3 shadow-[var(--shadow-soft)] backdrop-blur-xl">
+          <section
+            data-planner-context-header
+            className="sticky top-[66px] z-10 mb-3 rounded-[22px] border border-[var(--border)] bg-[var(--surface)] px-4 py-3 shadow-[var(--shadow-soft)] backdrop-blur-xl"
+          >
             <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
               <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:items-center">
                 <div className="min-w-0">
@@ -1960,7 +1978,10 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
           </section>
 
           {plannerMode === "schedule" ? (
-          <section className="relative grid gap-4 rounded-[28px] border border-[var(--border)] bg-[var(--surface)] p-3 shadow-[var(--shadow-soft)] backdrop-blur-md sm:p-4">
+          <section
+            data-schedule-surface
+            className="relative grid gap-4 rounded-[28px] border border-[var(--border)] bg-[var(--surface)] p-3 shadow-[var(--shadow-soft)] backdrop-blur-md sm:p-4"
+          >
             {surface === "agenda" ? (
               <div className="grid gap-4">
                 <div className="flex snap-x snap-mandatory gap-3 overflow-x-auto px-0.5 pb-3" style={{ scrollbarWidth: 'thin' }}>
@@ -2000,7 +2021,10 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
               />
             )}
 
-            <div className="min-h-[460px] rounded-[22px] border border-[var(--border)] bg-[var(--surface-muted)] p-1.5 shadow-[var(--shadow-soft)]">
+            <div
+              data-calendar-shell
+              className="min-h-[460px] rounded-[22px] border border-[var(--border)] bg-[var(--surface-muted)] p-1.5 shadow-[var(--shadow-soft)]"
+            >
               <FullCalendar
                 ref={calendarRef}
                 plugins={[timeGridPlugin, interactionPlugin]}
