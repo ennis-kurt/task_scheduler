@@ -2,18 +2,39 @@
 
 import { ClerkProvider } from "@clerk/nextjs";
 import { Toaster } from "sonner";
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 
-import { ThemeProvider } from "next-themes";
+import { ThemeProvider, useTheme } from "next-themes";
 
 type ProvidersProps = {
   children: ReactNode;
   clerkEnabled: boolean;
 };
 
+function ThemeMaintenance() {
+  const { theme, setTheme } = useTheme();
+
+  useEffect(() => {
+    document.documentElement.classList.remove("pulse");
+
+    if (theme === "pulse") {
+      setTheme("aura");
+    }
+  }, [setTheme, theme]);
+
+  return null;
+}
+
 export function Providers({ children, clerkEnabled }: ProvidersProps) {
   const content = (
-    <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
+    <ThemeProvider
+      attribute="class"
+      defaultTheme="system"
+      enableSystem
+      disableTransitionOnChange
+      themes={["light", "dark", "aura"]}
+    >
+      <ThemeMaintenance />
       {children}
       <Toaster position="top-right" richColors />
     </ThemeProvider>

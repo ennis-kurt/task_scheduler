@@ -40,6 +40,7 @@ import {
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Calendar } from "@/components/ui/calendar";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -114,6 +115,52 @@ function toInputDate(value: string) {
 
 function dateInputToIso(value: string) {
   return `${value}T12:00:00.000Z`;
+}
+
+function MilestoneDatePicker({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const selected = value ? parseISO(`${value}T12:00:00`) : undefined;
+  const hasValidDate = selected && !isNaN(selected.getTime());
+
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button
+          variant="outline"
+          className={cn(
+            "h-10 w-full justify-start bg-[var(--surface-muted)] px-3 text-left font-normal",
+            !hasValidDate && "text-[var(--muted-foreground)]",
+          )}
+        >
+          <CalendarClock className="mr-2 h-4 w-4 opacity-70" />
+          {hasValidDate ? format(selected, "MMM d, yyyy") : "Pick date"}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        side="top"
+        align="start"
+        sideOffset={8}
+        collisionPadding={16}
+        className="z-[70] w-auto overflow-hidden rounded-[24px] border border-[var(--border-strong)] bg-[var(--surface-elevated)] p-0 shadow-[var(--shadow-float)]"
+      >
+        <Calendar
+          mode="single"
+          selected={hasValidDate ? selected : undefined}
+          onSelect={(date) => {
+            if (date) {
+              onChange(format(date, "yyyy-MM-dd"));
+            }
+          }}
+          initialFocus
+        />
+      </PopoverContent>
+    </Popover>
+  );
 }
 
 function formatHours(minutes: number) {
@@ -301,8 +348,8 @@ function MilestoneComposer({
   }
 
   return (
-    <div className="absolute inset-0 z-20 bg-[var(--modal-backdrop)]">
-      <div className="absolute inset-x-3 top-8 rounded-[28px] border border-[var(--task-modal-border)] bg-[var(--task-modal-shell)] p-5 text-[var(--foreground)] shadow-[var(--shadow-float)] backdrop-blur-[14px] sm:left-1/2 sm:max-w-lg sm:-translate-x-1/2">
+    <div className="fixed inset-0 z-50 bg-[var(--modal-backdrop)]">
+      <div className="absolute inset-x-3 bottom-3 top-6 max-h-[calc(100svh-2.25rem)] overflow-y-auto rounded-[32px] border border-[var(--task-modal-border)] bg-[var(--task-modal-shell)] p-6 text-[var(--foreground)] shadow-[var(--shadow-float)] backdrop-blur-[14px] sm:inset-x-0 sm:top-10 sm:mx-auto sm:max-h-[calc(100svh-5rem)] sm:w-full sm:max-w-xl">
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
@@ -353,23 +400,19 @@ function MilestoneComposer({
           </Field>
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Start date">
-              <Input
-                type="date"
+              <MilestoneDatePicker
                 value={form.startDate}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, startDate: event.target.value }))
+                onChange={(value) =>
+                  setForm((current) => ({ ...current, startDate: value }))
                 }
-                className="h-10 rounded-[16px] bg-[var(--surface-muted)]"
               />
             </Field>
             <Field label="Deadline">
-              <Input
-                type="date"
+              <MilestoneDatePicker
                 value={form.deadline}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, deadline: event.target.value }))
+                onChange={(value) =>
+                  setForm((current) => ({ ...current, deadline: value }))
                 }
-                className="h-10 rounded-[16px] bg-[var(--surface-muted)]"
               />
             </Field>
           </div>
@@ -469,8 +512,8 @@ function MilestoneEditor({
   }
 
   return (
-    <div className="absolute inset-0 z-20 bg-[var(--modal-backdrop)]">
-      <div className="absolute inset-x-3 top-8 rounded-[28px] border border-[var(--task-modal-border)] bg-[var(--task-modal-shell)] p-5 text-[var(--foreground)] shadow-[var(--shadow-float)] sm:left-1/2 sm:max-w-lg sm:-translate-x-1/2">
+    <div className="fixed inset-0 z-50 bg-[var(--modal-backdrop)]">
+      <div className="absolute inset-x-3 bottom-3 top-6 max-h-[calc(100svh-2.25rem)] overflow-y-auto rounded-[32px] border border-[var(--task-modal-border)] bg-[var(--task-modal-shell)] p-6 text-[var(--foreground)] shadow-[var(--shadow-float)] backdrop-blur-[14px] sm:inset-x-0 sm:top-10 sm:mx-auto sm:max-h-[calc(100svh-5rem)] sm:w-full sm:max-w-xl">
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
@@ -527,27 +570,23 @@ function MilestoneEditor({
           </Field>
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Start date">
-              <Input
-                type="date"
+              <MilestoneDatePicker
                 value={form.startDate}
-                onChange={(event) =>
+                onChange={(value) =>
                   setForm((current) =>
-                    current ? { ...current, startDate: event.target.value } : current,
+                    current ? { ...current, startDate: value } : current,
                   )
                 }
-                className="h-10 rounded-[16px] bg-[var(--surface-muted)]"
               />
             </Field>
             <Field label="Deadline">
-              <Input
-                type="date"
+              <MilestoneDatePicker
                 value={form.deadline}
-                onChange={(event) =>
+                onChange={(value) =>
                   setForm((current) =>
-                    current ? { ...current, deadline: event.target.value } : current,
+                    current ? { ...current, deadline: value } : current,
                   )
                 }
-                className="h-10 rounded-[16px] bg-[var(--surface-muted)]"
               />
             </Field>
           </div>

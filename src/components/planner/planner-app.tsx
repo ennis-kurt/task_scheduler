@@ -30,7 +30,6 @@ import {
   Plus,
   Search,
   Settings2,
-  Sparkles,
   Sun,
   Trash2,
   X,
@@ -255,13 +254,11 @@ function ThemeToggle() {
   const TriggerIcon =
     selectedTheme === "system"
       ? Monitor
-      : selectedTheme === "pulse"
-        ? Sparkles
-        : selectedTheme === "aura"
-          ? Palette
-          : activeVisualTheme === "dark"
-            ? Moon
-            : Sun;
+      : selectedTheme === "aura"
+        ? Palette
+        : activeVisualTheme === "dark"
+          ? Moon
+          : Sun;
 
   const options = [
     {
@@ -287,12 +284,6 @@ function ThemeToggle() {
       label: "Aura",
       description: "Pastel glass workspace",
       icon: Palette,
-    },
-    {
-      value: "pulse" as const,
-      label: "Pulse",
-      description: "Vivid energetic workspace",
-      icon: Sparkles,
     },
   ];
 
