@@ -1,6 +1,5 @@
 "use client";
 
-import { UserButton } from "@clerk/nextjs";
 import FullCalendar from "@fullcalendar/react";
 import interactionPlugin, {
   Draggable,
@@ -14,37 +13,16 @@ import type {
   EventDropArg,
   EventMountArg,
 } from "@fullcalendar/core";
+import { CalendarClock, Trash2, X } from "lucide-react";
 import {
-  Archive,
-  CalendarClock,
-  CheckCircle2,
-  ChevronDown,
-  Command,
-  FolderKanban,
-  GripVertical,
-  Monitor,
-  MoreHorizontal,
-  Moon,
-  Palette,
-  Pencil,
-  Plus,
-  Search,
-  Settings2,
-  Sun,
-  Trash2,
-  X,
-} from "lucide-react";
-import {
-  useDeferredValue,
   useEffect,
   useEffectEvent,
   useMemo,
   useRef,
   useState,
-  useSyncExternalStore,
   useTransition,
 } from "react";
-import type { DragEvent as ReactDragEvent, ReactNode } from "react";
+import type { ReactNode } from "react";
 import {
   addDays,
   addMinutes,
@@ -58,10 +36,8 @@ import {
   startOfWeek,
 } from "date-fns";
 import { toast } from "sonner";
-import { useTheme } from "next-themes";
 
 import { Badge } from "@/components/ui/badge";
-import { InflaraLogo } from "@/components/brand/inflara-logo";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -86,7 +62,6 @@ import type {
   PlannerCalendarItem,
   PlannerPayload,
   ProjectPlan,
-  ProjectStatus,
   PlannerRange,
   PlannerSurface,
   PlannerTask,
@@ -96,13 +71,14 @@ import type {
   UpdateSettingsInput,
 } from "@/lib/planner/types";
 import { cn } from "@/lib/utils";
+import { Sidebar, type ActiveViewType } from "../layout/sidebar";
+import { PlanningView } from "./views/planning-view";
 
 type PlannerAppProps = {
   initialData: PlannerPayload;
   initialRange: PlannerRange;
 };
 
-type PlannerMode = "schedule" | "projects";
 type ProjectPlanningSurface = "plan" | "timeline" | "charts";
 
 type DrawerState =
@@ -141,66 +117,12 @@ const PRIORITY_LABELS: Record<Priority, string> = {
   critical: "Critical",
 };
 
-const SURFACE_LABELS: Record<PlannerSurface, string> = {
-  week: "Week",
-  day: "Day",
-  agenda: "Agenda",
-};
-
-const PROJECT_SURFACE_LABELS: Record<ProjectPlanningSurface, string> = {
-  plan: "Plan",
-  timeline: "Timeline",
-  charts: "Charts",
-};
-
-const PROJECT_STATUS_LABELS: Record<ProjectStatus, string> = {
-  active: "Active",
-  completed: "Completed",
-  archived: "Archived",
-};
-
-const PROJECT_STATUS_ORDER: ProjectStatus[] = ["active", "completed", "archived"];
-
-function withAlpha(color: string, alpha: number) {
-  const normalized = color.replace("#", "");
-  const expanded =
-    normalized.length === 3
-      ? normalized
-          .split("")
-          .map((value) => `${value}${value}`)
-          .join("")
-      : normalized;
-
-  const safe =
-    expanded.length === 6 && /^[0-9a-f]+$/i.test(expanded) ? expanded : "475569";
-  const red = Number.parseInt(safe.slice(0, 2), 16);
-  const green = Number.parseInt(safe.slice(2, 4), 16);
-  const blue = Number.parseInt(safe.slice(4, 6), 16);
-
-  return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
-}
-
 function pickInitialProjectId(projectPlans: ProjectPlan[]) {
   return (
     projectPlans.find((plan) => plan.project.status === "active")?.project.id ??
     projectPlans[0]?.project.id ??
     ""
   );
-}
-
-function plannerAccentButtonClass(
-  active: boolean,
-  accent: "project" | "schedule",
-) {
-  if (!active) {
-    return "text-[var(--foreground-strong)] hover:bg-[var(--button-ghost-hover)] hover:text-[var(--foreground-strong)]";
-  }
-
-  if (accent === "project") {
-    return "border border-[rgba(225,29,72,0.14)] bg-[rgba(225,29,72,0.16)] text-[color:#9f1239] hover:bg-[rgba(225,29,72,0.2)] hover:text-[color:#881337] dark:border-[rgba(251,113,133,0.22)] dark:bg-[rgba(244,63,94,0.22)] dark:text-[color:#ffe4e6] dark:hover:bg-[rgba(244,63,94,0.28)] dark:hover:text-white";
-  }
-
-  return "border border-[rgba(59,130,246,0.14)] bg-[rgba(59,130,246,0.16)] text-[color:#1d4ed8] hover:bg-[rgba(59,130,246,0.2)] hover:text-[color:#1e40af] dark:border-[rgba(96,165,250,0.22)] dark:bg-[rgba(59,130,246,0.22)] dark:text-[color:#dbeafe] dark:hover:bg-[rgba(59,130,246,0.28)] dark:hover:text-white";
 }
 
 const BOARD_COLUMNS: Array<{
@@ -224,137 +146,6 @@ const BOARD_COLUMNS: Array<{
     description: "Closed loops for this plan.",
   },
 ];
-
-function ThemeToggle() {
-  const { theme, resolvedTheme, setTheme } = useTheme();
-  const [open, setOpen] = useState(false);
-  const mounted = useSyncExternalStore(
-    () => () => {},
-    () => true,
-    () => false,
-  );
-
-  if (!mounted) {
-    return (
-      <Button
-        variant="outline"
-        size="icon"
-        className="h-9 w-9 rounded-full"
-        title="Theme settings"
-      >
-        <Monitor className="h-4 w-4" />
-        <span className="sr-only">Theme settings</span>
-      </Button>
-    );
-  }
-
-  const selectedTheme = theme ?? "system";
-  const activeVisualTheme =
-    selectedTheme === "system" ? resolvedTheme ?? "light" : selectedTheme;
-  const TriggerIcon =
-    selectedTheme === "system"
-      ? Monitor
-      : selectedTheme === "aura"
-        ? Palette
-        : activeVisualTheme === "dark"
-          ? Moon
-          : Sun;
-
-  const options = [
-    {
-      value: "system" as const,
-      label: "System",
-      description: `Following ${resolvedTheme ?? "light"}`,
-      icon: Monitor,
-    },
-    {
-      value: "light" as const,
-      label: "Light",
-      description: "Always use the light theme",
-      icon: Sun,
-    },
-    {
-      value: "dark" as const,
-      label: "Dark",
-      description: "Always use the dark theme",
-      icon: Moon,
-    },
-    {
-      value: "aura" as const,
-      label: "Aura",
-      description: "Pastel glass workspace",
-      icon: Palette,
-    },
-    {
-      value: "neon" as const,
-      label: "Neon",
-      description: "Cyberpunk emerald workspace",
-      icon: Palette,
-    },
-    {
-      value: "elegant" as const,
-      label: "Elegant",
-      description: "Clean & sophisticated",
-      icon: Palette,
-    },
-  ];
-
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          variant="outline"
-          size="icon"
-          className="h-9 w-9 rounded-full"
-          title={`Theme: ${selectedTheme}`}
-        >
-          <TriggerIcon className="h-4 w-4" />
-          <span className="sr-only">Change theme</span>
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent
-        align="end"
-        className="w-[192px] rounded-[22px] border border-[var(--border-strong)] bg-[var(--surface-elevated)] p-1.5 shadow-[var(--shadow-soft)]"
-      >
-        <div className="grid gap-1">
-          {options.map((option) => {
-            const OptionIcon = option.icon;
-            const active = selectedTheme === option.value;
-
-            return (
-              <button
-                key={option.value}
-                type="button"
-                onClick={() => {
-                  setTheme(option.value);
-                  setOpen(false);
-                }}
-                className={cn(
-                  "flex w-full items-center gap-3 rounded-[18px] px-3 py-2 text-left transition",
-                  active
-                    ? "bg-[var(--accent-soft)] text-[var(--foreground-strong)]"
-                    : "text-[var(--foreground)] hover:bg-[var(--button-ghost-hover)]",
-                )}
-              >
-                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[var(--surface-elevated)] text-[var(--muted-foreground)]">
-                  <OptionIcon className="h-4 w-4" />
-                </span>
-                <span className="min-w-0">
-                  <span className="block text-sm font-medium">{option.label}</span>
-                  <span className="block truncate text-[11px] text-[var(--muted-foreground)]">
-                    {option.description}
-                  </span>
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      </PopoverContent>
-    </Popover>
-  );
-}
-
-type QueueMode = "unscheduled" | "overdue";
 
 function DateTimePicker({
   value,
@@ -613,51 +404,6 @@ function deriveTaskCollections(tasks: PlannerTask[]) {
   };
 }
 
-function taskMatchesQuery(task: PlannerTask, query: string) {
-  if (!query) {
-    return true;
-  }
-
-  const needle = query.toLowerCase();
-  return [
-    task.title,
-    task.notes,
-    task.project?.name ?? "",
-    task.area?.name ?? "",
-    ...task.tags.map((tag) => tag.name),
-  ]
-    .join(" ")
-    .toLowerCase()
-    .includes(needle);
-}
-
-function taskFallsInRange(task: PlannerTask, range: PlannerRange) {
-  const rangeStart = parseISO(range.start);
-  const rangeEnd = parseISO(range.end);
-  const inRange = (value: string | null | undefined) =>
-    value != null &&
-    !isBefore(parseISO(value), rangeStart) &&
-    !isBefore(rangeEnd, parseISO(value));
-
-  if (task.status === "done") {
-    return (
-      inRange(task.completedAt) ||
-      inRange(task.primaryBlock?.startsAt) ||
-      inRange(task.dueAt)
-    );
-  }
-
-  return (
-    inRange(task.primaryBlock?.startsAt) ||
-    inRange(task.dueAt) ||
-    (isTaskOverdue(task, parseISO(range.start)) &&
-      (task.primaryBlock == null ||
-        isBefore(parseISO(task.primaryBlock.startsAt), rangeStart) ||
-        task.dueAt == null ||
-        isBefore(parseISO(task.dueAt), rangeStart)))
-  );
-}
-
 function compareBoardTasks(left: PlannerTask, right: PlannerTask) {
   const priorityRank: Record<Priority, number> = {
     critical: 0,
@@ -676,18 +422,6 @@ function compareBoardTasks(left: PlannerTask, right: PlannerTask) {
     leftAnchor.localeCompare(rightAnchor) ||
     left.title.localeCompare(right.title)
   );
-}
-
-function formatSurfaceTitle(surface: PlannerSurface, focusedDate: string, range: PlannerRange) {
-  if (surface === "day") {
-    return format(parseISO(`${focusedDate}T12:00:00`), "EEEE, MMM d");
-  }
-
-  if (surface === "agenda") {
-    return `Agenda for ${format(parseISO(range.start), "MMM d")} - ${format(parseISO(range.end), "MMM d")}`;
-  }
-
-  return `Week of ${format(parseISO(range.start), "MMM d")}`;
 }
 
 function buildTaskItem(
@@ -735,33 +469,204 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   return data;
 }
 
+function TaskCollectionView({
+  title,
+  description,
+  tasks,
+  emptyLabel,
+  onOpenTask,
+}: {
+  title: string;
+  description: string;
+  tasks: PlannerTask[];
+  emptyLabel: string;
+  onOpenTask: (taskId: string) => void;
+}) {
+  return (
+    <section className="flex h-full flex-1 flex-col bg-white">
+      <header className="flex h-14 shrink-0 items-center justify-between border-b border-[var(--border)] bg-white px-6">
+        <div>
+          <h1 className="text-lg font-semibold text-[var(--foreground-strong)]">
+            {title}
+          </h1>
+          <p className="text-xs text-[var(--muted-foreground)]">{description}</p>
+        </div>
+        <Badge tone="neutral">{tasks.length}</Badge>
+      </header>
+
+      <div className="flex-1 overflow-y-auto bg-[#FAFAFA] p-6">
+        {tasks.length ? (
+          <div className="mx-auto grid max-w-4xl gap-3">
+            {tasks.map((task) => (
+              <button
+                key={task.id}
+                type="button"
+                onClick={() => onOpenTask(task.id)}
+                className="group grid gap-3 rounded-xl border border-[var(--border)] bg-white p-4 text-left shadow-[var(--shadow-soft)] transition hover:-translate-y-0.5 hover:border-[var(--border-strong)]"
+              >
+                <div className="flex min-w-0 items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <h2 className="truncate text-sm font-semibold text-[var(--foreground-strong)] group-hover:text-blue-600">
+                      {task.title}
+                    </h2>
+                    {task.notes ? (
+                      <p className="mt-1 line-clamp-2 text-xs leading-5 text-[var(--muted-foreground)]">
+                        {task.notes}
+                      </p>
+                    ) : null}
+                  </div>
+                  <Badge tone="neutral" className={priorityClass(task.priority)}>
+                    {PRIORITY_LABELS[task.priority]}
+                  </Badge>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--muted-foreground)]">
+                  {task.project ? <span>{task.project.name}</span> : null}
+                  {task.area ? <span>{task.area.name}</span> : null}
+                  <span>{formatMinutes(task.estimatedMinutes)}</span>
+                  {task.dueAt ? <span>Due {format(parseISO(task.dueAt), "MMM d")}</span> : null}
+                </div>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="mx-auto flex h-full max-w-xl items-center justify-center">
+            <div className="rounded-2xl border border-dashed border-[var(--border)] bg-white px-6 py-8 text-center">
+              <p className="text-sm font-medium text-[var(--foreground-strong)]">
+                {emptyLabel}
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function CapacityView({
+  capacity,
+  onOpenPlanning,
+}: {
+  capacity: DayCapacity[];
+  onOpenPlanning: () => void;
+}) {
+  const totals = capacity.reduce(
+    (sum, day) => ({
+      workMinutes: sum.workMinutes + day.workMinutes,
+      scheduledTaskMinutes: sum.scheduledTaskMinutes + day.scheduledTaskMinutes,
+      fixedEventMinutes: sum.fixedEventMinutes + day.fixedEventMinutes,
+      remainingMinutes: sum.remainingMinutes + day.remainingMinutes,
+    }),
+    {
+      workMinutes: 0,
+      scheduledTaskMinutes: 0,
+      fixedEventMinutes: 0,
+      remainingMinutes: 0,
+    },
+  );
+
+  return (
+    <section className="flex h-full flex-1 flex-col bg-white">
+      <header className="flex h-14 shrink-0 items-center justify-between border-b border-[var(--border)] bg-white px-6">
+        <div>
+          <h1 className="text-lg font-semibold text-[var(--foreground-strong)]">
+            Capacity
+          </h1>
+          <p className="text-xs text-[var(--muted-foreground)]">
+            Work-hour load from tasks and fixed events.
+          </p>
+        </div>
+        <Button variant="outline" size="sm" onClick={onOpenPlanning}>
+          Open planning
+        </Button>
+      </header>
+
+      <div className="flex-1 overflow-y-auto bg-[#FAFAFA] p-6">
+        <div className="mx-auto grid max-w-5xl gap-4">
+          <div className="grid gap-3 md:grid-cols-4">
+            {[
+              ["Work time", totals.workMinutes],
+              ["Task blocks", totals.scheduledTaskMinutes],
+              ["Events", totals.fixedEventMinutes],
+              ["Remaining", totals.remainingMinutes],
+            ].map(([label, minutes]) => (
+              <div
+                key={label}
+                className="rounded-xl border border-[var(--border)] bg-white p-4 shadow-[var(--shadow-soft)]"
+              >
+                <p className="text-xs font-medium text-[var(--muted-foreground)]">
+                  {label}
+                </p>
+                <p className="mt-2 text-lg font-semibold text-[var(--foreground-strong)]">
+                  {formatMinutes(Number(minutes))}
+                </p>
+              </div>
+            ))}
+          </div>
+
+          <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-white shadow-[var(--shadow-soft)]">
+            {capacity.map((day) => {
+              const usedMinutes = day.scheduledTaskMinutes + day.fixedEventMinutes;
+              const usedPercentage = day.workMinutes
+                ? Math.min(100, Math.round((usedMinutes / day.workMinutes) * 100))
+                : 0;
+
+              return (
+                <div
+                  key={day.date}
+                  className="grid gap-3 border-b border-[var(--border)] px-4 py-3 last:border-b-0 md:grid-cols-[160px_minmax(0,1fr)_120px]"
+                >
+                  <div>
+                    <p className="text-sm font-medium text-[var(--foreground-strong)]">
+                      {format(parseISO(`${day.date}T12:00:00`), "EEE, MMM d")}
+                    </p>
+                    <p className="text-xs text-[var(--muted-foreground)]">
+                      {formatMinutes(day.workMinutes)} available
+                    </p>
+                  </div>
+                  <div className="flex items-center">
+                    <div className="h-2 w-full overflow-hidden rounded-full bg-[var(--surface-muted)]">
+                      <div
+                        className={cn(
+                          "h-full rounded-full",
+                          day.overloaded ? "bg-[var(--danger)]" : "bg-blue-600",
+                        )}
+                        style={{ width: `${usedPercentage}%` }}
+                      />
+                    </div>
+                  </div>
+                  <div className="text-right text-sm font-medium text-[var(--foreground-strong)]">
+                    {formatMinutes(day.remainingMinutes)}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
+  const initialProjectId = pickInitialProjectId(initialData.projectPlans);
   const calendarRef = useRef<FullCalendar | null>(null);
   const queueRef = useRef<HTMLDivElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const [plannerData, setPlannerData] = useState(initialData);
   const [visibleRange, setVisibleRange] = useState(initialRange);
-  const [plannerMode, setPlannerMode] = useState<PlannerMode>("projects");
-  const [projectSurface, setProjectSurface] = useState<ProjectPlanningSurface>("plan");
-  const [activeProjectId, setActiveProjectId] = useState(() =>
-    pickInitialProjectId(initialData.projectPlans),
+  const projectSurface: ProjectPlanningSurface = "plan";
+  const [activeProjectId, setActiveProjectId] = useState(() => initialProjectId);
+  const [activeView, setActiveView] = useState<ActiveViewType>(() =>
+    initialProjectId ? `project:${initialProjectId}` : "planning",
   );
   const [surface, setSurface] = useState<PlannerSurface>("week");
   const [focusedDate, setFocusedDate] = useState(todayDateString());
   const [drawerState, setDrawerState] = useState<DrawerState>(null);
   const [quickAddKind, setQuickAddKind] = useState<QuickAddKind>(null);
   const [quickAddDefaults, setQuickAddDefaults] = useState<QuickAddDefaults>({});
-  const [query, setQuery] = useState("");
-  const deferredQuery = useDeferredValue(query);
-  const [queueMode, setQueueMode] = useState<QueueMode>("unscheduled");
   const [helpOpen, setHelpOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
-  const [showWeekends, setShowWeekends] = useState(false);
-  const [popoverOpen, setPopoverOpen] = useState(false);
-  const [projectRenameState, setProjectRenameState] = useState<{
-    id: string;
-    name: string;
-  } | null>(null);
+  const showWeekends = false;
   const [milestoneComposerOpen, setMilestoneComposerOpen] = useState(false);
   const [calendarCreateChoice, setCalendarCreateChoice] = useState<QuickAddDefaults | null>(null);
   const [pendingRecurringEdit, setPendingRecurringEdit] = useState<PendingRecurringEdit | null>(
@@ -787,73 +692,48 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
     drawerState?.type === "event"
       ? plannerData.events.find((event) => event.id === drawerState.eventId) ?? null
       : null;
-  const selectedWeekRange = useMemo(() => {
-    const focus = parseISO(`${focusedDate}T12:00:00`);
-    const from = startOfWeek(focus, {
-      weekStartsOn: plannerData.settings.weekStart as 0 | 1 | 2 | 3 | 4 | 5 | 6,
-    });
-
-    return {
-      from,
-      to: addDays(from, 6),
-    };
-  }, [focusedDate, plannerData.settings.weekStart]);
-  const selectedWeekModifiers = useMemo(
-    () => ({
-      range_start: selectedWeekRange.from,
-      range_middle: {
-        from: addDays(selectedWeekRange.from, 1),
-        to: addDays(selectedWeekRange.to, -1),
-      },
-      range_end: selectedWeekRange.to,
-    }),
-    [selectedWeekRange],
-  );
-
-  const surfaceTitle = useMemo(
-    () => formatSurfaceTitle(surface, focusedDate, visibleRange),
-    [focusedDate, surface, visibleRange],
-  );
-  const queueTasks = useMemo(() => {
-    const base =
-      queueMode === "overdue"
-        ? plannerData.overdueTasks
-        : plannerData.unscheduledTasks.filter((task) => !isTaskOverdue(task));
-
-    return base
-      .filter((task) => taskMatchesQuery(task, deferredQuery))
-      .sort(compareBoardTasks);
-  }, [deferredQuery, plannerData.overdueTasks, plannerData.unscheduledTasks, queueMode]);
-  const boardTasks = useMemo(
-    () =>
-      plannerData.tasks
-        .filter((task) => taskFallsInRange(task, visibleRange))
-        .sort(compareBoardTasks),
-    [plannerData.tasks, visibleRange],
-  );
-  const boardColumns = BOARD_COLUMNS.map((column) => ({
-    ...column,
-    tasks: boardTasks.filter((task) => task.status === column.id),
-  }));
-  const agendaItems = plannerData.scheduledItems.filter((item) =>
-    isSameDay(parseISO(item.start), parseISO(`${focusedDate}T12:00:00`)),
-  );
   const selectedProjectId = plannerData.projectPlans.some(
     (plan) => plan.project.id === activeProjectId,
   )
     ? activeProjectId
     : pickInitialProjectId(plannerData.projectPlans);
-  const activeProjectPlan = useMemo(
-    () =>
-      plannerData.projectPlans.find((plan) => plan.project.id === selectedProjectId) ??
-      plannerData.projectPlans[0] ??
-      null,
-    [plannerData.projectPlans, selectedProjectId],
+  const activeSidebarView = useMemo<ActiveViewType>(() => {
+    if (activeView.startsWith("project:")) {
+      return selectedProjectId ? `project:${selectedProjectId}` : "planning";
+    }
+
+    if (
+      activeView.startsWith("area:") &&
+      !plannerData.areas.some((area) => activeView === `area:${area.id}`)
+    ) {
+      return "planning";
+    }
+
+    return activeView;
+  }, [activeView, plannerData.areas, selectedProjectId]);
+  const activeAreaId = activeSidebarView.startsWith("area:")
+    ? activeSidebarView.slice("area:".length)
+    : null;
+  const activeArea = activeAreaId
+    ? plannerData.areas.find((area) => area.id === activeAreaId) ?? null
+    : null;
+  const inboxTasks = useMemo(
+    () => plannerData.unscheduledTasks.filter((task) => !task.hasBlock).sort(compareBoardTasks),
+    [plannerData.unscheduledTasks],
   );
-  const headerTitle =
-    plannerMode === "projects"
-      ? activeProjectPlan?.project.name ?? "Project planning"
-      : surfaceTitle;
+  const planningPipelineTasks = useMemo(
+    () => plannerData.tasks.filter((task) => !task.hasBlock).sort(compareBoardTasks),
+    [plannerData.tasks],
+  );
+  const areaTasks = useMemo(
+    () =>
+      activeAreaId
+        ? plannerData.tasks
+            .filter((task) => task.areaId === activeAreaId)
+            .sort(compareBoardTasks)
+        : [],
+    [activeAreaId, plannerData.tasks],
+  );
 
   async function refreshPlanner(range: PlannerRange = visibleRange) {
     const params = new URLSearchParams({
@@ -927,33 +807,6 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
     }
   }
 
-  async function updateProject(projectId: string, input: Record<string, unknown>) {
-    try {
-      await requestJson(`/api/projects/${projectId}`, {
-        method: "PATCH",
-        body: JSON.stringify(input),
-      });
-      toast.success("Project updated");
-      await refreshPlanner();
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not update project");
-      throw error;
-    }
-  }
-
-  async function deleteProject(projectId: string) {
-    try {
-      await requestJson(`/api/projects/${projectId}`, {
-        method: "DELETE",
-      });
-      toast.success("Project deleted");
-      await refreshPlanner();
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not delete project");
-      throw error;
-    }
-  }
-
   function moveToSurface(nextSurface: PlannerSurface, nextFocusedDate = focusedDate) {
     const nextRange = buildSurfaceRange(
       nextSurface,
@@ -981,16 +834,6 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
     }
 
     moveToSurface(surface, shiftFocusedDate(surface, focusedDate, direction));
-  }
-
-  function suggestTimeWindow(durationMinutes: number) {
-    return buildDefaultEventWindow(plannerData.settings, new Date(), {
-      durationMinutes,
-      busyWindows: plannerData.scheduledItems.map((item) => ({
-        startsAt: item.start,
-        endsAt: item.end,
-        })),
-    });
   }
 
   function optimisticallyScheduleTask(
@@ -1094,43 +937,6 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
     }));
   }
 
-  function scheduleTaskIntoSuggestedWindow(task: PlannerTask) {
-    const suggestion = suggestTimeWindow(task.estimatedMinutes);
-    const blockId = task.primaryBlock?.id;
-    optimisticallyScheduleTask(task.id, suggestion.startsAt, suggestion.endsAt, {
-      sourceId: blockId,
-    });
-
-    startTransition(async () => {
-      try {
-        if (blockId) {
-          await requestJson(`/api/task-blocks/${blockId}`, {
-            method: "PATCH",
-            body: JSON.stringify({
-              startsAt: suggestion.startsAt,
-              endsAt: suggestion.endsAt,
-            }),
-          });
-          toast.success("Task rescheduled into the next open slot");
-        } else {
-          await requestJson("/api/task-blocks", {
-            method: "POST",
-            body: JSON.stringify({
-              taskId: task.id,
-              startsAt: suggestion.startsAt,
-              endsAt: suggestion.endsAt,
-            }),
-          });
-          toast.success("Task scheduled for the next open slot");
-        }
-        await refreshPlanner();
-      } catch (error) {
-        await refreshPlanner();
-        toast.error(error instanceof Error ? error.message : "Could not schedule task");
-      }
-    });
-  }
-
   useEffect(() => {
     const media = window.matchMedia("(max-width: 1024px)");
 
@@ -1181,7 +987,7 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
     return () => {
       draggable.destroy();
     };
-  }, [isMobile, plannerData.overdueTasks, plannerData.unscheduledTasks, queueMode]);
+  }, [isMobile]);
 
   const handleKeyboardEvent = useEffectEvent((event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
@@ -1494,14 +1300,15 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
     });
   }
 
-  function handleBoardDrop(status: TaskStatus, event: ReactDragEvent<HTMLElement>) {
-    event.preventDefault();
-    const taskId = event.dataTransfer.getData("text/planner-task-id");
+  function handleSidebarChange(view: ActiveViewType) {
+    setActiveView(view);
 
-    if (!taskId) {
-      return;
+    if (view.startsWith("project:")) {
+      setActiveProjectId(view.slice("project:".length));
     }
+  }
 
+  function updateTaskStatus(taskId: string, status: TaskStatus) {
     markTaskStatus(taskId, status);
     startTransition(async () => {
       try {
@@ -1527,514 +1334,39 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
   return (
     <div
       data-planner-root
-      className={cn("min-h-screen bg-[var(--background)]", isMobile && "pb-24")}
+      className="flex h-screen w-full bg-[var(--background)] text-[var(--foreground)] text-sm antialiased overflow-hidden"
     >
-      <header
-        data-planner-topbar
-        className="sticky top-0 z-20 border-b border-[var(--border)] bg-[var(--topbar-bg)] backdrop-blur-xl"
-      >
-        <div className="mx-auto flex max-w-[1600px] items-center gap-2 px-4 py-2.5 lg:px-5">
-          <div className="mr-auto flex min-w-0 items-center gap-3">
-            <InflaraLogo compactWordmark markClassName="h-8 w-8" wordmarkClassName="text-sm" />
-            {plannerData.mode === "demo" ? (
-              <Badge tone="accent">Demo mode</Badge>
-            ) : (
-              <Badge tone="success">Private workspace</Badge>
-            )}
-          </div>
-
-          <div className="flex flex-wrap items-center gap-1.5">
-            <div className="flex items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--surface-elevated)] p-1 shadow-[var(--shadow-soft)]">
-              <Button
-                variant="ghost"
-                size="sm"
-                className={plannerAccentButtonClass(plannerMode === "projects", "project")}
-                onClick={() => setPlannerMode("projects")}
-              >
-                Projects
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className={plannerAccentButtonClass(plannerMode === "schedule", "schedule")}
-                onClick={() => setPlannerMode("schedule")}
-              >
-                Schedule
-              </Button>
-            </div>
-          </div>
-
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setHelpOpen(true)}
-            aria-label="Shortcuts"
-            title="Shortcuts"
-          >
-            <Command className="h-4 w-4" />
-          </Button>
-
-          <ThemeToggle />
-
-          <Button
-            variant="ghost"
-            onClick={() => setDrawerState({ type: "settings" })}
-            aria-label="Planner settings"
-            title="Planner settings"
-          >
-            <Settings2 className="h-4 w-4" />
-          </Button>
-
-          {plannerData.mode === "clerk" ? (
-            <div className="ml-1 hidden lg:block">
-              <UserButton />
-            </div>
-          ) : null}
-        </div>
-      </header>
-
-      <main data-planner-main className="mx-auto max-w-[1600px] px-4 py-3 lg:px-5">
-        <div
-          className={cn(
-            "grid gap-3",
-            plannerMode === "schedule" && "lg:grid-cols-[198px_minmax(0,1fr)]",
-            plannerMode === "projects" && "lg:grid-cols-[220px_minmax(0,1fr)]",
-          )}
-        >
-        {plannerMode === "schedule" ? (
-        <aside className="hidden min-w-0 w-[198px] flex-col gap-3 overflow-y-auto pb-4 pr-1 lg:sticky lg:top-[66px] lg:flex lg:h-[calc(100vh-82px)]" style={{ scrollbarWidth: 'none' }}>
-
-
-          <div className="flex flex-col gap-0.5">
-            <div className="mb-1.5 px-2 text-[9px] font-bold uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
-              Workspaces
-            </div>
-
-            <button
-              type="button"
-              data-testid="queue-unscheduled"
-              onClick={() => {
-                setQuery("");
-                setQueueMode("unscheduled");
-              }}
-              className={cn(
-                "flex items-center rounded-xl px-2 py-1.5 text-left text-[12px] font-medium transition-colors",
-                query === "" && queueMode === "unscheduled"
-                  ? "bg-[var(--accent-soft)] text-[var(--accent-strong)]"
-                  : "text-[var(--foreground)] hover:bg-[var(--panel-subtle)]",
-              )}
-            >
-              Inbox
-              <span
-                className={cn(
-                  "ml-auto rounded-full px-2 py-0.5 text-[10px] opacity-80",
-                  plannerData.unscheduledCount > 0
-                    ? "bg-[var(--button-solid-bg)] text-[var(--button-solid-fg)]"
-                    : "bg-[var(--panel-subtle)]",
-                )}
-              >
-                {plannerData.unscheduledCount}
-              </span>
-            </button>
-
-            <button
-              type="button"
-              data-testid="queue-overdue"
-              onClick={() => {
-                setQuery("");
-                setQueueMode("overdue");
-              }}
-              className={cn(
-                "flex items-center rounded-xl px-2 py-1.5 text-left text-[12px] font-medium transition-colors",
-                query === "" && queueMode === "overdue"
-                  ? "bg-[var(--danger-soft)] text-[var(--danger)]"
-                  : "text-[var(--foreground)] hover:bg-[var(--panel-subtle)]",
-              )}
-            >
-              Overdue
-              {plannerData.overdueCount > 0 ? (
-                <span className="ml-auto rounded-full bg-[var(--danger)] px-2 py-0.5 text-[10px] text-white">
-                  {plannerData.overdueCount}
-                </span>
-              ) : null}
-            </button>
-
-            {plannerData.projects?.length ? (
-              <div className="mt-4">
-                <div className="mb-1.5 flex items-center justify-between px-2 text-[9px] font-bold uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
-                  <span>Projects</span>
-                  <button
-                    type="button"
-                    onClick={() => openQuickAdd("project")}
-                    className="hover:text-[var(--foreground)]"
-                  >
-                    <Plus className="h-3 w-3" />
-                  </button>
-                </div>
-                {plannerData.projects.map((p) => (
-                  <button
-                    key={p.id}
-                    type="button"
-                    onClick={() => setQuery(`project:"${p.name}"`)}
-                    className={cn(
-                      "flex w-full items-center rounded-xl px-2 py-1.5 text-left text-[12px] font-medium transition-colors",
-                      query.includes(`project:"${p.name}"`)
-                        ? "bg-[var(--panel-subtle)] text-[var(--foreground-strong)]"
-                        : "text-[var(--foreground)] hover:bg-[var(--panel-subtle)]",
-                    )}
-                  >
-                    <span className="mr-2.5 h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--accent-strong)] opacity-60" />
-                    <span className="truncate">{p.name}</span>
-                  </button>
-                ))}
-              </div>
-            ) : null}
-          </div>
-
-          <section className="flex flex-col flex-1 min-h-[200px] min-w-0 gap-2.5 overflow-hidden rounded-[20px] border border-[var(--border)] bg-[var(--surface)] px-2.5 py-2.5 shadow-[var(--shadow-soft)]">
-            <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0 flex-1">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
-                  {queueMode === "unscheduled" ? "Queue" : "Recovery"}
-                </p>
-                <h2 className="mt-1 text-[14px] font-semibold tracking-[-0.03em] text-[var(--foreground-strong)]">
-                  {queueMode === "unscheduled" ? "Ready to place" : "Needs a new slot"}
-                </h2>
-              </div>
-              <div className="flex shrink-0 items-center gap-1">
-                <Badge tone={queueMode === "overdue" ? "danger" : "neutral"}>
-                  {queueTasks.length}
-                </Badge>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7 shrink-0 text-[var(--muted-foreground)]"
-                  onClick={() => openQuickAdd("task")}
-                  aria-label="New task"
-                  title="New task"
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                </Button>
-              </div>
-            </div>
-
-            <div className="flex min-w-0 items-center gap-2 rounded-[14px] border border-[var(--border)] bg-[var(--surface-muted)] px-2.5 py-2">
-              <Search className="h-3.5 w-3.5 text-[var(--muted-foreground)]" />
-              <input
-                ref={searchInputRef}
-                aria-label="Search task queue"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder={queueMode === "unscheduled" ? "Find in inbox..." : "Find overdue work..."}
-                className="min-w-0 w-full bg-transparent text-[12px] outline-none placeholder:text-[var(--muted-foreground)]"
-              />
-              {query ? (
-                <button
-                  type="button"
-                  onClick={() => setQuery("")}
-                  className="shrink-0 text-[10px] font-medium uppercase tracking-[0.12em] text-[var(--muted-foreground)] transition hover:text-[var(--foreground)]"
-                >
-                  Clear
-                </button>
-              ) : null}
-            </div>
-
-            {queueTasks.length ? (
-              <div ref={queueRef} className="grid min-w-0 gap-2 overflow-y-auto flex-1 pr-1" style={{ scrollbarWidth: "thin" }}>
-                {queueTasks.map((task) => (
-                  <QueueTaskCard
-                    key={task.id}
-                    queueMode={queueMode}
-                    task={task}
-                    onEdit={() => setDrawerState({ type: "task", taskId: task.id })}
-                    onPlaceNext={() => scheduleTaskIntoSuggestedWindow(task)}
-                  />
-                ))}
-              </div>
-            ) : (
-              <div className="rounded-[18px] border border-dashed border-[var(--border)] bg-[var(--surface-muted)] px-3 py-4 text-center">
-                <p className="text-[12px] font-medium text-[var(--foreground-strong)]">
-                  {queueMode === "unscheduled" ? "Inbox is clear" : "Nothing overdue"}
-                </p>
-              </div>
-            )}
-
-            <div className="grid gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                className="w-full justify-center"
-                onClick={() => openQuickAdd("task")}
-              >
-                <Plus className="h-3.5 w-3.5" />
-                New task
-              </Button>
-              <Button
-                size="sm"
-                className="w-full justify-center"
-                onClick={() =>
-                  queueTasks[0]
-                    ? scheduleTaskIntoSuggestedWindow(queueTasks[0])
-                    : openQuickAdd("event")
-                }
-              >
-                <CalendarClock className="h-3.5 w-3.5" />
-                {queueTasks[0]
-                  ? queueMode === "overdue"
-                    ? "Reschedule next"
-                    : "Place next"
-                  : "New event"}
-              </Button>
-            </div>
-          </section>
-        </aside>
-        ) : (
-        <ProjectSidebar
-          projectPlans={plannerData.projectPlans}
-          activeProjectId={selectedProjectId}
-          onSelectProject={(projectId) => setActiveProjectId(projectId)}
-          onAddProject={() => openQuickAdd("project")}
-          onRenameProject={(project) =>
-            setProjectRenameState({ id: project.id, name: project.name })
-          }
-          onMoveProject={(projectId, status) => updateProject(projectId, { status })}
-          onDeleteProject={deleteProject}
-        />
-        )}
-
-        <div className="min-w-0">
-          <section
-            data-planner-context-header
-            className="sticky top-[66px] z-10 mb-3 rounded-[22px] border border-[var(--border)] bg-[var(--surface)] px-4 py-3 shadow-[var(--shadow-soft)] backdrop-blur-xl"
-          >
-            <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-              <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:items-center">
-                <div className="min-w-0">
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
-                    {plannerMode === "projects" ? "Project planning" : "Schedule"}
-                  </p>
-                  {plannerMode === "schedule" ? (
-                    <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
-                      <PopoverTrigger asChild>
-                        <button className="mt-1 flex max-w-full items-center gap-1 text-left text-[1.6rem] font-semibold tracking-[-0.045em] text-[var(--foreground-strong)] transition hover:text-[var(--accent-strong)]">
-                          <span className="truncate">{headerTitle}</span>
-                          <ChevronDown className="h-4 w-4 shrink-0 text-[var(--muted-foreground)]" />
-                        </button>
-                      </PopoverTrigger>
-                      <PopoverContent
-                        align="start"
-                        className="my-1 w-auto overflow-hidden rounded-[24px] border border-[var(--border-strong)] bg-[var(--surface-elevated)] p-0 shadow-[var(--shadow-soft)]"
-                      >
-                        {surface === "week" ? (
-                          <Calendar
-                            modifiers={selectedWeekModifiers}
-                            weekStartsOn={
-                              plannerData.settings.weekStart as 0 | 1 | 2 | 3 | 4 | 5 | 6
-                            }
-                            onDayClick={(date) => {
-                              moveToSurface(surface, format(date, "yyyy-MM-dd"));
-                              setPopoverOpen(false);
-                            }}
-                            initialFocus
-                          />
-                        ) : (
-                          <Calendar
-                            mode="single"
-                            selected={parseISO(focusedDate)}
-                            weekStartsOn={
-                              plannerData.settings.weekStart as 0 | 1 | 2 | 3 | 4 | 5 | 6
-                            }
-                            onDayClick={(date) => {
-                              moveToSurface(surface, format(date, "yyyy-MM-dd"));
-                              setPopoverOpen(false);
-                            }}
-                            initialFocus
-                          />
-                        )}
-                      </PopoverContent>
-                    </Popover>
-                  ) : (
-                    <h1 className="mt-1 truncate text-[1.6rem] font-semibold tracking-[-0.045em] text-[var(--foreground-strong)]">
-                      {headerTitle}
-                    </h1>
-                  )}
-                </div>
-
-                <div className="hidden h-8 w-px bg-[var(--border)] lg:block" />
-
-                <div className="flex flex-wrap items-center gap-2">
-                  <div className="flex items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--surface-elevated)] p-1 shadow-[var(--shadow-soft)]">
-                    {plannerMode === "schedule"
-                      ? (Object.keys(SURFACE_LABELS) as PlannerSurface[]).map((view) => (
-                          <Button
-                            key={view}
-                            variant="ghost"
-                            size="sm"
-                            className={plannerAccentButtonClass(surface === view, "schedule")}
-                            data-testid={`surface-${view}`}
-                            onClick={() => moveToSurface(view)}
-                          >
-                            {SURFACE_LABELS[view]}
-                          </Button>
-                        ))
-                      : (Object.keys(PROJECT_SURFACE_LABELS) as ProjectPlanningSurface[]).map((view) => (
-                          <Button
-                            key={view}
-                            variant="ghost"
-                            size="sm"
-                            className={plannerAccentButtonClass(projectSurface === view, "project")}
-                            data-testid={`project-surface-${view}`}
-                            onClick={() => setProjectSurface(view)}
-                          >
-                            {PROJECT_SURFACE_LABELS[view]}
-                          </Button>
-                        ))}
-                  </div>
-
-                  {plannerMode === "projects" ? (
-                    <div className="flex gap-2 lg:hidden">
-                      {plannerData.projectPlans.map((plan) => (
-                        <button
-                          key={plan.project.id}
-                          type="button"
-                          onClick={() => setActiveProjectId(plan.project.id)}
-                          className={cn(
-                            "rounded-full border px-3 py-1.5 text-[12px] font-medium transition",
-                            plan.project.id === selectedProjectId
-                              ? "border-transparent text-[var(--foreground-strong)]"
-                              : "border-[var(--border)] bg-[var(--surface-elevated)] text-[var(--muted-foreground)] hover:text-[var(--foreground-strong)]",
-                          )}
-                          style={
-                            plan.project.id === selectedProjectId
-                              ? {
-                                  backgroundColor: withAlpha(plan.project.color, 0.14),
-                                  color: plan.project.color,
-                                }
-                              : undefined
-                          }
-                        >
-                          {plan.project.name}
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2">
-                {plannerMode === "schedule" ? (
-                  <>
-                    <Button variant="outline" size="sm" onClick={() => navigateSurface("prev")}>
-                      Prev
-                    </Button>
-                    <Button variant="outline" size="sm" onClick={() => navigateSurface("today")}>
-                      Today
-                    </Button>
-                    <Button variant="outline" size="sm" onClick={() => navigateSurface("next")}>
-                      Next
-                    </Button>
-                    {surface === "week" ? (
-                      <Select
-                        value={showWeekends ? "full" : "work"}
-                        onChange={(e) => setShowWeekends(e.target.value === "full")}
-                        className="h-9 w-[134px] rounded-full bg-[var(--surface-elevated)] shadow-[var(--shadow-soft)]"
-                      >
-                        <option value="work">Work week</option>
-                        <option value="full">Full week</option>
-                      </Select>
-                    ) : null}
-                    <Button variant="outline" size="sm" onClick={() => openQuickAdd("event")}>
-                      <CalendarClock className="h-4 w-4" />
-                      New event
-                    </Button>
-                    <Button size="sm" onClick={() => openQuickAdd("task")}>
-                      <Plus className="h-4 w-4" />
-                      New task
-                    </Button>
-                  </>
-                ) : (
-                  <>
-                    <Button variant="outline" size="sm" onClick={() => openQuickAdd("project")}>
-                      <FolderKanban className="h-4 w-4" />
-                      New project
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() =>
-                        openQuickAdd("task", {
-                          projectId: activeProjectPlan?.project.id ?? undefined,
-                        })
-                      }
-                    >
-                      <Plus className="h-4 w-4" />
-                      Add task
-                    </Button>
-                    <Button size="sm" onClick={() => setMilestoneComposerOpen(true)}>
-                      <Plus className="h-4 w-4" />
-                      Add milestone
-                    </Button>
-                  </>
-                )}
-              </div>
-            </div>
-          </section>
-
-          {plannerMode === "schedule" ? (
-          <section
-            data-schedule-surface
-            className="relative grid gap-4 rounded-[28px] border border-[var(--border)] bg-[var(--surface)] p-3 shadow-[var(--shadow-soft)] backdrop-blur-md sm:p-4"
-          >
-            {surface === "agenda" ? (
-              <div className="grid gap-4">
-                <div className="flex snap-x snap-mandatory gap-3 overflow-x-auto px-0.5 pb-3" style={{ scrollbarWidth: 'thin' }}>
-                  {plannerData.capacity.map((day) => (
-                    <div key={day.date} className="min-w-[188px] shrink-0 snap-start">
-                      <AgendaDayCard
-                        active={day.date === focusedDate}
-                        day={day}
-                        onClick={() => setFocusedDate(day.date)}
-                      />
-                    </div>
-                  ))}
-                </div>
-
-                {agendaItems.length ? null : (
-                  <AgendaEmptyState
-                    hasQueueTasks={queueTasks.length > 0}
-                    queueMode={queueMode}
-                    onCreateEvent={() => openQuickAdd("event")}
-                    onCreateTask={() => openQuickAdd("task")}
-                    onPlaceNextTask={
-                      queueTasks[0] ? () => scheduleTaskIntoSuggestedWindow(queueTasks[0]) : undefined
-                    }
-                  />
-                )}
-              </div>
-            ) : (
-              <KanbanBoard
-                columns={boardColumns}
-                dateLabel={
-                  surface === "day"
-                    ? format(parseISO(`${focusedDate}T12:00:00`), "EEEE, MMM d")
-                    : `${format(parseISO(visibleRange.start), "MMM d")} - ${format(parseISO(visibleRange.end), "MMM d")}`
-                }
-                onCardClick={(task) => setDrawerState({ type: "task", taskId: task.id })}
-                onColumnDrop={handleBoardDrop}
-              />
-            )}
-
-            <div
-              data-calendar-shell
-              className="min-h-[460px] rounded-[22px] border border-[var(--border)] bg-[var(--surface-muted)] p-1.5 shadow-[var(--shadow-soft)]"
-            >
+      <Sidebar
+        activeView={activeSidebarView}
+        onChangeView={handleSidebarChange}
+        projectPlans={plannerData.projectPlans}
+        areas={plannerData.areas}
+        onOpenNewProject={() => openQuickAdd("project")}
+        onOpenNewArea={() => openQuickAdd("area")}
+        onOpenCreateTask={() => openQuickAdd("task")}
+        onOpenSettings={() => setDrawerState({ type: "settings" })}
+        showUserButton={plannerData.mode === "clerk"}
+        inboxCount={inboxTasks.length}
+      />
+      <main className="flex-1 flex flex-col min-w-0 bg-[#FAFAFA] dark:bg-[var(--background)] relative h-full md:rounded-l-2xl md:border-l border-[var(--border)] overflow-hidden shadow-[-4px_0_24px_-4px_rgba(0,0,0,0.05)]">
+        {activeSidebarView === "planning" ? (
+          <PlanningView
+            tasks={planningPipelineTasks}
+            onTaskDrop={updateTaskStatus}
+            onOpenTask={(taskId) => setDrawerState({ type: "task", taskId })}
+            surface={surface === "day" || surface === "week" || surface === "agenda" ? surface : "week"}
+            onChangeSurface={moveToSurface}
+            focusedDate={focusedDate}
+            onNavigateDate={(dir) => navigateSurface(dir)}
+            externalDragRef={queueRef}
+            calendarElement={
               <FullCalendar
                 ref={calendarRef}
                 plugins={[timeGridPlugin, interactionPlugin]}
                 initialView={surface === "week" ? "timeGridWeek" : "timeGridDay"}
                 initialDate={focusedDate}
                 headerToolbar={false}
-                height="560px"
+                height="100%"
                 editable
                 selectable
                 selectMirror
@@ -2061,40 +1393,47 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
                 eventResize={handleCalendarMove}
                 select={handleCalendarSelect}
               />
-            </div>
-
-            {isPending ? (
-              <div className="absolute right-5 top-5 rounded-full bg-[var(--button-solid-bg)] px-3 py-2 text-xs font-medium text-[var(--button-solid-fg)] shadow-[var(--shadow-soft)]">
-                Updating planner...
-              </div>
-            ) : null}
-          </section>
-          ) : (
-            <ProjectPlanningModule
-              projectPlans={plannerData.projectPlans}
-              activeProjectId={selectedProjectId}
-              isPending={isPending}
-              onOpenTask={(taskId) => setDrawerState({ type: "task", taskId })}
-              surface={projectSurface}
-              onOpenNewTask={(defaults) => openQuickAdd("task", defaults ?? {})}
-              onOpenNewProject={() => openQuickAdd("project")}
-              milestoneComposerOpen={milestoneComposerOpen}
-              onOpenMilestoneComposer={() => setMilestoneComposerOpen(true)}
-              onCloseMilestoneComposer={() => setMilestoneComposerOpen(false)}
-              onCreateMilestone={createMilestone}
-              onUpdateMilestone={updateMilestone}
-              onDeleteMilestone={deleteMilestone}
-            />
-          )}
-        </div>
-        </div>
+            }
+          />
+        ) : activeSidebarView === "inbox" ? (
+          <TaskCollectionView
+            title="Inbox"
+            description="Unscheduled work that still needs a plan."
+            tasks={inboxTasks}
+            emptyLabel="Inbox is clear"
+            onOpenTask={(taskId) => setDrawerState({ type: "task", taskId })}
+          />
+        ) : activeSidebarView === "capacity" ? (
+          <CapacityView
+            capacity={plannerData.capacity}
+            onOpenPlanning={() => handleSidebarChange("planning")}
+          />
+        ) : activeSidebarView.startsWith("area:") ? (
+          <TaskCollectionView
+            title={activeArea?.name ?? "Area"}
+            description="Tasks connected to this area."
+            tasks={areaTasks}
+            emptyLabel="No tasks in this area yet"
+            onOpenTask={(taskId) => setDrawerState({ type: "task", taskId })}
+          />
+        ) : (
+          <ProjectPlanningModule
+            projectPlans={plannerData.projectPlans}
+            activeProjectId={selectedProjectId}
+            isPending={isPending}
+            onOpenTask={(taskId) => setDrawerState({ type: "task", taskId })}
+            surface={projectSurface}
+            onOpenNewTask={(defaults) => openQuickAdd("task", defaults ?? {})}
+            onOpenNewProject={() => openQuickAdd("project")}
+            milestoneComposerOpen={milestoneComposerOpen}
+            onOpenMilestoneComposer={() => setMilestoneComposerOpen(true)}
+            onCloseMilestoneComposer={() => setMilestoneComposerOpen(false)}
+            onCreateMilestone={createMilestone}
+            onUpdateMilestone={updateMilestone}
+            onDeleteMilestone={deleteMilestone}
+          />
+        )}
       </main>
-
-      <ProjectRenameDialog
-        project={projectRenameState}
-        onClose={() => setProjectRenameState(null)}
-        onSubmit={(projectId, name) => updateProject(projectId, { name })}
-      />
 
       <EditorModal
         drawerState={drawerState}
@@ -2213,56 +1552,6 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
   );
 }
 
-function AgendaDayCard({
-  active,
-  day,
-  onClick,
-}: {
-  active: boolean;
-  day: DayCapacity;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      data-testid={`agenda-day-${day.date}`}
-      onClick={onClick}
-      className={cn(
-        "grid gap-3 rounded-[22px] border px-3.5 py-3.5 text-left transition hover:border-[var(--border-strong)]",
-        active
-          ? "border-[var(--accent-strong)] bg-[var(--accent-soft)]"
-          : "border-[var(--border)] bg-[var(--surface)] opacity-85",
-      )}
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-[13px] font-medium text-[var(--muted-foreground)]">
-            {format(parseISO(day.date), "EEE")}
-          </p>
-          <p className="text-[15px] font-semibold">{format(parseISO(day.date), "MMM d")}</p>
-        </div>
-        <Badge tone={day.overloaded ? "danger" : "neutral"}>
-          {day.overloaded ? "Over capacity" : "Plannable"}
-        </Badge>
-      </div>
-      <div className="grid gap-1.5 text-[13px] text-[var(--muted-foreground)]">
-        <div className="flex items-center justify-between">
-          <span>Tasks</span>
-          <span>{formatMinutes(day.scheduledTaskMinutes)}</span>
-        </div>
-        <div className="flex items-center justify-between">
-          <span>Meetings</span>
-          <span>{formatMinutes(day.fixedEventMinutes)}</span>
-        </div>
-        <div className="flex items-center justify-between">
-          <span>Open time</span>
-          <span>{formatMinutes(Math.max(0, day.remainingMinutes))}</span>
-        </div>
-      </div>
-    </button>
-  );
-}
-
 function CalendarCreatePrompt({
   selection,
   onCancel,
@@ -2337,466 +1626,6 @@ function CalendarCreatePrompt({
           </Button>
         </div>
       </div>
-    </div>
-  );
-}
-
-function ProjectSidebar({
-  projectPlans,
-  activeProjectId,
-  onSelectProject,
-  onAddProject,
-  onRenameProject,
-  onMoveProject,
-  onDeleteProject,
-}: {
-  projectPlans: ProjectPlan[];
-  activeProjectId: string;
-  onSelectProject: (projectId: string) => void;
-  onAddProject: () => void;
-  onRenameProject: (project: ProjectPlan["project"]) => void;
-  onMoveProject: (projectId: string, status: ProjectStatus) => Promise<void>;
-  onDeleteProject: (projectId: string) => Promise<void>;
-}) {
-  return (
-    <aside
-      className="hidden min-w-0 w-[220px] flex-col gap-3 overflow-y-auto pb-4 pr-1 lg:sticky lg:top-[66px] lg:flex lg:h-[calc(100vh-82px)]"
-      style={{ scrollbarWidth: "none" }}
-    >
-      <div className="rounded-[24px] border border-[var(--border)] bg-[var(--surface)] p-3 shadow-[var(--shadow-soft)]">
-        <div className="flex items-center justify-between gap-2">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
-            Projects
-          </p>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-8 w-8 rounded-full p-0"
-            onClick={onAddProject}
-            aria-label="Add project"
-            title="Add project"
-          >
-            <Plus className="h-4 w-4" />
-          </Button>
-        </div>
-
-        <div className="mt-4 grid gap-4">
-          {PROJECT_STATUS_ORDER.map((status) => {
-            const items = projectPlans.filter((plan) => plan.project.status === status);
-
-            if (!items.length) {
-              return null;
-            }
-
-            return (
-              <div key={status} className="grid gap-2">
-                <p className="px-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
-                  {PROJECT_STATUS_LABELS[status]}
-                </p>
-                <div className="grid gap-1.5">
-                  {items.map((plan) => (
-                    <ProjectSidebarItem
-                      key={plan.project.id}
-                      plan={plan}
-                      active={plan.project.id === activeProjectId}
-                      onSelect={() => onSelectProject(plan.project.id)}
-                      onRename={() => onRenameProject(plan.project)}
-                      onMoveProject={onMoveProject}
-                      onDeleteProject={onDeleteProject}
-                    />
-                  ))}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    </aside>
-  );
-}
-
-function ProjectSidebarItem({
-  plan,
-  active,
-  onSelect,
-  onRename,
-  onMoveProject,
-  onDeleteProject,
-}: {
-  plan: ProjectPlan;
-  active: boolean;
-  onSelect: () => void;
-  onRename: () => void;
-  onMoveProject: (projectId: string, status: ProjectStatus) => Promise<void>;
-  onDeleteProject: (projectId: string) => Promise<void>;
-}) {
-  const [open, setOpen] = useState(false);
-  const accentStyle = active
-    ? {
-        backgroundColor: withAlpha(plan.project.color, 0.14),
-        borderColor: withAlpha(plan.project.color, 0.28),
-      }
-    : undefined;
-  const accentTextStyle = active ? { color: plan.project.color } : undefined;
-
-  return (
-    <div
-      className={cn(
-        "group flex items-center gap-1 rounded-[16px] border border-transparent px-1.5 py-1 transition duration-150 hover:-translate-y-[1px] hover:bg-[var(--surface-muted)]",
-        active && "shadow-[var(--shadow-soft)]",
-      )}
-      style={accentStyle}
-    >
-      <button
-        type="button"
-        onClick={onSelect}
-        className="flex min-w-0 flex-1 items-center gap-2 rounded-[12px] px-2 py-2 text-left"
-      >
-        <span
-          className="h-2.5 w-2.5 shrink-0 rounded-full"
-          style={{ backgroundColor: plan.project.color }}
-        />
-        <span
-          className="truncate text-[13px] font-medium text-[var(--foreground-strong)]"
-          style={accentTextStyle}
-        >
-          {plan.project.name}
-        </span>
-      </button>
-
-      <Popover open={open} onOpenChange={setOpen}>
-        <PopoverTrigger asChild>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-8 w-8 rounded-full p-0 opacity-70 transition group-hover:opacity-100"
-            aria-label={`Project options for ${plan.project.name}`}
-          >
-            <MoreHorizontal className="h-4 w-4" />
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent
-          align="end"
-          className="w-56 rounded-[18px] border border-[var(--border-strong)] bg-[var(--surface-elevated)] p-1.5 shadow-[var(--shadow-soft)]"
-        >
-          <button
-            type="button"
-            className="flex w-full items-center gap-2 rounded-[12px] px-3 py-2 text-left text-[13px] font-medium text-[var(--foreground-strong)] transition hover:bg-[var(--button-ghost-hover)]"
-            onClick={() => {
-              setOpen(false);
-              onRename();
-            }}
-          >
-            <Pencil className="h-4 w-4 text-[var(--muted-foreground)]" />
-            Rename project
-          </button>
-
-          {plan.project.status !== "active" ? (
-            <button
-              type="button"
-              className="mt-1 flex w-full items-center gap-2 rounded-[12px] px-3 py-2 text-left text-[13px] font-medium text-[var(--foreground-strong)] transition hover:bg-[var(--button-ghost-hover)]"
-              onClick={async () => {
-                setOpen(false);
-                await onMoveProject(plan.project.id, "active");
-              }}
-            >
-              <FolderKanban className="h-4 w-4 text-[var(--muted-foreground)]" />
-              Move to active
-            </button>
-          ) : null}
-
-          {plan.project.status !== "completed" ? (
-            <button
-              type="button"
-              className="mt-1 flex w-full items-center gap-2 rounded-[12px] px-3 py-2 text-left text-[13px] font-medium text-[var(--foreground-strong)] transition hover:bg-[var(--button-ghost-hover)]"
-              onClick={async () => {
-                setOpen(false);
-                await onMoveProject(plan.project.id, "completed");
-              }}
-            >
-              <CheckCircle2 className="h-4 w-4 text-[var(--muted-foreground)]" />
-              Mark completed
-            </button>
-          ) : null}
-
-          {plan.project.status !== "archived" ? (
-            <button
-              type="button"
-              className="mt-1 flex w-full items-center gap-2 rounded-[12px] px-3 py-2 text-left text-[13px] font-medium text-[var(--foreground-strong)] transition hover:bg-[var(--button-ghost-hover)]"
-              onClick={async () => {
-                setOpen(false);
-                await onMoveProject(plan.project.id, "archived");
-              }}
-            >
-              <Archive className="h-4 w-4 text-[var(--muted-foreground)]" />
-              Archive project
-            </button>
-          ) : null}
-
-          <button
-            type="button"
-            className="mt-1 flex w-full items-center gap-2 rounded-[12px] px-3 py-2 text-left text-[13px] font-medium text-[color:#be123c] transition hover:bg-[rgba(225,29,72,0.08)] dark:text-[color:#fecdd3]"
-            onClick={async () => {
-              setOpen(false);
-              if (!window.confirm(`Delete ${plan.project.name}?`)) {
-                return;
-              }
-              await onDeleteProject(plan.project.id);
-            }}
-          >
-            <Trash2 className="h-4 w-4" />
-            Delete project
-          </button>
-        </PopoverContent>
-      </Popover>
-    </div>
-  );
-}
-
-function ProjectRenameDialog({
-  project,
-  onClose,
-  onSubmit,
-}: {
-  project: { id: string; name: string } | null;
-  onClose: () => void;
-  onSubmit: (projectId: string, name: string) => Promise<void>;
-}) {
-  const [name, setName] = useState(project?.name ?? "");
-  const [submitting, setSubmitting] = useState(false);
-
-  useEffect(() => {
-    setName(project?.name ?? "");
-  }, [project]);
-
-  if (!project) {
-    return null;
-  }
-
-  return (
-    <div className="fixed inset-0 z-40 bg-[var(--modal-backdrop)]">
-      <button type="button" className="absolute inset-0" onClick={onClose} aria-label="Close rename project dialog" />
-      <div className="absolute inset-x-3 top-10 rounded-[28px] border border-[var(--border-strong)] bg-[var(--surface)] p-5 shadow-[var(--shadow-float)] sm:left-1/2 sm:max-w-md sm:-translate-x-1/2">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
-              Project
-            </p>
-            <h2 className="mt-1 text-[1.35rem] font-semibold tracking-[-0.04em] text-[var(--foreground-strong)]">
-              Rename project
-            </h2>
-          </div>
-          <Button variant="ghost" size="sm" onClick={onClose}>
-            Close
-          </Button>
-        </div>
-
-        <div className="mt-4 grid gap-3">
-          <Field label="Project name">
-            <Input value={name} onChange={(event) => setName(event.target.value)} />
-          </Field>
-        </div>
-
-        <div className="mt-5 flex justify-end gap-2">
-          <Button variant="outline" size="sm" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button
-            size="sm"
-            disabled={submitting || !name.trim()}
-            onClick={async () => {
-              setSubmitting(true);
-              try {
-                await onSubmit(project.id, name.trim());
-                onClose();
-              } finally {
-                setSubmitting(false);
-              }
-            }}
-          >
-            Save
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function QueueTaskCard({
-  queueMode,
-  task,
-  onEdit,
-  onPlaceNext,
-}: {
-  queueMode: QueueMode;
-  task: PlannerTask;
-  onEdit: () => void;
-  onPlaceNext: () => void;
-}) {
-  return (
-    <article className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-start gap-2 rounded-[16px] border border-[var(--border)] bg-[var(--surface-muted)] px-2 py-2 transition hover:border-[var(--border-strong)] hover:bg-[var(--surface-elevated)]">
-      <button
-        type="button"
-        data-draggable-queue-task="true"
-        data-task-id={task.id}
-        data-block-id={task.primaryBlock?.id ?? ""}
-        data-title={task.title}
-        data-duration={task.estimatedMinutes}
-        aria-label={`Drag ${task.title} onto the agenda`}
-        className="mt-0.5 flex h-[26px] w-[26px] shrink-0 cursor-grab touch-none items-center justify-center rounded-full border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)] transition hover:border-[var(--border-strong)] hover:text-[var(--foreground)] active:cursor-grabbing"
-      >
-        <GripVertical className="h-3 w-3" />
-      </button>
-
-      <div className="min-w-0">
-        <button
-          type="button"
-          data-testid={`queue-card-${task.id}`}
-          onClick={onEdit}
-          className="block min-w-0 w-full text-left"
-        >
-          <p className="line-clamp-2 min-w-0 text-[12px] font-semibold leading-[1.15rem] text-[var(--foreground-strong)]">
-            {task.title}
-          </p>
-        </button>
-      </div>
-    </article>
-  );
-}
-
-function AgendaEmptyState({
-  hasQueueTasks,
-  queueMode,
-  onCreateTask,
-  onCreateEvent,
-  onPlaceNextTask,
-}: {
-  hasQueueTasks: boolean;
-  queueMode: QueueMode;
-  onCreateTask: () => void;
-  onCreateEvent: () => void;
-  onPlaceNextTask?: () => void;
-}) {
-  return (
-    <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-[22px] border border-[var(--border)] bg-[var(--panel-subtle)] px-4 py-3.5">
-      <div className="grid gap-1">
-        <p className="text-[15px] font-semibold tracking-[-0.03em] text-[var(--foreground-strong)]">
-          Nothing is placed on this agenda day yet
-        </p>
-        <p className="text-[13px] leading-5 text-[var(--muted-foreground)]">
-          {hasQueueTasks
-            ? `Start with the ${queueMode} queue and place the next task into an open work slot.`
-            : "Add a task or a fixed event to start shaping this day visually."}
-        </p>
-      </div>
-      <div className="flex flex-wrap gap-2">
-        {hasQueueTasks && onPlaceNextTask ? (
-          <Button size="sm" onClick={onPlaceNextTask}>
-            Place next task
-          </Button>
-        ) : null}
-        <Button variant="outline" size="sm" onClick={onCreateEvent}>
-          New event
-        </Button>
-        <Button size="sm" onClick={onCreateTask}>
-          New task
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-function KanbanBoard({
-  columns,
-  dateLabel,
-  onCardClick,
-  onColumnDrop,
-}: {
-  columns: Array<(typeof BOARD_COLUMNS)[number] & { tasks: PlannerTask[] }>;
-  dateLabel: string;
-  onCardClick: (task: PlannerTask) => void;
-  onColumnDrop: (status: TaskStatus, event: ReactDragEvent<HTMLElement>) => void;
-}) {
-  const totalTasks = columns.reduce((sum, column) => sum + column.tasks.length, 0);
-
-  if (!totalTasks) {
-    return (
-      <div className="grid gap-3 rounded-[22px] border border-dashed border-[var(--border-strong)] bg-[var(--panel-subtle)] p-5">
-        <p className="text-[18px] font-semibold tracking-[-0.03em] text-[var(--foreground-strong)]">
-          No tasks fall inside {dateLabel}
-        </p>
-      </div>
-    );
-  }
-
-  return (
-      <div className="grid gap-3 xl:grid-cols-3">
-      {columns.map((column) => (
-        <section
-          key={column.id}
-          data-testid={`kanban-column-${column.id}`}
-          onDragOver={(event) => event.preventDefault()}
-          onDrop={(event) => onColumnDrop(column.id, event)}
-          className="flex min-h-[340px] flex-col rounded-[20px] border border-[var(--border)] bg-[var(--panel-subtle)] p-2"
-        >
-          <div className="mb-2.5 flex items-start justify-between gap-3">
-            <div>
-              <h3 className="text-[15px] font-semibold tracking-[-0.03em]">{column.label}</h3>
-            </div>
-            <Badge tone="neutral">{column.tasks.length}</Badge>
-          </div>
-
-          <div className="grid flex-1 content-start gap-2">
-            {column.tasks.length ? (
-              column.tasks.map((task) => (
-                <button
-                  key={task.id}
-                  type="button"
-                  draggable
-                  data-testid={`kanban-card-${task.id}`}
-                  onDragStart={(event) => {
-                    event.dataTransfer.setData("text/planner-task-id", task.id);
-                    event.dataTransfer.effectAllowed = "move";
-                  }}
-                  onClick={() => onCardClick(task)}
-                  className="rounded-[16px] border border-[var(--border)] bg-[var(--surface-elevated)] p-2.5 text-left shadow-[var(--shadow-soft)] transition hover:-translate-y-0.5 hover:border-[var(--border-strong)]"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="line-clamp-2 text-[14px] font-semibold leading-5 text-[var(--foreground-strong)]">
-                        {task.title}
-                      </p>
-                      <p className="mt-1.5 line-clamp-2 text-[12px] leading-5 text-[var(--muted-foreground)]">
-                        {task.notes || "No notes yet."}
-                      </p>
-                    </div>
-                    <span className="mt-0.5 rounded-full bg-[var(--panel-subtle)] p-1.5 text-[var(--muted-foreground)]">
-                      <GripVertical className="h-3.5 w-3.5" />
-                    </span>
-                  </div>
-                  <div className="mt-2.5 flex flex-wrap gap-1.5">
-                    <Badge tone="neutral">{formatMinutes(task.estimatedMinutes)}</Badge>
-                    {task.primaryBlock ? (
-                      <Badge tone="accent">
-                        {format(parseISO(task.primaryBlock.startsAt), "EEE h:mm a")}
-                      </Badge>
-                    ) : null}
-                    {task.dueAt ? (
-                      <Badge tone={isTaskOverdue(task) ? "danger" : "neutral"}>
-                        Due {format(parseISO(task.dueAt), "MMM d")}
-                      </Badge>
-                    ) : null}
-                  </div>
-                </button>
-              ))
-            ) : (
-              <div className="rounded-[22px] border border-dashed border-[var(--border)] bg-[var(--surface)] opacity-60 p-4 text-sm leading-6 text-[var(--muted-foreground)]">
-                No tasks in {column.label.toLowerCase()} for this range.
-              </div>
-            )}
-          </div>
-        </section>
-      ))}
     </div>
   );
 }
@@ -3853,7 +2682,10 @@ function QuickAddDialog({
   return (
     <div className="fixed inset-0 z-40 bg-[var(--modal-backdrop)]">
       <button type="button" className="absolute inset-0" onClick={onClose} aria-label="Close quick add" />
-      <div className="absolute inset-x-3 bottom-3 top-6 max-h-[calc(100svh-2.25rem)] overflow-y-auto rounded-[32px] border border-[var(--border-strong)] bg-[var(--surface)] p-6 shadow-[var(--shadow-float)] sm:inset-x-0 sm:top-10 sm:mx-auto sm:max-h-[calc(100svh-5rem)] sm:w-full sm:max-w-xl">
+      <div
+        data-testid="quick-add-dialog"
+        className="absolute inset-x-3 bottom-3 top-6 max-h-[calc(100svh-2.25rem)] overflow-y-auto rounded-[32px] border border-[var(--border-strong)] bg-[var(--surface)] p-6 shadow-[var(--shadow-float)] sm:inset-x-0 sm:top-10 sm:mx-auto sm:max-h-[calc(100svh-5rem)] sm:w-full sm:max-w-xl"
+      >
         <div className="mb-5 flex items-center justify-between">
           <div>
             <p className="text-xs uppercase tracking-[0.18em] text-[var(--muted-foreground)]">

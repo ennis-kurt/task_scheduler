@@ -1,0 +1,370 @@
+<html lang="en"><head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Inflara Workspace - Planning</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&amp;display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        .lucide {
+            stroke-width: 1.5;
+        }
+
+        /* Custom Scrollbar for a cleaner look */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #e4e4e7;
+            border-radius: 6px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #d4d4d8;
+        }
+
+        /* Resizer styling */
+        .resizer-handle {
+            background-image: radial-gradient(#d4d4d8 1px, transparent 1px);
+            background-size: 4px 4px;
+        }
+    </style>
+</head>
+<body class="flex h-screen w-full bg-white text-zinc-900 text-sm antialiased overflow-hidden selection:bg-zinc-200/50">
+
+    <!-- Sidebar -->
+    <aside class="w-64 h-full bg-white border-r border-zinc-200 flex flex-col shrink-0 hidden md:flex">
+        <!-- Brand -->
+        <div class="h-14 flex items-center px-4 mt-1">
+            <div class="flex items-center gap-2.5 cursor-pointer w-full py-1.5 px-2 -ml-2 rounded-lg hover:bg-zinc-50 transition-colors">
+                <div class="w-6 h-6 rounded bg-zinc-900 text-white flex items-center justify-center font-medium text-xs tracking-tighter">
+                    IN
+                </div>
+                <span class="font-medium text-base tracking-tight text-zinc-900 uppercase">Inflara</span>
+                <i data-lucide="chevron-down" class="ml-auto w-4 h-4 text-zinc-400"></i>
+            </div>
+        </div>
+
+        <div class="flex-1 overflow-y-auto py-4 px-3 flex flex-col gap-8">
+            <!-- Main Nav -->
+            <nav class="flex flex-col gap-1">
+                <a href="#" class="flex items-center gap-3 px-3 py-2 rounded-md text-zinc-600 hover:bg-zinc-50 transition-colors">
+                    <i data-lucide="inbox" class="w-4 h-4 text-zinc-500"></i>
+                    <span class="text-sm">Inbox</span>
+                    <span class="ml-auto text-xs text-zinc-400">3</span>
+                </a>
+                <a href="#" class="flex items-center gap-3 px-3 py-2 rounded-md bg-zinc-100/80 text-zinc-900 font-medium transition-colors">
+                    <i data-lucide="calendar-days" class="w-4 h-4"></i>
+                    <span class="text-sm">Planning</span>
+                </a>
+                <a href="#" class="flex items-center gap-3 px-3 py-2 rounded-md text-zinc-600 hover:bg-zinc-50 transition-colors">
+                    <i data-lucide="layers" class="w-4 h-4 text-zinc-500"></i>
+                    <span class="text-sm">Capacity</span>
+                </a>
+            </nav>
+
+            <!-- Projects -->
+            <div class="flex flex-col gap-1">
+                <div class="px-3 py-2 mb-1">
+                    <span class="text-xs tracking-wider text-zinc-400 uppercase">Projects</span>
+                </div>
+                <a href="#" class="flex items-center gap-3 px-3 py-2 rounded-md text-zinc-600 hover:bg-zinc-50 transition-colors">
+                    <div class="w-2 h-2 rounded-full border-[1.5px] border-orange-400"></div>
+                    <span class="truncate text-sm">Q4 Website Redesign</span>
+                </a>
+                <a href="#" class="flex items-center gap-3 px-3 py-2 rounded-md text-zinc-600 hover:bg-zinc-50 transition-colors">
+                    <div class="w-2 h-2 rounded-full border-[1.5px] border-blue-400"></div>
+                    <span class="truncate text-sm">Mobile App V2</span>
+                </a>
+                <a href="#" class="flex items-center gap-3 px-3 py-2 rounded-md text-zinc-600 hover:bg-zinc-50 transition-colors">
+                    <div class="w-2 h-2 rounded-full border-[1.5px] border-purple-400"></div>
+                    <span class="truncate text-sm">Marketing Campaign</span>
+                </a>
+            </div>
+
+            <!-- Areas -->
+            <div class="flex flex-col gap-1">
+                <div class="px-3 py-2 mb-1">
+                    <span class="text-xs tracking-wider text-zinc-400 uppercase">Areas</span>
+                </div>
+                <a href="#" class="flex items-center gap-3 px-3 py-2 rounded-md text-zinc-600 hover:bg-zinc-50 transition-colors">
+                    <i data-lucide="hash" class="w-4 h-4 text-zinc-400"></i>
+                    <span class="text-sm">Work</span>
+                </a>
+                <a href="#" class="flex items-center gap-3 px-3 py-2 rounded-md text-zinc-600 hover:bg-zinc-50 transition-colors">
+                    <i data-lucide="hash" class="w-4 h-4 text-zinc-400"></i>
+                    <span class="text-sm">Personal</span>
+                </a>
+            </div>
+        </div>
+
+        <!-- Bottom Actions -->
+        <div class="p-4 flex flex-col gap-2 mt-auto border-t border-zinc-100">
+            <button class="w-full flex items-center justify-center gap-2 bg-[#18181B] hover:bg-[#27272A] text-white rounded-md py-2 px-3 text-sm transition-colors">
+                <i data-lucide="plus-circle" class="w-4 h-4"></i>
+                Create Task
+            </button>
+            <button class="w-full flex items-center gap-3 px-3 py-2 mt-2 rounded-md text-zinc-600 hover:bg-zinc-50 transition-colors">
+                <i data-lucide="settings" class="w-4 h-4 text-zinc-500"></i>
+                <span class="text-sm">Settings</span>
+            </button>
+        </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="flex-1 flex flex-col min-w-0 bg-[#FAFAFA] relative h-full">
+
+        <!-- Header -->
+        <header class="h-16 shrink-0 flex flex-col justify-center border-b border-zinc-200 bg-white px-6">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center gap-6">
+                    <h1 class="text-2xl tracking-tight text-zinc-900">Today's Plan</h1>
+
+                    <!-- Day/Week Toggle -->
+                    <div class="flex items-center bg-zinc-100 rounded-md p-1">
+                        <button class="px-4 py-1 text-sm bg-white shadow-sm rounded border border-zinc-200/50 text-zinc-900 transition-colors">Day</button>
+                        <button class="px-4 py-1 text-sm text-zinc-500 hover:text-zinc-900 transition-colors">Week</button>
+                    </div>
+                </div>
+
+                <div class="flex items-center gap-4">
+                    <!-- Capacity Indicator -->
+                    <div class="flex items-center gap-2 px-3 py-1.5 rounded-full border border-zinc-200 bg-white text-sm text-zinc-600">
+                        <div class="w-2 h-2 rounded-full bg-emerald-500"></div>
+                        5h 30m / 8h
+                    </div>
+                    <!-- Search -->
+                    <button class="w-8 h-8 rounded-full border border-zinc-200 bg-white flex items-center justify-center text-zinc-500 hover:bg-zinc-50 hover:text-zinc-900 transition-colors">
+                        <i data-lucide="search" class="w-4 h-4"></i>
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <!-- Top Section: Kanban Board -->
+        <div class="flex flex-col h-[55%] min-h-[350px] bg-white">
+            <!-- Kanban Header -->
+            <div class="flex items-center justify-between px-6 py-4 border-b border-zinc-100 shrink-0">
+                <h2 class="text-base text-zinc-900">Unscheduled Tasks &amp; Pipeline</h2>
+                <button class="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-zinc-200 rounded-md text-zinc-600 hover:bg-zinc-50 transition-colors">
+                    <i data-lucide="plus" class="w-4 h-4"></i> New Column
+                </button>
+            </div>
+
+            <!-- Kanban Columns Container -->
+            <div class="flex-1 overflow-x-auto overflow-y-hidden p-6 flex gap-6 items-start">
+
+                <!-- TO DO Column -->
+                <div class="w-80 shrink-0 flex flex-col gap-3">
+                    <div class="flex items-center gap-2 px-1 text-zinc-500">
+                        <i data-lucide="grip-horizontal" class="w-4 h-4 opacity-50 cursor-grab"></i>
+                        <span class="text-xs uppercase tracking-wider text-zinc-600">To Do</span>
+                        <span class="px-1.5 py-0.5 rounded bg-zinc-100 text-xs text-zinc-500 ml-1">4</span>
+                        <button class="ml-auto opacity-50 hover:opacity-100"><i data-lucide="more-horizontal" class="w-4 h-4"></i></button>
+                    </div>
+
+                    <!-- Card -->
+                    <div class="bg-white border border-zinc-200 rounded-lg p-4 shadow-[0_1px_2px_rgba(0,0,0,0.02)] border-l-2 border-l-orange-400 group cursor-pointer hover:border-zinc-300 transition-colors">
+                        <div class="flex items-start justify-between gap-2 mb-3">
+                            <h3 class="text-sm text-zinc-900 leading-snug">Draft initial copy for landing page</h3>
+                            <i data-lucide="circle-alert" class="w-4 h-4 text-orange-400 shrink-0"></i>
+                        </div>
+                        <div class="flex items-center justify-between mt-auto">
+                            <div class="flex items-center gap-1.5 px-2 py-1 rounded bg-zinc-100 text-xs text-zinc-600">
+                                <div class="w-1.5 h-1.5 rounded-full bg-orange-400"></div>
+                                Website
+                            </div>
+                            <div class="flex items-center gap-1 text-xs text-zinc-400">
+                                <i data-lucide="clock" class="w-3 h-3"></i>
+                                45m
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Card -->
+                    <div class="bg-white border border-zinc-200 rounded-lg p-4 shadow-[0_1px_2px_rgba(0,0,0,0.02)] border-l-2 border-l-purple-400 group cursor-pointer hover:border-zinc-300 transition-colors">
+                        <div class="flex items-start justify-between gap-2 mb-3">
+                            <h3 class="text-sm text-zinc-900 leading-snug">Review latest design mockups</h3>
+                        </div>
+                        <div class="flex items-center justify-between mt-auto">
+                            <div class="flex items-center gap-1.5 px-2 py-1 rounded bg-zinc-100 text-xs text-zinc-600">
+                                <div class="w-1.5 h-1.5 rounded-full bg-purple-400"></div>
+                                App V2
+                            </div>
+                            <div class="flex items-center gap-1 text-xs text-zinc-400">
+                                <i data-lucide="clock" class="w-3 h-3"></i>
+                                30m
+                            </div>
+                        </div>
+                    </div>
+
+                    <button class="text-sm text-zinc-500 hover:text-zinc-900 text-left px-2 py-1 mt-1">Add Task</button>
+                </div>
+
+                <!-- IN PROGRESS Column -->
+                <div class="w-80 shrink-0 flex flex-col gap-3">
+                    <div class="flex items-center gap-2 px-1 text-blue-500">
+                        <i data-lucide="grip-horizontal" class="w-4 h-4 opacity-50 cursor-grab"></i>
+                        <span class="text-xs uppercase tracking-wider text-blue-600">In Progress</span>
+                        <span class="px-1.5 py-0.5 rounded bg-blue-100 text-xs text-blue-600 ml-1">1</span>
+                        <button class="ml-auto opacity-50 hover:opacity-100 text-zinc-500"><i data-lucide="more-horizontal" class="w-4 h-4"></i></button>
+                    </div>
+
+                    <!-- Card (In Progress style) -->
+                    <div class="bg-white border border-dashed border-blue-200 rounded-lg p-4 shadow-[0_1px_2px_rgba(0,0,0,0.02)] group cursor-pointer hover:border-blue-300 transition-colors relative overflow-hidden">
+                        <div class="flex items-start justify-between gap-2 mb-4">
+                            <h3 class="text-sm text-zinc-900 leading-snug">Compile competitor analysis report</h3>
+                        </div>
+
+                        <!-- Progress Bar -->
+                        <div class="w-full bg-zinc-100 rounded-full h-1.5 mb-2">
+                            <div class="bg-blue-500 h-1.5 rounded-full" style="width: 50%"></div>
+                        </div>
+                        <div class="flex justify-end mb-3">
+                            <span class="text-xs text-zinc-400">3/6</span>
+                        </div>
+
+                        <div class="flex items-center justify-between mt-auto">
+                            <div class="flex items-center gap-1.5 px-2 py-1 rounded bg-zinc-100 text-xs text-zinc-600">
+                                Research
+                            </div>
+                            <div class="flex items-center gap-1 text-xs text-zinc-400">
+                                <i data-lucide="clock" class="w-3 h-3"></i>
+                                2h
+                            </div>
+                        </div>
+                    </div>
+
+                    <button class="text-sm text-zinc-500 hover:text-zinc-900 text-left px-2 py-1 mt-1">Add Task</button>
+                </div>
+
+                <!-- REVIEW Column -->
+                <div class="w-80 shrink-0 flex flex-col gap-3">
+                    <div class="flex items-center gap-2 px-1 text-purple-500">
+                        <i data-lucide="grip-horizontal" class="w-4 h-4 opacity-50 cursor-grab"></i>
+                        <span class="text-xs uppercase tracking-wider text-purple-600">Review</span>
+                        <span class="px-1.5 py-0.5 rounded bg-purple-100 text-xs text-purple-600 ml-1">1</span>
+                        <button class="ml-auto opacity-50 hover:opacity-100 text-zinc-500"><i data-lucide="more-horizontal" class="w-4 h-4"></i></button>
+                    </div>
+
+                    <!-- Card -->
+                    <div class="bg-white border border-zinc-200 rounded-lg p-4 shadow-[0_1px_2px_rgba(0,0,0,0.02)] border-l-2 border-l-blue-500 group cursor-pointer hover:border-zinc-300 transition-colors">
+                        <div class="flex items-start justify-between gap-2 mb-3">
+                            <h3 class="text-sm text-zinc-900 leading-snug">Update user schema migrations</h3>
+                            <i data-lucide="circle-alert" class="w-4 h-4 text-red-500 shrink-0"></i>
+                        </div>
+                        <div class="flex items-center justify-between mt-auto">
+                            <div class="flex items-center gap-1.5 px-2 py-1 rounded bg-zinc-100 text-xs text-zinc-600">
+                                <div class="w-1.5 h-1.5 rounded-full bg-blue-500"></div>
+                                Backend
+                            </div>
+                        </div>
+                    </div>
+
+                    <button class="text-sm text-zinc-500 hover:text-zinc-900 text-left px-2 py-1 mt-1">Add Task</button>
+                </div>
+
+                <!-- DONE Column -->
+                <div class="w-80 shrink-0 flex flex-col gap-3">
+                    <div class="flex items-center gap-2 px-1 text-zinc-500">
+                        <i data-lucide="grip-horizontal" class="w-4 h-4 opacity-50 cursor-grab"></i>
+                        <span class="text-xs uppercase tracking-wider text-zinc-600">Done</span>
+                        <span class="px-1.5 py-0.5 rounded bg-zinc-100 text-xs text-zinc-500 ml-1">2</span>
+                    </div>
+
+                    <!-- Card (Done style) -->
+                    <div class="bg-zinc-50/50 border border-zinc-200/60 rounded-lg p-4 group cursor-pointer">
+                        <div class="flex items-center gap-2">
+                            <i data-lucide="circle-check" class="w-4 h-4 text-zinc-300 shrink-0"></i>
+                            <h3 class="text-sm text-zinc-400 line-through decoration-zinc-300 leading-snug">Weekly sync prep</h3>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- Horizontal Divider / Resizer -->
+        <div class="h-1.5 bg-zinc-100 border-y border-zinc-200 cursor-row-resize flex items-center justify-center shrink-0 z-10">
+            <!-- Subtle dots indicating draggable area -->
+        </div>
+
+        <!-- Bottom Section: Schedule -->
+        <div class="flex-1 bg-white overflow-hidden flex flex-col">
+            <!-- Schedule Header -->
+            <div class="flex items-center gap-3 px-6 py-3 border-b border-zinc-100 shrink-0 bg-white z-10">
+                <i data-lucide="calendar" class="w-4 h-4 text-zinc-500"></i>
+                <h2 class="text-base text-zinc-900">Schedule</h2>
+                <span class="text-sm text-zinc-400 ml-2">Drag tasks from pipeline to schedule</span>
+            </div>
+
+            <!-- Scrollable Timeline Area -->
+            <div class="flex-1 overflow-y-auto relative bg-white pb-20">
+
+                <!-- Time grid background -->
+                <div class="absolute inset-0 pointer-events-none w-full">
+                    <div class="h-[80px] border-b border-zinc-100 w-full ml-[60px]"></div>
+                    <div class="h-[80px] border-b border-zinc-100 w-full ml-[60px]"></div>
+                    <div class="h-[80px] border-b border-zinc-100 w-full ml-[60px]"></div>
+                    <div class="h-[80px] border-b border-zinc-100 w-full ml-[60px]"></div>
+                    <div class="h-[80px] border-b border-zinc-100 w-full ml-[60px]"></div>
+                </div>
+
+                <!-- Left Time Axis -->
+                <div class="absolute top-0 left-0 w-[60px] h-full flex flex-col pt-2 bg-white z-10">
+                    <div class="h-[80px] text-xs text-zinc-400 text-right pr-4">8 AM</div>
+                    <div class="h-[80px] text-xs text-zinc-400 text-right pr-4">9 AM</div>
+                    <div class="h-[80px] text-xs text-zinc-400 text-right pr-4">10 AM</div>
+                    <div class="h-[80px] text-xs text-zinc-400 text-right pr-4">11 AM</div>
+                </div>
+
+                <!-- Event Blocks Container -->
+                <div class="absolute top-0 left-[60px] right-6 h-full pt-4">
+
+                    <!-- Event: Team Standup (9:00 - 10:00) -->
+                    <div class="absolute w-full h-[70px] top-[76px] bg-[#F9FAFB] border border-zinc-200 rounded-md border-l-4 border-l-zinc-300 p-2.5 flex flex-col justify-center cursor-pointer hover:bg-zinc-100 transition-colors">
+                        <div class="flex items-center justify-between">
+                            <h4 class="text-sm text-zinc-900">Team Standup</h4>
+                            <span class="text-xs text-zinc-500">Event</span>
+                        </div>
+                        <span class="text-xs text-zinc-500 mt-1">9:00 - 10:00 AM • Zoom</span>
+                    </div>
+
+                    <!-- Current Time Line (approx 10:30) -->
+                    <div class="absolute w-[calc(100%+60px)] -ml-[60px] top-[196px] h-px bg-red-400 z-20 flex items-center">
+                        <div class="w-2.5 h-2.5 rounded-full bg-red-400 ml-[55px] z-30"></div>
+                    </div>
+
+                    <!-- Event: Write Landing Page Copy (Starts 10:30) -->
+                    <div class="absolute w-full h-[60px] top-[196px] bg-white border border-zinc-200 border-t-0 rounded-md rounded-t-none border-l-[3px] border-l-orange-400 p-2.5 shadow-sm cursor-pointer hover:bg-zinc-50 transition-colors z-10">
+                        <h4 class="text-sm text-zinc-900 leading-none mb-1">Write Landing Page Copy</h4>
+                        <span class="text-xs text-zinc-400">Website Redesign</span>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+
+        <!-- Floating Badge (Made in Aura) - Optional flavor based on image -->
+        <div class="absolute bottom-6 right-6 z-50">
+            <button class="flex items-center gap-2 bg-[#18181B] text-white px-3 py-2 rounded-full text-xs shadow-lg hover:bg-black transition-colors">
+                <div class="w-3.5 h-3.5 rounded bg-zinc-800 flex items-center justify-center font-bold text-[8px]">A</div>
+                Made in Aura
+            </button>
+        </div>
+
+    </main>
+
+    <script>
+        lucide.createIcons();
+    </script>
+
+</body></html>

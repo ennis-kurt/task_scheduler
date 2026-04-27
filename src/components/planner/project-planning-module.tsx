@@ -53,6 +53,9 @@ import type {
   UpdateMilestoneInput,
 } from "@/lib/planner/types";
 import { cn } from "@/lib/utils";
+import { Icon } from "@iconify/react";
+
+export type ProjectPlanningSurface = "plan" | "timeline" | "charts";
 
 const DAY_WIDTH = 42;
 const LABEL_WIDTH = 240;
@@ -64,11 +67,12 @@ const CHART_COLORS = {
   danger: "#fb7185",
   muted: "#94a3b8",
 };
+const RESPONSIVE_CHART_INITIAL_DIMENSION = { width: 1, height: 1 };
 
 type ProjectPlanningModuleProps = {
   projectPlans: ProjectPlan[];
   activeProjectId: string;
-  surface: "plan" | "timeline" | "charts";
+  surface: ProjectPlanningSurface;
   isPending: boolean;
   onOpenTask: (taskId: string) => void;
   onOpenNewTask: (defaults?: { projectId?: string; milestoneId?: string | null }) => void;
@@ -717,6 +721,7 @@ export function ProjectPlanningModule({
   onUpdateMilestone,
   onDeleteMilestone,
 }: ProjectPlanningModuleProps) {
+  const [activeTab, setActiveTab] = useState<ProjectPlanningSurface>(surface || "plan");
   const [expandedMilestoneId, setExpandedMilestoneId] = useState<string | null>(null);
   const [editorState, setEditorState] = useState<MilestoneEditorState | null>(null);
   const [draftMilestones, setDraftMilestones] = useState<
@@ -863,8 +868,6 @@ export function ProjectPlanningModule({
     name: milestone.name,
     progress: milestone.completionPercentage,
   }));
-  const nextDeadline =
-    plottedMilestones[0]?.deadline ?? activeProject.project.deadlineAt ?? activeProject.scheduleRange.end;
   const projectHealthTone =
     activeProject.health === "at_risk"
       ? "danger"
@@ -883,7 +886,7 @@ export function ProjectPlanningModule({
   };
 
   return (
-    <section data-project-planning-module className="relative grid min-w-0 gap-5">
+    <section data-project-planning-module className="flex-1 flex flex-col h-full bg-white relative">
       <MilestoneComposer
         open={milestoneComposerOpen}
         projectPlans={projectPlans}
@@ -899,241 +902,147 @@ export function ProjectPlanningModule({
         onDelete={onDeleteMilestone}
       />
 
-      {surface === "plan" ? (
-        <div className="grid min-w-0 gap-4">
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            {[
-              {
-                label: "Progress",
-                value: formatPercent(activeProject.completionPercentage),
-              },
-              {
-                label: "Milestones",
-                value: String(activeProject.milestones.length || 1),
-              },
-              {
-                label: "Open tasks",
-                value: String(
-                  activeProject.totalTaskCount - activeProject.completedTaskCount,
-                ),
-              },
-              {
-                label: "Next deadline",
-                value: format(parseISO(nextDeadline), "MMM d"),
-              },
-            ].map((metric) => (
-              <div
-                key={metric.label}
-                className="rounded-[22px] border border-[var(--border)] bg-[var(--surface)] px-4 py-3 shadow-[var(--shadow-soft)] transition duration-150 hover:-translate-y-[1px] hover:border-[var(--border-strong)]"
-              >
-                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
-                  {metric.label}
-                </p>
-                <p className="mt-2 text-[1.1rem] font-semibold text-[var(--foreground-strong)]">
-                  {metric.value}
-                </p>
-              </div>
-            ))}
+      <header className="h-14 flex items-center justify-between px-6 border-b border-[var(--border)] bg-white shrink-0">
+        <div className="flex items-center gap-4 h-full">
+          <div className="flex items-center gap-2">
+            <h1 className="text-lg font-semibold text-[var(--foreground-strong)]">{activeProject.project.name}</h1>
+            <Icon icon="solar:alt-arrow-down-linear" width="18" className="text-[var(--muted-foreground)]" />
           </div>
+          <nav className="flex items-center gap-6 ml-8 h-full">
+            <button
+              onClick={() => setActiveTab("plan")}
+              className={cn("text-sm font-medium h-14 border-b-2 transition-colors", activeTab === "plan" ? "text-blue-600 border-blue-600" : "text-[var(--muted-foreground)] hover:text-[var(--foreground-strong)] border-transparent")}
+            >
+              Project Design
+            </button>
+            <button
+              onClick={() => setActiveTab("timeline")}
+              className={cn("text-sm font-medium h-14 border-b-2 transition-colors", activeTab === "timeline" ? "text-blue-600 border-blue-600" : "text-[var(--muted-foreground)] hover:text-[var(--foreground-strong)] border-transparent")}
+            >
+              Gantt Chart
+            </button>
+            <button
+              onClick={() => setActiveTab("charts")}
+              className={cn("text-sm font-medium h-14 border-b-2 transition-colors", activeTab === "charts" ? "text-blue-600 border-blue-600" : "text-[var(--muted-foreground)] hover:text-[var(--foreground-strong)] border-transparent")}
+            >
+              Dashboard
+            </button>
+            <button
+              type="button"
+              disabled
+              className="text-sm font-medium text-[var(--muted-foreground)] border-b-2 border-transparent h-14 cursor-not-allowed opacity-50"
+            >
+              Notes
+            </button>
+          </nav>
+        </div>
+        <div className="flex items-center gap-4">
+          <div className="flex items-center -space-x-2">
+            <div className="w-8 h-8 rounded-full border-2 border-white bg-blue-100 flex items-center justify-center text-xs font-medium text-blue-700 z-30">JD</div>
+            <div className="w-8 h-8 rounded-full border-2 border-white bg-green-100 flex items-center justify-center text-xs font-medium text-green-700 z-20">AS</div>
+            <div className="w-8 h-8 rounded-full border-2 border-white bg-gray-100 flex items-center justify-center text-xs font-medium text-gray-600 z-10">+3</div>
+          </div>
+          <button
+            type="button"
+            disabled
+            className="px-3 py-1.5 bg-blue-600 text-white rounded-md text-sm font-medium transition-colors shadow-sm opacity-50 cursor-not-allowed"
+          >
+            Share
+          </button>
+        </div>
+      </header>
 
-          <article className="grid gap-4 rounded-[28px] border border-[var(--border)] bg-[var(--surface)] p-5 shadow-[var(--shadow-soft)]">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
-                  Milestones
-                </p>
-                <h3 className="mt-1 text-[1.3rem] font-semibold tracking-[-0.04em] text-[var(--foreground-strong)]">
-                  Delivery phases
-                </h3>
-              </div>
-              <Badge tone={projectHealthTone}>
-                {activeProject.health === "at_risk"
-                  ? "At risk"
-                  : activeProject.health === "done"
-                    ? "Complete"
-                    : "On track"}
-              </Badge>
-            </div>
-
-            {activeProject.milestones.length ? (
-              <div className="grid gap-4">
-                {activeProject.milestones.map((milestone) => (
-                  <article
-                    key={milestone.id}
-                    role="button"
-                    tabIndex={0}
-                    aria-label={`Edit milestone ${milestone.name}`}
-                    onClick={(event) => {
-                      const target = event.target as HTMLElement;
-
-                      if (target.closest('[data-milestone-ignore-click="true"]')) {
-                        return;
-                      }
-
-                      openMilestoneEditor(milestone);
-                    }}
-                    onKeyDown={(event) => {
-                      const target = event.target as HTMLElement;
-
-                      if (
-                        target.closest('[data-milestone-ignore-click="true"]') ||
-                        (event.key !== "Enter" && event.key !== " ")
-                      ) {
-                        return;
-                      }
-
-                      event.preventDefault();
-                      openMilestoneEditor(milestone);
-                    }}
-                    className="grid gap-3 rounded-[24px] border border-[var(--border)] bg-[var(--surface-muted)] p-4 text-left transition duration-150 hover:-translate-y-[1px] hover:border-[var(--border-strong)] hover:bg-[var(--surface-elevated)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-soft)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--surface)]"
-                  >
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="truncate text-[15px] font-semibold text-[var(--foreground-strong)]">
-                            {milestone.name}
-                          </span>
-                          <Badge tone={milestoneTone(milestone.health)}>
-                            {formatPercent(milestone.completionPercentage)}
-                          </Badge>
-                        </div>
-                        <p className="mt-1 text-[12px] leading-5 text-[var(--muted-foreground)]">
-                          {milestone.description || "No brief added yet."}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <Badge tone="neutral">
-                          {format(parseISO(milestone.startDate), "MMM d")} -{" "}
-                          {format(parseISO(milestone.deadline), "MMM d")}
-                        </Badge>
-                        <div data-milestone-ignore-click="true">
-                          <MilestoneActionMenu
-                            milestone={milestone}
-                            onEdit={() => openMilestoneEditor(milestone)}
-                            onDelete={async () => {
-                              if (!window.confirm(`Delete ${milestone.name}?`)) {
-                                return;
-                              }
-                              await onDeleteMilestone(milestone.id);
-                            }}
-                          />
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="h-2 overflow-hidden rounded-full bg-[var(--surface)]">
-                      <div
-                        className="h-full rounded-full transition-[width]"
-                        style={{
-                          width: `${milestone.completionPercentage}%`,
-                          backgroundColor: milestoneFill(milestone.health),
-                        }}
-                      />
-                    </div>
-
-                    <div className="flex flex-wrap gap-2">
-                      <Badge tone="neutral">{milestone.totalTaskCount} tasks</Badge>
-                      <Badge tone="neutral">{formatHours(milestone.remainingMinutes)} left</Badge>
-                    </div>
-
-                    {milestone.tasks.length ? (
-                      <div className="grid gap-2" data-milestone-ignore-click="true">
-                        {milestone.tasks.map((task) => (
-                          <MilestoneTaskCard
-                            key={task.id}
-                            taskTitle={task.title}
-                            meta={`${task.status.replace("_", " ")} • ${formatHours(task.estimatedMinutes)}${task.dueAt ? ` • due ${format(parseISO(task.dueAt), "MMM d")}` : ""}`}
-                            onClick={() => onOpenTask(task.id)}
-                          />
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="rounded-[18px] border border-dashed border-[var(--border)] bg-[var(--surface)] px-4 py-4 text-[13px] text-[var(--muted-foreground)]">
-                        No tasks assigned yet.
-                      </div>
-                    )}
-
-                    <div className="flex justify-end">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        data-milestone-ignore-click="true"
-                        onClick={() =>
-                          onOpenNewTask({
-                            projectId: activeProject.project.id,
-                            milestoneId: milestone.id,
-                          })
-                        }
-                      >
-                        <Plus className="h-4 w-4" />
-                        Add task to milestone
-                      </Button>
-                    </div>
-                  </article>
-                ))}
-              </div>
-            ) : (
-              <div className="rounded-[24px] border border-dashed border-[var(--border-strong)] bg-[var(--panel-subtle)] px-5 py-5">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <p className="text-[15px] font-semibold text-[var(--foreground-strong)]">
-                      No milestones yet
-                    </p>
-                    <p className="mt-1 text-[13px] text-[var(--muted-foreground)]">
-                      This project will use a single project-wide phase until you add one.
-                    </p>
+      {activeTab === "plan" ? (
+        <div className="flex-1 overflow-y-auto bg-[#FAFAFA] dark:bg-[var(--background)] p-6" style={{ scrollbarWidth: "thin" }}>
+          <div className="max-w-5xl mx-auto space-y-6">
+            {plottedMilestones.map((milestone) => (
+              <div key={milestone.id} className="bg-white rounded-xl border border-[var(--border)] shadow-[var(--shadow-soft)] overflow-hidden">
+                <div
+                  className="px-5 py-4 border-b border-[var(--border)] flex items-center justify-between bg-[var(--surface-muted)] cursor-pointer group"
+                  onClick={() => openMilestoneEditor(milestone)}
+                >
+                  <div className="flex items-center gap-3">
+                    <Icon icon="solar:alt-arrow-down-linear" width="18" className="text-[var(--muted-foreground)] group-hover:text-[var(--foreground-strong)] transition-colors" />
+                    <h2 className="text-base font-semibold text-[var(--foreground-strong)]">{milestone.name}</h2>
+                    <span className="px-2 py-0.5 bg-white border border-[var(--border)] rounded text-xs font-medium text-[var(--muted-foreground)]">
+                      {milestone.tasks.length} tasks
+                    </span>
                   </div>
-                  <Button size="sm" onClick={onOpenMilestoneComposer}>
-                    <Plus className="h-4 w-4" />
-                    Create milestone
-                  </Button>
+                  <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-2">
+                      <div className="w-32 h-1.5 bg-[var(--border)] rounded-full overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-blue-600"
+                          style={{
+                            width: `${Math.min(milestone.completionPercentage, 100)}%`,
+                          }}
+                        />
+                      </div>
+                      <span className="w-8 text-xs font-medium text-[var(--muted-foreground)]">
+                        {Math.round(milestone.completionPercentage)}%
+                      </span>
+                    </div>
+                    {milestone.deadline && (
+                      <span className="text-sm font-medium text-[var(--muted-foreground)]">
+                        {format(parseISO(milestone.deadline), "MMM d")}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="divide-y divide-[var(--border)]">
+                  {milestone.tasks.map((task) => (
+                    <div key={task.id} className="px-5 py-3 flex items-center justify-between hover:bg-[var(--surface-muted)] transition-colors group/task" onClick={() => onOpenTask(task.id)}>
+                      <div className="flex items-center gap-3">
+                        <label className="relative flex items-center cursor-pointer" onClick={(e) => { e.stopPropagation(); }}>
+                          <input type="checkbox" className="peer sr-only task-checkbox" checked={task.status === "done"} onChange={() => {}} />
+                          <div className="w-5 h-5 border-2 border-[var(--border-strong)] rounded flex items-center justify-center peer-checked:bg-blue-600 peer-checked:border-blue-600 transition-all">
+                            <Icon icon="solar:check-read-linear" width="14" className="text-white opacity-0 transition-all absolute" />
+                          </div>
+                        </label>
+                        <span className={cn("text-sm font-medium transition-colors cursor-pointer", task.status === "done" ? "text-[var(--muted-foreground)] line-through" : "text-[var(--foreground-strong)] group-hover/task:text-blue-600")}>
+                          {task.title}
+                        </span>
+                        {task.priority === "high" && (
+                          <Icon icon="solar:flag-bold" width="14" className="text-red-500" />
+                        )}
+                      </div>
+                      <div className="flex items-center gap-4 opacity-0 group-hover/task:opacity-100 transition-opacity">
+                        <div className="w-6 h-6 rounded-full bg-[var(--accent-soft)] flex items-center justify-center text-[10px] font-medium text-[var(--accent-strong)]">
+                          {task.id.slice(0, 2).toUpperCase()}
+                        </div>
+                        {task.dueAt && (
+                          <span className="text-xs font-medium text-[var(--muted-foreground)]">
+                            {format(parseISO(task.dueAt), "MMM d")}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="px-5 py-3 bg-[var(--surface-muted)] border-t border-[var(--border)]">
+                  <button
+                    className="text-sm font-medium text-[var(--muted-foreground)] hover:text-[var(--foreground-strong)] flex items-center gap-2 transition-colors"
+                    onClick={() => onOpenNewTask?.({ projectId: activeProject.project.id, milestoneId: milestone.id })}
+                  >
+                    <Icon icon="solar:add-square-linear" width="16" />
+                    Add Task...
+                  </button>
                 </div>
               </div>
-            )}
-          </article>
+            ))}
 
-          <article className="grid gap-3 rounded-[28px] border border-[var(--border)] bg-[var(--surface)] p-5 shadow-[var(--shadow-soft)]">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--muted-foreground)]">
-                  Direct project tasks
-                </p>
-                <h4 className="mt-1 text-[1.1rem] font-semibold tracking-[-0.03em] text-[var(--foreground-strong)]">
-                  Tasks outside milestones
-                </h4>
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => onOpenNewTask({ projectId: activeProject.project.id })}
-              >
-                <Plus className="h-4 w-4" />
-                Add task
-              </Button>
-            </div>
-            {activeProject.standaloneTasks.length ? (
-              <div className="grid gap-2">
-                {activeProject.standaloneTasks.map((task) => (
-                  <MilestoneTaskCard
-                    key={task.id}
-                    taskTitle={task.title}
-                    meta={`${task.status.replace("_", " ")} • ${formatHours(task.estimatedMinutes)}${task.dueAt ? ` • due ${format(parseISO(task.dueAt), "MMM d")}` : ""}`}
-                    onClick={() => onOpenTask(task.id)}
-                  />
-                ))}
-              </div>
-            ) : (
-              <div className="rounded-[18px] border border-dashed border-[var(--border)] bg-[var(--surface-muted)] px-4 py-4 text-[13px] text-[var(--muted-foreground)]">
-                {activeProject.milestones.length
-                  ? "All current tasks are already grouped into milestones."
-                  : "No direct project tasks yet."}
-              </div>
-            )}
-          </article>
+            <button
+              className="w-full py-4 border-2 border-dashed border-[var(--border)] rounded-xl text-[var(--muted-foreground)] hover:text-[var(--foreground-strong)] hover:border-[var(--muted-foreground)] transition-colors font-medium flex items-center justify-center gap-2"
+              onClick={onOpenMilestoneComposer}
+            >
+              <Icon icon="solar:add-circle-linear" width="20" />
+              Add Milestone
+            </button>
+          </div>
         </div>
       ) : null}
 
-      {surface === "charts" ? (
+      {activeTab === "charts" ? (
         <>
       <div className="grid min-w-0 gap-4 md:grid-cols-2 2xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,1fr)]">
         <ChartCard
@@ -1142,7 +1051,11 @@ export function ProjectPlanningModule({
         >
           <div className="grid min-w-0 items-center gap-4 md:grid-cols-[172px_minmax(0,1fr)]">
             <div className="relative h-[172px]">
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer
+                width="100%"
+                height="100%"
+                initialDimension={RESPONSIVE_CHART_INITIAL_DIMENSION}
+              >
                 <PieChart>
                   <Pie
                     data={overallChartData}
@@ -1194,7 +1107,11 @@ export function ProjectPlanningModule({
         >
           <div className="grid min-w-0 items-center gap-4 md:grid-cols-[170px_minmax(0,1fr)]">
             <div className="h-[168px]">
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer
+                width="100%"
+                height="100%"
+                initialDimension={RESPONSIVE_CHART_INITIAL_DIMENSION}
+              >
                 <PieChart>
                   <Pie
                     data={statusChartData}
@@ -1238,7 +1155,11 @@ export function ProjectPlanningModule({
           icon={<CalendarClock className="h-4 w-4" />}
         >
           <div className="h-[220px]">
-            <ResponsiveContainer width="100%" height="100%">
+            <ResponsiveContainer
+              width="100%"
+              height="100%"
+              initialDimension={RESPONSIVE_CHART_INITIAL_DIMENSION}
+            >
               <BarChart data={milestoneChartData} layout="vertical" margin={{ left: 4, right: 8 }}>
                 <CartesianGrid horizontal={false} stroke="rgba(148,163,184,0.12)" />
                 <XAxis type="number" domain={[0, 100]} hide />
@@ -1267,7 +1188,11 @@ export function ProjectPlanningModule({
           icon={<TrendingDown className="h-4 w-4" />}
         >
           <div className="h-[220px]">
-            <ResponsiveContainer width="100%" height="100%">
+            <ResponsiveContainer
+              width="100%"
+              height="100%"
+              initialDimension={RESPONSIVE_CHART_INITIAL_DIMENSION}
+            >
               <AreaChart data={activeProject.burndown}>
                 <defs>
                   <linearGradient id="burndown-fill" x1="0" y1="0" x2="0" y2="1">
@@ -1355,7 +1280,7 @@ export function ProjectPlanningModule({
         </>
       ) : null}
 
-      {surface === "timeline" ? (
+      {activeTab === "timeline" ? (
         <>
       <article className="min-w-0 rounded-[28px] border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[var(--shadow-soft)] sm:p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">

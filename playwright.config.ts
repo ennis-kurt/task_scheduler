@@ -16,8 +16,14 @@ export default defineConfig({
   },
   webServer: {
     command: "pnpm dev",
+    env: {
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "",
+      CLERK_SECRET_KEY: "",
+      DATABASE_URL: "",
+      PLANNER_DEMO_STORE_PATH: ".planner-demo-store.json",
+    },
     url: "http://localhost:3000",
-    reuseExistingServer: true,
+    reuseExistingServer: false,
     timeout: 120000,
   },
 });

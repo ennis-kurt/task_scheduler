@@ -636,3 +636,31 @@ body {
 .fc .fc-toolbar {
   display: none;
 }
+
+/* Custom scrollbars for a cleaner look */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong, #e4e4e7);
+  border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted-foreground, #d4d4d8);
+}
+
+/* Custom Checkbox Animation */
+.task-checkbox:checked + svg {
+  opacity: 1 !important;
+  transform: scale(1) !important;
+}
+
+/* Resizer styling */
+.resizer-handle {
+  background-image: radial-gradient(var(--border-strong) 1px, transparent 1px);
+  background-size: 4px 4px;
+}
