@@ -285,6 +285,18 @@ function ThemeToggle() {
       description: "Pastel glass workspace",
       icon: Palette,
     },
+    {
+      value: "neon" as const,
+      label: "Neon",
+      description: "Cyberpunk emerald workspace",
+      icon: Palette,
+    },
+    {
+      value: "elegant" as const,
+      label: "Elegant",
+      description: "Clean & sophisticated",
+      icon: Palette,
+    },
   ];
 
   return (

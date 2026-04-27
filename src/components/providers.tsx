@@ -32,7 +32,7 @@ export function Providers({ children, clerkEnabled }: ProvidersProps) {
       defaultTheme="system"
       enableSystem
       disableTransitionOnChange
-      themes={["light", "dark", "aura"]}
+      themes={["light", "dark", "aura", "neon", "elegant"]}
     >
       <ThemeMaintenance />
       {children}
