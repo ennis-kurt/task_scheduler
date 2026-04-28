@@ -71,6 +71,7 @@ const DEFAULT_KANBAN_HEIGHT = 360;
 const MIN_KANBAN_HEIGHT = 260;
 const MAX_KANBAN_HEIGHT = 1100;
 const SCHEDULE_PANEL_HEIGHT = 720;
+const DEFAULT_KANBAN_VIEWPORT_RATIO = 0.5;
 
 const DEFAULT_COLUMNS: PlanningColumn[] = [
   {
@@ -277,6 +278,18 @@ function fallbackColumnLabel(column: PlanningColumn) {
   return fallback?.label ?? "Custom Column";
 }
 
+function clampKanbanHeight(height: number) {
+  return Math.min(MAX_KANBAN_HEIGHT, Math.max(MIN_KANBAN_HEIGHT, Math.round(height)));
+}
+
+function defaultKanbanHeightFromViewport() {
+  if (typeof window === "undefined") {
+    return DEFAULT_KANBAN_HEIGHT;
+  }
+
+  return clampKanbanHeight(window.innerHeight * DEFAULT_KANBAN_VIEWPORT_RATIO);
+}
+
 export function PlanningView({
   tasks,
   onTaskDrop,
@@ -292,10 +305,11 @@ export function PlanningView({
   storageKey,
   overlayOpen = false,
 }: PlanningViewProps) {
-  const [kanbanHeight, setKanbanHeight] = useState(DEFAULT_KANBAN_HEIGHT);
-  const [expandedKanbanHeight, setExpandedKanbanHeight] =
-    useState(DEFAULT_KANBAN_HEIGHT);
-  const [autoFitKanban, setAutoFitKanban] = useState(true);
+  const [kanbanHeight, setKanbanHeight] = useState(() => defaultKanbanHeightFromViewport());
+  const [expandedKanbanHeight, setExpandedKanbanHeight] = useState(() =>
+    defaultKanbanHeightFromViewport(),
+  );
+  const [useViewportDefaultHeight, setUseViewportDefaultHeight] = useState(true);
   const [kanbanFullscreen, setKanbanFullscreen] = useState(false);
   const [kanbanCollapsed, setKanbanCollapsed] = useState(false);
   const [columns, setColumns] = useState<PlanningColumn[]>(() => cloneDefaultColumns());
@@ -426,52 +440,25 @@ export function PlanningView({
   }, [overlayOpen]);
 
   useEffect(() => {
-    if (!autoFitKanban || kanbanCollapsed || kanbanFullscreen) {
+    if (!useViewportDefaultHeight) {
       return;
     }
 
-    const fitToContent = () => {
-      const header = kanbanHeaderRef.current;
-      const scroller = kanbanScrollRef.current;
-      const columnList = columnListRef.current;
-
-      if (!header || !scroller || !columnList) {
-        return;
-      }
-
-      const scrollerStyle = window.getComputedStyle(scroller);
-      const verticalPadding =
-        Number.parseFloat(scrollerStyle.paddingTop || "0") +
-        Number.parseFloat(scrollerStyle.paddingBottom || "0");
-      const headerHeight = header.getBoundingClientRect().height;
-      const contentHeight = columnList.getBoundingClientRect().height;
-      const nextHeight = Math.min(
-        MAX_KANBAN_HEIGHT,
-        Math.max(MIN_KANBAN_HEIGHT, Math.ceil(headerHeight + verticalPadding + contentHeight)),
-      );
-
+    const syncToViewport = () => {
+      const nextHeight = defaultKanbanHeightFromViewport();
       setKanbanHeight((current) => (Math.abs(current - nextHeight) < 1 ? current : nextHeight));
       setExpandedKanbanHeight((current) =>
         Math.abs(current - nextHeight) < 1 ? current : nextHeight,
       );
     };
 
-    const frame = window.requestAnimationFrame(fitToContent);
-    const timeout = window.setTimeout(fitToContent, 120);
+    syncToViewport();
+    window.addEventListener("resize", syncToViewport);
 
     return () => {
-      window.cancelAnimationFrame(frame);
-      window.clearTimeout(timeout);
+      window.removeEventListener("resize", syncToViewport);
     };
-  }, [
-    autoFitKanban,
-    columns,
-    kanbanCollapsed,
-    kanbanFullscreen,
-    storageReady,
-    taskColumnMap,
-    tasks,
-  ]);
+  }, [useViewportDefaultHeight]);
 
   useEffect(() => {
     const resizer = resizerRef.current;
@@ -484,10 +471,7 @@ export function PlanningView({
     const applyResize = (clientY: number) => {
       const containerRect = container.getBoundingClientRect();
       const proposedHeight = clientY - containerRect.top + container.scrollTop;
-      const nextHeight = Math.min(
-        MAX_KANBAN_HEIGHT,
-        Math.max(MIN_KANBAN_HEIGHT, proposedHeight),
-      );
+      const nextHeight = clampKanbanHeight(proposedHeight);
 
       setKanbanHeight(nextHeight);
       setExpandedKanbanHeight(nextHeight);
@@ -504,7 +488,7 @@ export function PlanningView({
       }
 
       isResizing = true;
-      setAutoFitKanban(false);
+      setUseViewportDefaultHeight(false);
       activePointerId = event.pointerId;
       resizer.setPointerCapture?.(event.pointerId);
       document.body.style.cursor = "row-resize";
@@ -536,7 +520,7 @@ export function PlanningView({
 
       event.preventDefault();
       isResizing = true;
-      setAutoFitKanban(false);
+      setUseViewportDefaultHeight(false);
       activePointerId = null;
       document.body.style.cursor = "row-resize";
       document.body.style.userSelect = "none";
