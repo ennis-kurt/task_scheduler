@@ -23,7 +23,7 @@ export default defineConfig({
       PLANNER_DEMO_STORE_PATH: ".planner-demo-store.json",
     },
     url: "http://localhost:3000",
-    reuseExistingServer: false,
+    reuseExistingServer: !process.env.CI,
     timeout: 120000,
   },
 });

@@ -150,9 +150,25 @@ test("project notes support markdown blocks, comments, and local persistence", a
   await expect(page.getByTestId("project-notes")).toBeVisible();
   await page.getByTestId("project-note-title").fill("Architecture Notes");
 
-  const firstBlock = page.getByTestId("project-note-block-0").getByRole("textbox");
+  const firstBlockContainer = page.getByTestId("project-note-block-0");
+  await firstBlockContainer.click();
+  const firstBlock = firstBlockContainer.getByRole("textbox");
   await firstBlock.fill("# Launch Readiness");
-  await expect(firstBlock).toHaveText("Launch Readiness");
+  await expect(firstBlock).toHaveValue("Launch Readiness");
+
+  const paragraphBlockContainer = page.getByTestId("project-note-block-1");
+  await paragraphBlockContainer.click();
+  const paragraphBlock = paragraphBlockContainer.getByRole("textbox");
+  await paragraphBlock.fill("First paragraph");
+  await paragraphBlock.press("Enter");
+  await paragraphBlock.type("Second paragraph with **bold** and *italic* text.");
+  await expect(paragraphBlock).toHaveValue(
+    "First paragraph\nSecond paragraph with **bold** and *italic* text.",
+  );
+
+  await page.getByTestId("project-note-title").click();
+  await expect(paragraphBlockContainer.locator("strong").filter({ hasText: "bold" })).toHaveCount(1);
+  await expect(paragraphBlockContainer.locator("em").filter({ hasText: "italic" })).toHaveCount(1);
 
   await page.getByTestId("project-note-comment-input").fill("Add rollout risks to this note.");
   await page.getByRole("button", { name: "Send comment" }).click();
@@ -162,9 +178,7 @@ test("project notes support markdown blocks, comments, and local persistence", a
   await page.locator("aside").getByRole("button", { name: "Planner MVP", exact: true }).click();
   await page.getByRole("button", { name: "Notes" }).click();
   await expect(page.getByTestId("project-note-title")).toHaveValue("Architecture Notes");
-  await expect(page.getByTestId("project-note-block-0").getByRole("textbox")).toHaveText(
-    "Launch Readiness",
-  );
+  await expect(page.getByTestId("project-note-block-0")).toContainText("Launch Readiness");
   await expect(page.getByText("Add rollout risks to this note.")).toBeVisible();
 });
 

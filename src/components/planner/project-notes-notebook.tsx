@@ -3,6 +3,7 @@
 import {
   type ChangeEvent,
   type KeyboardEvent,
+  Fragment,
   useEffect,
   useMemo,
   useRef,
@@ -13,16 +14,19 @@ import {
   CalendarDays,
   CheckSquare,
   Code2,
+  GripVertical,
   Heading1,
   Heading2,
   ImagePlus,
   List,
   MessageSquare,
   PanelRight,
+  Plus,
   Quote,
   Save,
   Send,
   Sparkles,
+  Trash2,
   Users,
 } from "lucide-react";
 
@@ -197,8 +201,8 @@ function loadDocumentFromStorage(projectPlan: ProjectPlan) {
 
 function parseMarkdownShortcut(text: string, currentType: NoteBlockType) {
   const rules: Array<[RegExp, NoteBlockType]> = [
-    [/^#\s+(.+)/, "heading1"],
     [/^##\s+(.+)/, "heading2"],
+    [/^#\s+(.+)/, "heading1"],
     [/^[-*]\s+(.+)/, "bulleted"],
     [/^\d+\.\s+(.+)/, "numbered"],
     [/^\[\s?\]\s+(.+)/, "todo"],
@@ -215,6 +219,90 @@ function parseMarkdownShortcut(text: string, currentType: NoteBlockType) {
   }
 
   return { type: currentType, text };
+}
+
+const INLINE_MARKDOWN_PATTERN =
+  /(\*\*\*[^*\n]+?\*\*\*|___[^_\n]+?___|\*\*[^*\n]+?\*\*|__[^_\n]+?__|\*[^*\n]+?\*|_[^_\n]+?_|~~[^~\n]+?~~|`[^`\n]+?`)/g;
+
+function renderInlineMarkdown(text: string) {
+  const nodes: React.ReactNode[] = [];
+  let key = 0;
+
+  for (const [lineIndex, line] of text.split("\n").entries()) {
+    if (lineIndex > 0) {
+      nodes.push(<br key={`br-${lineIndex}`} />);
+    }
+
+    let cursor = 0;
+    const matches = line.matchAll(INLINE_MARKDOWN_PATTERN);
+
+    for (const match of matches) {
+      const token = match[0];
+      const index = match.index ?? 0;
+
+      if (index > cursor) {
+        nodes.push(<Fragment key={`text-${key++}`}>{line.slice(cursor, index)}</Fragment>);
+      }
+
+      nodes.push(renderInlineMarkdownToken(token, key++));
+      cursor = index + token.length;
+    }
+
+    if (cursor < line.length) {
+      nodes.push(<Fragment key={`text-${key++}`}>{line.slice(cursor)}</Fragment>);
+    }
+  }
+
+  return nodes.length ? nodes : text;
+}
+
+function renderInlineMarkdownToken(token: string, key: number) {
+  if (
+    (token.startsWith("***") && token.endsWith("***")) ||
+    (token.startsWith("___") && token.endsWith("___"))
+  ) {
+    return (
+      <strong key={`strong-em-${key}`} className="font-semibold">
+        <em>{token.slice(3, -3)}</em>
+      </strong>
+    );
+  }
+
+  if (
+    (token.startsWith("**") && token.endsWith("**")) ||
+    (token.startsWith("__") && token.endsWith("__"))
+  ) {
+    return (
+      <strong key={`strong-${key}`} className="font-semibold">
+        {token.slice(2, -2)}
+      </strong>
+    );
+  }
+
+  if (token.startsWith("*") && token.endsWith("*")) {
+    return <em key={`em-${key}`}>{token.slice(1, -1)}</em>;
+  }
+
+  if (token.startsWith("_") && token.endsWith("_")) {
+    return <em key={`em-${key}`}>{token.slice(1, -1)}</em>;
+  }
+
+  if (token.startsWith("~~") && token.endsWith("~~")) {
+    return <s key={`strike-${key}`}>{token.slice(2, -2)}</s>;
+  }
+
+  if (token.startsWith("`") && token.endsWith("`")) {
+    return (
+      <code
+        key={`code-${key}`}
+        className="rounded bg-[var(--surface-muted)] px-1 py-0.5 font-mono text-[0.9em]"
+      >
+        {token.slice(1, -1)}
+      </code>
+    );
+  }
+
+  return <Fragment key={`plain-${key}`}>{token}</Fragment>;
 }
 
 function nextBlockType(currentType: NoteBlockType) {
@@ -285,9 +373,9 @@ function BlockIcon({ type }: { type: NoteBlockType }) {
 function blockClassName(type: NoteBlockType) {
   switch (type) {
     case "heading1":
-      return "min-h-11 text-3xl font-semibold leading-tight tracking-[-0.03em] text-[var(--foreground-strong)]";
+      return "min-h-10 text-2xl font-semibold leading-tight tracking-[-0.02em] text-[var(--foreground-strong)]";
     case "heading2":
-      return "min-h-9 text-xl font-semibold leading-snug tracking-[-0.02em] text-[var(--foreground-strong)]";
+      return "min-h-8 text-lg font-semibold leading-snug text-[var(--foreground-strong)]";
     case "bulleted":
     case "numbered":
     case "todo":
@@ -328,7 +416,14 @@ export function ProjectNotesNotebook({ projectPlan }: ProjectNotesNotebookProps)
     }
 
     window.requestAnimationFrame(() => {
-      blockRefs.current[pendingId]?.focus();
+      const el = blockRefs.current[pendingId];
+      if (el) {
+        el.focus();
+        if (el instanceof HTMLTextAreaElement) {
+          const position = el.value.length;
+          el.setSelectionRange(position, position);
+        }
+      }
       pendingFocusRef.current = null;
     });
   }, [documentState.blocks]);
@@ -403,8 +498,8 @@ export function ProjectNotesNotebook({ projectPlan }: ProjectNotesNotebookProps)
     updateBlock(block.id, normalized);
   };
 
-  const handleBlockKeyDown = (event: KeyboardEvent<HTMLElement>, block: NoteBlock) => {
-    if (event.key === "Enter" && !event.shiftKey && block.type !== "code") {
+  const handleBlockKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>, block: NoteBlock) => {
+    if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && block.type !== "code") {
       event.preventDefault();
       insertBlockAfter(block.id, nextBlockType(block.type));
       return;
@@ -541,6 +636,7 @@ export function ProjectNotesNotebook({ projectPlan }: ProjectNotesNotebookProps)
                 <Input
                   data-testid="project-note-title"
                   value={documentState.title}
+                  onFocus={() => setActiveBlockId(null)}
                   onChange={(event) =>
                     updateDocument((current) => ({ ...current, title: event.target.value }))
                   }
@@ -642,12 +738,33 @@ function NoteBlockEditor({
   setRef: (node: HTMLElement | null) => void;
   onFocus: () => void;
   onInput: (text: string) => void;
-  onKeyDown: (event: KeyboardEvent<HTMLElement>) => void;
+  onKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
   onToggleChecked: () => void;
   onCaptionChange: (text: string) => void;
   onInsertAfter: () => void;
   onDelete: () => void;
 }) {
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const wasActiveRef = useRef(false);
+
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (el) {
+      el.style.height = "auto";
+      el.style.height = `${el.scrollHeight}px`;
+    }
+  }, [block.text, active]);
+
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (active && !wasActiveRef.current && el) {
+      el.focus();
+      const position = el.value.length;
+      el.setSelectionRange(position, position);
+    }
+    wasActiveRef.current = active;
+  }, [active]);
+
   if (block.type === "image") {
     return (
       <div
@@ -680,50 +797,102 @@ function NoteBlockEditor({
   return (
     <div
       data-testid={`project-note-block-${index}`}
-      className={cn("group relative flex gap-3 rounded-lg px-2 py-1.5 transition", active && "bg-[var(--surface-muted)]")}
+      className="group relative flex gap-2 rounded-md px-1 py-1 transition"
     >
-      <div className="flex w-7 shrink-0 justify-center pt-1 text-[var(--muted-foreground)]">
-        {block.type === "todo" ? (
-          <button
-            type="button"
-            aria-label={block.checked ? "Mark unchecked" : "Mark checked"}
-            onClick={onToggleChecked}
-            className={cn(
-              "mt-0.5 flex h-4 w-4 items-center justify-center rounded border transition",
-              block.checked
-                ? "border-[var(--foreground-strong)] bg-[var(--foreground-strong)] text-[var(--surface)]"
-                : "border-[var(--border-strong)] bg-[var(--surface)]",
-            )}
-          >
-            {block.checked ? <CheckSquare className="h-3 w-3" /> : null}
-          </button>
-        ) : block.type === "bulleted" ? (
-          <span className="mt-2 h-1.5 w-1.5 rounded-full bg-[var(--muted-foreground)]" />
-        ) : block.type === "numbered" ? (
-          <span className="text-xs font-medium text-[var(--muted-foreground)]">{index + 1}.</span>
-        ) : (
-          <BlockIcon type={block.type} />
-        )}
-      </div>
-      <div
-        ref={setRef}
-        role="textbox"
-        tabIndex={0}
-        contentEditable
-        suppressContentEditableWarning
-        data-placeholder={getBlockPlaceholder(block.type)}
-        className={cn(
-          "notes-editable min-w-0 flex-1 rounded-md outline-none empty:before:text-[var(--muted-foreground)] empty:before:content-[attr(data-placeholder)] focus-visible:ring-0",
-          block.checked && "text-[var(--muted-foreground)] line-through",
-          blockClassName(block.type),
-        )}
-        onFocus={onFocus}
-        onInput={(event) => onInput(event.currentTarget.textContent ?? "")}
-        onKeyDown={onKeyDown}
-      >
-        {block.text}
-      </div>
+      <BlockMarker
+        block={block}
+        index={index}
+        onToggleChecked={onToggleChecked}
+      />
+      {active || !block.text.trim() ? (
+        <textarea
+          ref={(node) => {
+            textareaRef.current = node;
+            setRef(node);
+          }}
+          value={block.text}
+          onChange={(e) => onInput(e.target.value)}
+          onKeyDown={onKeyDown}
+          onFocus={onFocus}
+          placeholder={getBlockPlaceholder(block.type)}
+          rows={1}
+          className={cn(
+            "notes-editable min-w-0 flex-1 resize-none overflow-hidden rounded-md bg-transparent outline-none focus-visible:ring-0",
+            block.checked && "text-[var(--muted-foreground)] line-through",
+            blockClassName(block.type),
+          )}
+        />
+      ) : (
+        <button
+          type="button"
+          ref={(node) => setRef(node)}
+          onClick={onFocus}
+          className={cn(
+            "min-w-0 flex-1 whitespace-pre-wrap rounded-md text-left outline-none focus-visible:ring-0",
+            block.checked && "text-[var(--muted-foreground)] line-through",
+            blockClassName(block.type),
+          )}
+        >
+          {renderInlineMarkdown(block.text)}
+        </button>
+      )}
       <BlockActions onInsertAfter={onInsertAfter} onDelete={onDelete} />
+    </div>
+  );
+}
+
+function BlockMarker({
+  block,
+  index,
+  onToggleChecked,
+}: {
+  block: NoteBlock;
+  index: number;
+  onToggleChecked: () => void;
+}) {
+  if (block.type === "todo") {
+    return (
+      <div className="flex w-5 shrink-0 justify-center pt-1 text-[var(--muted-foreground)]">
+        <button
+          type="button"
+          aria-label={block.checked ? "Mark unchecked" : "Mark checked"}
+          onClick={onToggleChecked}
+          className={cn(
+            "mt-0.5 flex h-4 w-4 items-center justify-center rounded border transition",
+            block.checked
+              ? "border-[var(--foreground-strong)] bg-[var(--foreground-strong)] text-[var(--surface)]"
+              : "border-[var(--border-strong)] bg-[var(--surface)]",
+          )}
+        >
+          {block.checked ? <CheckSquare className="h-3 w-3" /> : null}
+        </button>
+      </div>
+    );
+  }
+
+  if (block.type === "bulleted") {
+    return (
+      <div className="flex w-5 shrink-0 justify-center pt-1 text-[var(--muted-foreground)]">
+        <span className="mt-2 h-1.5 w-1.5 rounded-full bg-current" />
+      </div>
+    );
+  }
+
+  if (block.type === "numbered") {
+    return (
+      <div className="flex w-5 shrink-0 justify-center pt-1 text-[var(--muted-foreground)]">
+        <span className="text-xs font-medium">{index + 1}.</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex w-5 shrink-0 justify-center pt-1 text-[var(--muted-foreground)] opacity-0 transition group-hover:opacity-60 group-focus-within:opacity-60">
+      {block.type === "quote" || block.type === "callout" || block.type === "code" ? (
+        <BlockIcon type={block.type} />
+      ) : (
+        <GripVertical className="h-4 w-4" />
+      )}
     </div>
   );
 }
@@ -743,7 +912,7 @@ function BlockActions({
         className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--muted-foreground)] hover:bg-[var(--surface-muted)] hover:text-[var(--foreground-strong)]"
         onClick={onInsertAfter}
       >
-        +
+        <Plus className="h-4 w-4" />
       </button>
       <button
         type="button"
@@ -751,7 +920,7 @@ function BlockActions({
         className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--muted-foreground)] hover:bg-[color:rgba(225,29,72,0.08)] hover:text-[var(--danger)]"
         onClick={onDelete}
       >
-        x
+        <Trash2 className="h-3.5 w-3.5" />
       </button>
     </div>
   );
