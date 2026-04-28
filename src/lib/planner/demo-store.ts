@@ -46,12 +46,6 @@ function shouldUseVolatileStore(error?: unknown) {
 }
 
 export async function readDemoSnapshot(userId = "demo-user") {
-  const volatile = volatileSnapshots.get(userId);
-
-  if (volatile) {
-    return cloneSnapshot(volatile);
-  }
-
   const target = storePath();
 
   try {
@@ -70,7 +64,14 @@ export async function readDemoSnapshot(userId = "demo-user") {
       await writeDemoSnapshot(seeded);
       return cloneSnapshot(seeded);
     }
-  } catch {
+  } catch (error) {
+    if (shouldUseVolatileStore(error)) {
+      const volatile = volatileSnapshots.get(userId);
+
+      if (volatile) {
+        return cloneSnapshot(volatile);
+      }
+    }
     // Seed below.
   }
 

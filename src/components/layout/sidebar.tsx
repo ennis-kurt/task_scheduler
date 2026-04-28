@@ -1,4 +1,10 @@
+"use client";
+
 import { Icon } from "@iconify/react";
+import { useSyncExternalStore } from "react";
+import { useTheme } from "next-themes";
+
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import type { ProjectPlan, AreaRecord } from "@/lib/planner/types";
 import { UserButton } from "@clerk/nextjs";
@@ -22,6 +28,71 @@ export type SidebarProps = {
   showUserButton: boolean;
   inboxCount: number;
 };
+
+function ThemeSelector() {
+  const { theme, resolvedTheme, setTheme } = useTheme();
+  const mounted = useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false,
+  );
+
+  const selectedTheme = mounted ? theme ?? "system" : "system";
+  const activeTheme = selectedTheme === "system" ? resolvedTheme ?? "light" : selectedTheme;
+  const options = [
+    { value: "system", label: "System", icon: "solar:monitor-linear" },
+    { value: "light", label: "Light", icon: "solar:sun-2-linear" },
+    { value: "dark", label: "Dark", icon: "solar:moon-linear" },
+    { value: "aura", label: "Aura", icon: "solar:palette-linear" },
+    { value: "neon", label: "Neon", icon: "solar:bolt-linear" },
+    { value: "elegant", label: "Elegant", icon: "solar:stars-linear" },
+  ];
+  const activeOption =
+    options.find((option) => option.value === selectedTheme) ??
+    options.find((option) => option.value === activeTheme) ??
+    options[0];
+
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-[var(--muted-foreground)] transition-colors hover:bg-[var(--button-ghost-hover)] hover:text-[var(--foreground-strong)]"
+        >
+          <Icon icon={activeOption.icon} width="18" />
+          <span className="text-sm">Theme</span>
+          <span className="ml-auto text-xs font-medium">{activeOption.label}</span>
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        side="right"
+        className="w-44 rounded-xl border border-[var(--border-strong)] bg-[var(--surface-elevated)] p-1.5 shadow-[var(--shadow-float)]"
+      >
+        {options.map((option) => {
+          const active = selectedTheme === option.value;
+
+          return (
+            <button
+              key={option.value}
+              type="button"
+              onClick={() => setTheme(option.value)}
+              className={cn(
+                "flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm transition-colors",
+                active
+                  ? "bg-[var(--accent-soft)] font-medium text-[var(--foreground-strong)]"
+                  : "text-[var(--muted-foreground)] hover:bg-[var(--button-ghost-hover)] hover:text-[var(--foreground-strong)]",
+              )}
+            >
+              <Icon icon={option.icon} width="17" />
+              {option.label}
+            </button>
+          );
+        })}
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 export function Sidebar({
   activeView,
@@ -180,11 +251,12 @@ export function Sidebar({
       <div className="p-3 border-t border-[var(--border)] flex flex-col gap-2">
         <button
           onClick={onOpenCreateTask}
-          className="w-full flex items-center justify-center gap-2 bg-[var(--foreground-strong)] hover:bg-black/90 text-[var(--surface)] dark:text-black rounded-md py-2 px-3 text-sm font-medium transition-colors shadow-sm"
+          className="w-full flex items-center justify-center gap-2 bg-[var(--button-solid-bg)] hover:bg-[var(--button-solid-hover)] text-[var(--button-solid-fg)] rounded-md py-2 px-3 text-sm font-medium transition-colors shadow-sm"
         >
           <Icon icon="solar:add-circle-linear" width="18" />
           Create Task
         </button>
+        <ThemeSelector />
         <button
           onClick={onOpenSettings}
           className="flex items-center gap-2.5 px-2 py-1.5 rounded-md text-[var(--muted-foreground)] hover:bg-[var(--button-ghost-hover)] hover:text-[var(--foreground-strong)] transition-colors mt-1 w-full text-left"

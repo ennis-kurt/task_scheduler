@@ -12,6 +12,7 @@ import {
   parseISO,
   startOfDay,
 } from "date-fns";
+import type { DateRange } from "react-day-picker";
 import {
   Area,
   AreaChart,
@@ -49,8 +50,12 @@ import { Textarea } from "@/components/ui/textarea";
 import type {
   NewMilestoneInput,
   PlannerMilestone,
+  PlannerTask,
+  Priority,
   ProjectPlan,
+  TaskStatus,
   UpdateMilestoneInput,
+  UpdateTaskInput,
 } from "@/lib/planner/types";
 import { cn } from "@/lib/utils";
 import { Icon } from "@iconify/react";
@@ -68,6 +73,9 @@ const CHART_COLORS = {
   muted: "#94a3b8",
 };
 const RESPONSIVE_CHART_INITIAL_DIMENSION = { width: 1, height: 1 };
+const PROJECT_TASK_ROW_GRID = {
+  gridTemplateColumns: "minmax(0, 1fr) 36px 128px 36px 108px",
+};
 
 type ProjectPlanningModuleProps = {
   projectPlans: ProjectPlan[];
@@ -86,6 +94,7 @@ type ProjectPlanningModuleProps = {
     input: UpdateMilestoneInput,
   ) => Promise<void>;
   onDeleteMilestone: (milestoneId: string) => Promise<void>;
+  onUpdateTask: (taskId: string, input: UpdateTaskInput) => Promise<void>;
 };
 
 type MilestoneComposerState = {
@@ -162,6 +171,383 @@ function MilestoneDatePicker({
           }}
           initialFocus
         />
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function dateToInputValue(date: Date | undefined) {
+  return date && !Number.isNaN(date.getTime()) ? format(date, "yyyy-MM-dd") : "";
+}
+
+function inputDateToDate(value: string) {
+  const parsed = parseISO(`${value}T12:00:00`);
+  return Number.isNaN(parsed.getTime()) ? undefined : parsed;
+}
+
+function formatRangeLabel(startDate: string, deadline: string) {
+  const start = parseISO(startDate);
+  const end = parseISO(deadline);
+
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    return "Set dates";
+  }
+
+  if (format(start, "yyyy") === format(end, "yyyy")) {
+    return `${format(start, "MMM d")} - ${format(end, "MMM d")}`;
+  }
+
+  return `${format(start, "MMM d, yyyy")} - ${format(end, "MMM d, yyyy")}`;
+}
+
+function InlineMilestoneRangePicker({
+  milestone,
+  disabled,
+  onChange,
+}: {
+  milestone: PlannerMilestone;
+  disabled?: boolean;
+  onChange: (input: Pick<UpdateMilestoneInput, "startDate" | "deadline">) => Promise<void>;
+}) {
+  const milestoneRange = useMemo(
+    () => ({
+      from: parseISO(milestone.startDate),
+      to: parseISO(milestone.deadline),
+    }),
+    [milestone.deadline, milestone.startDate],
+  );
+  const [open, setOpen] = useState(false);
+  const [draftRange, setDraftRange] = useState<DateRange | undefined>(milestoneRange);
+
+  const startInput = dateToInputValue(draftRange?.from);
+  const endInput = dateToInputValue(draftRange?.to);
+
+  return (
+    <Popover
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (nextOpen) {
+          setDraftRange(milestoneRange);
+        }
+        setOpen(nextOpen);
+      }}
+    >
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          disabled={disabled}
+          aria-label={`Edit ${milestone.name} dates`}
+          className="inline-flex h-8 min-w-[9rem] items-center justify-center gap-1.5 rounded-md border border-transparent px-2 text-xs font-medium text-[var(--muted-foreground)] transition hover:border-[var(--border)] hover:bg-[var(--surface)] hover:text-[var(--foreground-strong)] disabled:cursor-not-allowed disabled:opacity-60"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <CalendarClock className="h-3.5 w-3.5" />
+          {formatRangeLabel(milestone.startDate, milestone.deadline)}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        data-testid={`milestone-date-popover-${milestone.id}`}
+        align="end"
+        sideOffset={8}
+        onClick={(event) => event.stopPropagation()}
+        className="z-[70] w-auto overflow-hidden rounded-[18px] border border-[var(--border-strong)] bg-[var(--surface-elevated)] p-0 shadow-[var(--shadow-float)]"
+      >
+        <div className="grid gap-3 border-b border-[var(--border)] p-3">
+          <div className="grid grid-cols-2 gap-2">
+            <Field label="Start">
+              <Input
+                type="date"
+                aria-label={`Start date for ${milestone.name}`}
+                value={startInput}
+                className="h-8 rounded-md text-xs"
+                onChange={(event) => {
+                  const from = inputDateToDate(event.target.value);
+                  setDraftRange((current) => ({
+                    from,
+                    to: current?.to ?? from,
+                  }));
+                }}
+              />
+            </Field>
+            <Field label="End">
+              <Input
+                type="date"
+                aria-label={`End date for ${milestone.name}`}
+                value={endInput}
+                className="h-8 rounded-md text-xs"
+                onChange={(event) => {
+                  const to = inputDateToDate(event.target.value);
+                  setDraftRange((current) => ({
+                    from: current?.from ?? to,
+                    to,
+                  }));
+                }}
+              />
+            </Field>
+          </div>
+        </div>
+        <Calendar
+          mode="range"
+          selected={draftRange}
+          onSelect={setDraftRange}
+          defaultMonth={draftRange?.from}
+          initialFocus
+          className="p-3"
+        />
+        <div className="flex items-center justify-end gap-2 border-t border-[var(--border)] p-3">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => setOpen(false)}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            disabled={!draftRange?.from || !draftRange?.to}
+            onClick={async () => {
+              if (!draftRange?.from || !draftRange.to) {
+                return;
+              }
+
+              const from = startOfDay(draftRange.from);
+              const to = startOfDay(draftRange.to);
+              const start = from <= to ? from : to;
+              const end = from <= to ? to : from;
+              await onChange({
+                startDate: dateInputToIso(format(start, "yyyy-MM-dd")),
+                deadline: dateInputToIso(format(end, "yyyy-MM-dd")),
+              });
+              setOpen(false);
+            }}
+          >
+            Save dates
+          </Button>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function InlineTaskDuePicker({
+  task,
+  onChange,
+}: {
+  task: PlannerTask;
+  onChange: (dueAt: string | null) => Promise<void>;
+}) {
+  const selected = task.dueAt ? parseISO(task.dueAt) : undefined;
+  const hasValidDate = selected && !Number.isNaN(selected.getTime());
+  const selectedInput = hasValidDate ? dateToInputValue(selected) : "";
+  const [open, setOpen] = useState(false);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          aria-label={`Edit due date for ${task.title}`}
+          className={cn(
+            "justify-self-end rounded-md px-2.5 py-1 text-xs font-medium transition hover:bg-[var(--surface-muted)] hover:text-[var(--foreground-strong)]",
+            taskDueLabel(task) === "Today"
+              ? "border border-[rgba(245,158,11,0.28)] bg-[rgba(245,158,11,0.08)] text-[color:#d97706] dark:text-[color:#fbbf24]"
+              : "text-[var(--muted-foreground)]",
+          )}
+          onClick={(event) => event.stopPropagation()}
+        >
+          {taskDueLabel(task)}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        data-testid={`task-due-popover-${task.id}`}
+        align="end"
+        sideOffset={8}
+        onClick={(event) => event.stopPropagation()}
+        className="z-[70] w-auto overflow-hidden rounded-[18px] border border-[var(--border-strong)] bg-[var(--surface-elevated)] p-0 shadow-[var(--shadow-float)]"
+      >
+        <div className="border-b border-[var(--border)] p-3">
+          <Field label="Due date">
+            <Input
+              type="date"
+              aria-label={`Due date for ${task.title}`}
+              value={selectedInput}
+              className="h-8 rounded-md text-xs"
+              onChange={async (event) => {
+                const date = inputDateToDate(event.target.value);
+                if (!date) {
+                  return;
+                }
+
+                await onChange(dateInputToIso(format(date, "yyyy-MM-dd")));
+                setOpen(false);
+              }}
+            />
+          </Field>
+        </div>
+        <Calendar
+          mode="single"
+          selected={hasValidDate ? selected : undefined}
+          onSelect={async (date) => {
+            if (!date) {
+              return;
+            }
+
+            await onChange(dateInputToIso(format(date, "yyyy-MM-dd")));
+            setOpen(false);
+          }}
+          initialFocus
+          className="p-3"
+        />
+        <div className="flex items-center justify-end border-t border-[var(--border)] p-2">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={async () => {
+              await onChange(null);
+              setOpen(false);
+            }}
+          >
+            Clear deadline
+          </Button>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+const STATUS_OPTIONS: Array<{ value: TaskStatus; label: string }> = [
+  { value: "todo", label: "To Do" },
+  { value: "in_progress", label: "Doing" },
+  { value: "done", label: "Done" },
+];
+
+function InlineTaskStatusPicker({
+  task,
+  onChange,
+}: {
+  task: PlannerTask;
+  onChange: (status: TaskStatus) => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          aria-label={`Change status for ${task.title}`}
+          className={cn(
+            "flex h-8 items-center justify-between rounded-md border px-2.5 text-left text-xs font-medium shadow-sm",
+            statusClassName(task.status),
+          )}
+          onClick={(event) => event.stopPropagation()}
+        >
+          {statusLabel(task.status)}
+          <Icon icon="solar:alt-arrow-down-linear" width="14" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        data-testid={`task-status-popover-${task.id}`}
+        align="end"
+        sideOffset={8}
+        onClick={(event) => event.stopPropagation()}
+        className="z-[70] w-40 rounded-[16px] border border-[var(--border-strong)] bg-[var(--surface-elevated)] p-1.5 shadow-[var(--shadow-soft)]"
+      >
+        {STATUS_OPTIONS.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            className="flex w-full items-center justify-between rounded-[10px] px-2.5 py-2 text-left text-xs font-medium text-[var(--foreground-strong)] transition hover:bg-[var(--button-ghost-hover)]"
+            onClick={async () => {
+              await onChange(option.value);
+              setOpen(false);
+            }}
+          >
+            {option.label}
+            {task.status === option.value ? (
+              <Icon icon="solar:check-read-linear" width="14" />
+            ) : null}
+          </button>
+        ))}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+const PRIORITY_OPTIONS: Array<{ value: Priority; label: string }> = [
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+  { value: "critical", label: "Critical" },
+];
+
+function priorityLabel(priority: Priority) {
+  return PRIORITY_OPTIONS.find((option) => option.value === priority)?.label ?? "Medium";
+}
+
+function InlineTaskPriorityPicker({
+  task,
+  onChange,
+}: {
+  task: PlannerTask;
+  onChange: (priority: Priority) => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const isUrgent = task.priority === "critical" || task.priority === "high";
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          aria-label={`Change priority for ${task.title}`}
+          className={cn(
+            "flex h-8 w-8 items-center justify-center rounded-md text-[var(--muted-foreground)] transition hover:bg-[var(--surface-muted)] hover:text-[var(--foreground-strong)]",
+            isUrgent && "text-[var(--danger)]",
+          )}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <Icon
+            icon={isUrgent ? "solar:shield-warning-linear" : "solar:flag-linear"}
+            width="17"
+          />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        data-testid={`task-priority-popover-${task.id}`}
+        align="end"
+        sideOffset={8}
+        onClick={(event) => event.stopPropagation()}
+        className="z-[70] w-44 rounded-[16px] border border-[var(--border-strong)] bg-[var(--surface-elevated)] p-1.5 shadow-[var(--shadow-soft)]"
+      >
+        {PRIORITY_OPTIONS.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            className="flex w-full items-center justify-between rounded-[10px] px-2.5 py-2 text-left text-xs font-medium text-[var(--foreground-strong)] transition hover:bg-[var(--button-ghost-hover)]"
+            onClick={async () => {
+              await onChange(option.value);
+              setOpen(false);
+            }}
+          >
+            <span className="flex items-center gap-2">
+              <Icon
+                icon={option.value === "critical" || option.value === "high" ? "solar:shield-warning-linear" : "solar:flag-linear"}
+                width="14"
+                className={option.value === "critical" || option.value === "high" ? "text-[var(--danger)]" : "text-[var(--muted-foreground)]"}
+              />
+              {option.label}
+            </span>
+            {task.priority === option.value ? (
+              <Icon icon="solar:check-read-linear" width="14" />
+            ) : null}
+          </button>
+        ))}
+        <div className="border-t border-[var(--border)] px-2.5 py-2 text-[11px] text-[var(--muted-foreground)]">
+          Current: {priorityLabel(task.priority)}
+        </div>
       </PopoverContent>
     </Popover>
   );
@@ -309,6 +695,91 @@ function ChartCard({
       {children}
     </article>
   );
+}
+
+function ProjectMemberStack() {
+  return (
+    <div className="flex items-center -space-x-1.5">
+      <span className="z-30 flex h-7 w-7 items-center justify-center rounded-full border border-[var(--surface)] bg-[rgba(96,165,250,0.18)] text-[11px] font-semibold text-[var(--accent-strong)] shadow-sm">
+        JD
+      </span>
+      <span className="z-20 flex h-7 w-7 items-center justify-center rounded-full border border-[var(--surface)] bg-[rgba(34,197,94,0.18)] text-[11px] font-semibold text-[var(--success)] shadow-sm">
+        AL
+      </span>
+      <span className="z-10 flex h-7 w-7 items-center justify-center rounded-full border border-dashed border-[var(--border-strong)] bg-[var(--surface-muted)] text-[11px] font-semibold text-[var(--muted-foreground)]">
+        +
+      </span>
+    </div>
+  );
+}
+
+function taskOwnerInitials(task: PlannerTask, index: number) {
+  const presets = ["JD", "AL", ""];
+
+  if (presets[index % presets.length]) {
+    return presets[index % presets.length];
+  }
+
+  return task.title
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("");
+}
+
+function TaskOwnerAvatar({ task, index }: { task: PlannerTask; index: number }) {
+  const initials = taskOwnerInitials(task, index);
+
+  if (!initials) {
+    return (
+      <span className="flex h-6 w-6 items-center justify-center rounded-full border border-dashed border-[var(--border-strong)] bg-[var(--surface-muted)] text-[var(--muted-foreground)]">
+        <Icon icon="solar:user-linear" width="13" />
+      </span>
+    );
+  }
+
+  return (
+    <span className="flex h-6 w-6 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--surface-muted)] text-[10px] font-semibold text-[var(--muted-foreground)] shadow-sm">
+      {initials}
+    </span>
+  );
+}
+
+function statusLabel(status: PlannerTask["status"]) {
+  if (status === "done") {
+    return "Done";
+  }
+
+  if (status === "in_progress") {
+    return "Doing";
+  }
+
+  return "To Do";
+}
+
+function statusClassName(status: PlannerTask["status"]) {
+  if (status === "done") {
+    return "border-[var(--border)] bg-[var(--surface-muted)] text-[var(--muted-foreground)]";
+  }
+
+  if (status === "in_progress") {
+    return "border-[var(--border-strong)] bg-[var(--accent-soft)] text-[var(--accent-strong)]";
+  }
+
+  return "border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)]";
+}
+
+function taskDueLabel(task: PlannerTask) {
+  if (!task.dueAt) {
+    return "Set Date";
+  }
+
+  if (isToday(parseISO(task.dueAt))) {
+    return "Today";
+  }
+
+  return format(parseISO(task.dueAt), "MMM d");
 }
 
 function MilestoneComposer({
@@ -720,6 +1191,7 @@ export function ProjectPlanningModule({
   onCreateMilestone,
   onUpdateMilestone,
   onDeleteMilestone,
+  onUpdateTask,
 }: ProjectPlanningModuleProps) {
   const [activeTab, setActiveTab] = useState<ProjectPlanningSurface>(surface || "plan");
   const [expandedMilestoneId, setExpandedMilestoneId] = useState<string | null>(null);
@@ -886,7 +1358,10 @@ export function ProjectPlanningModule({
   };
 
   return (
-    <section data-project-planning-module className="flex-1 flex flex-col h-full bg-white relative">
+    <section
+      data-project-planning-module
+      className="relative flex h-full flex-1 flex-col bg-[var(--background)]"
+    >
       <MilestoneComposer
         open={milestoneComposerOpen}
         projectPlans={projectPlans}
@@ -902,77 +1377,127 @@ export function ProjectPlanningModule({
         onDelete={onDeleteMilestone}
       />
 
-      <header className="h-14 flex items-center justify-between px-6 border-b border-[var(--border)] bg-white shrink-0">
-        <div className="flex items-center gap-4 h-full">
-          <div className="flex items-center gap-2">
-            <h1 className="text-lg font-semibold text-[var(--foreground-strong)]">{activeProject.project.name}</h1>
-            <Icon icon="solar:alt-arrow-down-linear" width="18" className="text-[var(--muted-foreground)]" />
+      <header className="shrink-0 border-b border-[var(--border)] bg-[var(--surface)]">
+        <div className="flex h-14 items-center justify-between gap-4 px-6">
+          <div className="flex min-w-0 items-center gap-3">
+            <span
+              className="h-2 w-2 shrink-0 rounded-full border-2"
+              style={{ borderColor: activeProject.project.color }}
+            />
+            <h1 className="truncate text-xl font-semibold tracking-[-0.02em] text-[var(--foreground-strong)]">
+              {activeProject.project.name}
+            </h1>
+            <Icon
+              icon="solar:alt-arrow-down-linear"
+              width="16"
+              className="shrink-0 text-[var(--muted-foreground)]"
+            />
           </div>
-          <nav className="flex items-center gap-6 ml-8 h-full">
+
+          <div className="flex shrink-0 items-center gap-2.5">
+            <button
+              type="button"
+              className="flex h-8 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-xs font-medium text-[var(--muted-foreground)] shadow-sm transition hover:border-[var(--border-strong)] hover:text-[var(--foreground-strong)]"
+            >
+              <Icon icon="solar:tuning-2-linear" width="16" />
+              Project Details
+            </button>
+            <span className="h-6 w-px bg-[var(--border)]" />
+            <ProjectMemberStack />
+            <button
+              type="button"
+              aria-label="Share project"
+              className="flex h-8 items-center gap-2 rounded-lg bg-[var(--button-solid-bg)] px-3 text-xs font-medium text-[var(--button-solid-fg)] shadow-sm transition hover:bg-[var(--button-solid-hover)]"
+            >
+              <Icon icon="solar:user-plus-linear" width="16" />
+              Share
+            </button>
+          </div>
+        </div>
+
+        <div className="flex h-10 items-end px-6">
+          <nav className="flex h-full items-end gap-8">
             <button
               onClick={() => setActiveTab("plan")}
-              className={cn("text-sm font-medium h-14 border-b-2 transition-colors", activeTab === "plan" ? "text-blue-600 border-blue-600" : "text-[var(--muted-foreground)] hover:text-[var(--foreground-strong)] border-transparent")}
+              className={cn(
+                "h-full border-b-2 text-sm font-medium transition-colors",
+                activeTab === "plan"
+                  ? "border-[var(--foreground-strong)] text-[var(--foreground-strong)]"
+                  : "border-transparent text-[var(--muted-foreground)] hover:text-[var(--foreground-strong)]",
+              )}
             >
               Project Design
             </button>
             <button
               onClick={() => setActiveTab("timeline")}
-              className={cn("text-sm font-medium h-14 border-b-2 transition-colors", activeTab === "timeline" ? "text-blue-600 border-blue-600" : "text-[var(--muted-foreground)] hover:text-[var(--foreground-strong)] border-transparent")}
+              className={cn(
+                "h-full border-b-2 text-sm font-medium transition-colors",
+                activeTab === "timeline"
+                  ? "border-[var(--foreground-strong)] text-[var(--foreground-strong)]"
+                  : "border-transparent text-[var(--muted-foreground)] hover:text-[var(--foreground-strong)]",
+              )}
             >
               Gantt Chart
             </button>
             <button
               onClick={() => setActiveTab("charts")}
-              className={cn("text-sm font-medium h-14 border-b-2 transition-colors", activeTab === "charts" ? "text-blue-600 border-blue-600" : "text-[var(--muted-foreground)] hover:text-[var(--foreground-strong)] border-transparent")}
+              className={cn(
+                "h-full border-b-2 text-sm font-medium transition-colors",
+                activeTab === "charts"
+                  ? "border-[var(--foreground-strong)] text-[var(--foreground-strong)]"
+                  : "border-transparent text-[var(--muted-foreground)] hover:text-[var(--foreground-strong)]",
+              )}
             >
               Dashboard
             </button>
             <button
               type="button"
               disabled
-              className="text-sm font-medium text-[var(--muted-foreground)] border-b-2 border-transparent h-14 cursor-not-allowed opacity-50"
+              className="h-full cursor-not-allowed border-b-2 border-transparent text-sm font-medium text-[var(--muted-foreground)] opacity-55"
             >
               Notes
             </button>
           </nav>
         </div>
-        <div className="flex items-center gap-4">
-          <div className="flex items-center -space-x-2">
-            <div className="w-8 h-8 rounded-full border-2 border-white bg-blue-100 flex items-center justify-center text-xs font-medium text-blue-700 z-30">JD</div>
-            <div className="w-8 h-8 rounded-full border-2 border-white bg-green-100 flex items-center justify-center text-xs font-medium text-green-700 z-20">AS</div>
-            <div className="w-8 h-8 rounded-full border-2 border-white bg-gray-100 flex items-center justify-center text-xs font-medium text-gray-600 z-10">+3</div>
-          </div>
-          <button
-            type="button"
-            disabled
-            className="px-3 py-1.5 bg-blue-600 text-white rounded-md text-sm font-medium transition-colors shadow-sm opacity-50 cursor-not-allowed"
-          >
-            Share
-          </button>
-        </div>
       </header>
 
       {activeTab === "plan" ? (
-        <div className="flex-1 overflow-y-auto bg-[#FAFAFA] dark:bg-[var(--background)] p-6" style={{ scrollbarWidth: "thin" }}>
-          <div className="max-w-5xl mx-auto space-y-6">
+        <div className="flex-1 overflow-y-auto bg-[var(--background)] px-6 py-5" style={{ scrollbarWidth: "thin" }}>
+          <div className="mx-auto grid max-w-7xl gap-4">
+            <div className="flex items-center justify-between gap-4">
+              <h2 className="text-lg font-semibold tracking-[-0.02em] text-[var(--foreground-strong)]">
+                Milestones & Tasks
+              </h2>
+              <button
+                type="button"
+                className="flex h-8 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-xs font-medium text-[var(--muted-foreground)] shadow-sm transition hover:border-[var(--border-strong)] hover:text-[var(--foreground-strong)]"
+              >
+                <Icon icon="solar:filter-linear" width="16" />
+                Filter
+              </button>
+            </div>
+
             {plottedMilestones.map((milestone) => (
-              <div key={milestone.id} className="bg-white rounded-xl border border-[var(--border)] shadow-[var(--shadow-soft)] overflow-hidden">
+              <div
+                key={milestone.id}
+                className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)] shadow-[var(--shadow-soft)]"
+              >
                 <div
-                  className="px-5 py-4 border-b border-[var(--border)] flex items-center justify-between bg-[var(--surface-muted)] cursor-pointer group"
+                  className="group flex items-center justify-between gap-4 border-b border-[var(--border)] bg-[var(--surface-muted)] px-4 py-3"
                   onClick={() => openMilestoneEditor(milestone)}
                 >
                   <div className="flex items-center gap-3">
-                    <Icon icon="solar:alt-arrow-down-linear" width="18" className="text-[var(--muted-foreground)] group-hover:text-[var(--foreground-strong)] transition-colors" />
-                    <h2 className="text-base font-semibold text-[var(--foreground-strong)]">{milestone.name}</h2>
-                    <span className="px-2 py-0.5 bg-white border border-[var(--border)] rounded text-xs font-medium text-[var(--muted-foreground)]">
+                    <Icon icon="solar:alt-arrow-down-linear" width="16" className="text-[var(--muted-foreground)] group-hover:text-[var(--foreground-strong)] transition-colors" />
+                    <h2 className="text-sm font-semibold text-[var(--foreground-strong)]">{milestone.name}</h2>
+                    <span className="rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-0.5 text-xs font-medium text-[var(--muted-foreground)]">
                       {milestone.tasks.length} tasks
                     </span>
                   </div>
                   <div className="flex items-center gap-4">
                     <div className="flex items-center gap-2">
-                      <div className="w-32 h-1.5 bg-[var(--border)] rounded-full overflow-hidden">
+                      <div className="h-1.5 w-28 overflow-hidden rounded-full bg-[var(--border)]">
                         <div
-                          className="h-full rounded-full bg-blue-600"
+                          className="h-full rounded-full bg-[var(--foreground-strong)]"
                           style={{
                             width: `${Math.min(milestone.completionPercentage, 100)}%`,
                           }}
@@ -982,46 +1507,82 @@ export function ProjectPlanningModule({
                         {Math.round(milestone.completionPercentage)}%
                       </span>
                     </div>
-                    {milestone.deadline && (
-                      <span className="text-sm font-medium text-[var(--muted-foreground)]">
-                        {format(parseISO(milestone.deadline), "MMM d")}
-                      </span>
-                    )}
+                    <InlineMilestoneRangePicker
+                      milestone={milestone}
+                      disabled={milestone.synthetic}
+                      onChange={(input) => onUpdateMilestone(milestone.id, input)}
+                    />
+                    <span className="h-5 w-px bg-[var(--border)]" />
+                    <button
+                      type="button"
+                      className="flex items-center gap-1.5 text-sm font-medium text-[var(--muted-foreground)] transition hover:text-[var(--foreground-strong)]"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onOpenNewTask?.({
+                          projectId: activeProject.project.id,
+                          milestoneId: milestone.id,
+                        });
+                      }}
+                    >
+                      <Icon icon="solar:add-circle-linear" width="18" />
+                      Add Task
+                    </button>
+                    <span onClick={(event) => event.stopPropagation()}>
+                      <MilestoneActionMenu
+                        milestone={milestone}
+                        onEdit={() => openMilestoneEditor(milestone)}
+                        onDelete={async () => {
+                          if (!window.confirm(`Delete ${milestone.name}?`)) {
+                            return;
+                          }
+                          await onDeleteMilestone(milestone.id);
+                        }}
+                      />
+                    </span>
                   </div>
                 </div>
                 <div className="divide-y divide-[var(--border)]">
-                  {milestone.tasks.map((task) => (
-                    <div key={task.id} className="px-5 py-3 flex items-center justify-between hover:bg-[var(--surface-muted)] transition-colors group/task" onClick={() => onOpenTask(task.id)}>
-                      <div className="flex items-center gap-3">
+                  {milestone.tasks.map((task, taskIndex) => (
+	                    <div
+	                      key={task.id}
+	                      data-testid={`project-task-row-${task.id}`}
+	                      className="group/task grid min-h-12 cursor-pointer items-center gap-3 px-4 py-2.5 transition hover:bg-[var(--surface-muted)]"
+	                      style={PROJECT_TASK_ROW_GRID}
+	                      onClick={() => onOpenTask(task.id)}
+	                    >
+                      <div className="flex min-w-0 items-center gap-3">
                         <label className="relative flex items-center cursor-pointer" onClick={(e) => { e.stopPropagation(); }}>
                           <input type="checkbox" className="peer sr-only task-checkbox" checked={task.status === "done"} onChange={() => {}} />
-                          <div className="w-5 h-5 border-2 border-[var(--border-strong)] rounded flex items-center justify-center peer-checked:bg-blue-600 peer-checked:border-blue-600 transition-all">
-                            <Icon icon="solar:check-read-linear" width="14" className="text-white opacity-0 transition-all absolute" />
+                          <div className="flex h-4 w-4 items-center justify-center rounded border-2 border-[var(--border)] bg-[var(--surface)] transition-all peer-checked:border-[var(--foreground-strong)] peer-checked:bg-[var(--foreground-strong)]">
+                            <Icon icon="solar:check-read-linear" width="12" className="absolute text-[var(--surface)] opacity-0 transition-all" />
                           </div>
                         </label>
-                        <span className={cn("text-sm font-medium transition-colors cursor-pointer", task.status === "done" ? "text-[var(--muted-foreground)] line-through" : "text-[var(--foreground-strong)] group-hover/task:text-blue-600")}>
+                        <span className={cn("truncate text-sm font-medium transition-colors", task.status === "done" ? "text-[var(--muted-foreground)] line-through" : "text-[var(--foreground-strong)] group-hover/task:text-[var(--accent-strong)]")}>
                           {task.title}
                         </span>
                         {task.priority === "high" && (
-                          <Icon icon="solar:flag-bold" width="14" className="text-red-500" />
+                          <Icon icon="solar:flag-bold" width="14" className="shrink-0 text-[var(--danger)]" />
                         )}
                       </div>
-                      <div className="flex items-center gap-4 opacity-0 group-hover/task:opacity-100 transition-opacity">
-                        <div className="w-6 h-6 rounded-full bg-[var(--accent-soft)] flex items-center justify-center text-[10px] font-medium text-[var(--accent-strong)]">
-                          {task.id.slice(0, 2).toUpperCase()}
-                        </div>
-                        {task.dueAt && (
-                          <span className="text-xs font-medium text-[var(--muted-foreground)]">
-                            {format(parseISO(task.dueAt), "MMM d")}
-                          </span>
-                        )}
-                      </div>
+                      <TaskOwnerAvatar task={task} index={taskIndex} />
+                      <InlineTaskStatusPicker
+                        task={task}
+                        onChange={(status) => onUpdateTask(task.id, { status })}
+                      />
+                      <InlineTaskPriorityPicker
+                        task={task}
+                        onChange={(priority) => onUpdateTask(task.id, { priority })}
+                      />
+                      <InlineTaskDuePicker
+                        task={task}
+                        onChange={(dueAt) => onUpdateTask(task.id, { dueAt })}
+                      />
                     </div>
                   ))}
                 </div>
-                <div className="px-5 py-3 bg-[var(--surface-muted)] border-t border-[var(--border)]">
+                <div className="border-t border-[var(--border)] bg-[var(--surface-muted)] px-4 py-2.5">
                   <button
-                    className="text-sm font-medium text-[var(--muted-foreground)] hover:text-[var(--foreground-strong)] flex items-center gap-2 transition-colors"
+                    className="flex items-center gap-2 text-sm font-medium text-[var(--muted-foreground)] transition-colors hover:text-[var(--foreground-strong)]"
                     onClick={() => onOpenNewTask?.({ projectId: activeProject.project.id, milestoneId: milestone.id })}
                   >
                     <Icon icon="solar:add-square-linear" width="16" />
@@ -1032,7 +1593,7 @@ export function ProjectPlanningModule({
             ))}
 
             <button
-              className="w-full py-4 border-2 border-dashed border-[var(--border)] rounded-xl text-[var(--muted-foreground)] hover:text-[var(--foreground-strong)] hover:border-[var(--muted-foreground)] transition-colors font-medium flex items-center justify-center gap-2"
+              className="flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-[var(--border)] bg-[var(--surface)] py-5 text-sm font-medium text-[var(--muted-foreground)] transition-colors hover:border-[var(--border-strong)] hover:text-[var(--foreground-strong)]"
               onClick={onOpenMilestoneComposer}
             >
               <Icon icon="solar:add-circle-linear" width="20" />

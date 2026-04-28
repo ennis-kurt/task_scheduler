@@ -22,7 +22,7 @@ import {
   useState,
   useTransition,
 } from "react";
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import {
   addDays,
   addMinutes,
@@ -69,6 +69,7 @@ import type {
   RecurrenceRule,
   TaskStatus,
   UpdateSettingsInput,
+  UpdateTaskInput,
 } from "@/lib/planner/types";
 import { cn } from "@/lib/utils";
 import { Sidebar, type ActiveViewType } from "../layout/sidebar";
@@ -243,69 +244,153 @@ function priorityClass(priority?: Priority) {
   return "border-transparent bg-[var(--accent-soft)] text-[var(--foreground-strong)]";
 }
 
-function CalendarTaskGripIcon() {
-  return (
-    <svg
-      viewBox="0 0 14 18"
-      aria-hidden="true"
-      className="planner-calendar-event__grip-icon"
-    >
-      {[0, 1, 2].flatMap((row) =>
-        [0, 1].map((column) => (
-          <rect
-            key={`${row}-${column}`}
-            x={3 + column * 4}
-            y={3 + row * 4}
-            width="2"
-            height="2.6"
-            rx="1"
-            fill="currentColor"
-          />
-        )),
-      )}
-    </svg>
-  );
-}
-
 function renderCalendarEventContent(info: EventContentArg) {
   const source = info.event.extendedProps.source as PlannerCalendarItem["source"] | undefined;
-  const recurring = Boolean(info.event.extendedProps.recurring);
+  const status = info.event.extendedProps.status as TaskStatus | undefined;
+  const priority = info.event.extendedProps.priority as string | undefined;
+  const location =
+    typeof info.event.extendedProps.location === "string"
+      ? info.event.extendedProps.location
+      : "";
+  const projectName =
+    typeof info.event.extendedProps.projectName === "string"
+      ? info.event.extendedProps.projectName
+      : "";
+  const projectColor =
+    typeof info.event.extendedProps.projectColor === "string"
+      ? info.event.extendedProps.projectColor
+      : "";
   const durationMinutes =
     info.event.start && info.event.end
       ? Math.max(0, differenceInMinutes(info.event.end, info.event.start))
       : 0;
-  const compact =
-    info.view.type.startsWith("timeGrid") ||
-    (durationMinutes > 0 && durationMinutes <= 30);
+  const isWeekView = info.view.type === "timeGridWeek";
+  const singleLine = !isWeekView && durationMinutes > 0 && durationMinutes < 60;
+  const isTask = source === "task";
+  const statusLabel =
+    status === "in_progress" ? "IN PROGRESS" : status === "done" ? "DONE" : "";
+  const durationLabel = durationMinutes > 0 ? `${formatMinutes(durationMinutes)} block` : "";
+  const accentColor =
+    status === "in_progress"
+      ? "#60A5FA"
+      : priority === "high" || priority === "critical"
+        ? "#FB923C"
+        : projectColor || "#FB923C";
+  const accentStyle = {
+    "--calendar-item-accent": accentColor,
+  } as CSSProperties;
+
+  if (isTask) {
+    return (
+      <div
+        className={cn(
+          "planner-calendar-item is-task",
+          singleLine && "is-single-line",
+          isWeekView && "is-week",
+        )}
+        style={accentStyle}
+      >
+        <span className="planner-calendar-item__rail" aria-hidden />
+        <div className="planner-calendar-item__content">
+          {singleLine ? (
+            <div className="planner-calendar-item__inline">
+              <span className="planner-calendar-item__title" title={info.event.title}>
+                {info.event.title}
+              </span>
+            </div>
+          ) : (
+            <>
+              <div className="planner-calendar-item__topline">
+                <div className="planner-calendar-item__title-group">
+                  <span className="planner-calendar-item__title" title={info.event.title}>
+                    {info.event.title}
+                  </span>
+                </div>
+                {!isWeekView && (statusLabel || projectName) ? (
+                  <div className="planner-calendar-item__right">
+                    {statusLabel ? (
+                      <span className="planner-calendar-item__status">
+                        {statusLabel}
+                      </span>
+                    ) : null}
+                    {projectName ? (
+                      <span className="planner-calendar-item__project">
+                        <span
+                          className="planner-calendar-item__project-dot"
+                          style={{ backgroundColor: projectColor || accentColor }}
+                          aria-hidden
+                        />
+                        <span className="planner-calendar-item__project-name">
+                          {projectName}
+                        </span>
+                      </span>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+
+              {!isWeekView && info.timeText ? (
+                <div className="planner-calendar-item__meta">
+                  <span>{info.timeText}</span>
+                  {durationLabel ? (
+                    <>
+                      <span aria-hidden>•</span>
+                      <span className="planner-calendar-item__duration">
+                        {durationLabel}
+                      </span>
+                    </>
+                  ) : null}
+                </div>
+              ) : null}
+            </>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
       className={cn(
-        "planner-calendar-event",
-        source === "task" ? "is-task" : "is-event",
-        compact && "is-compact",
-        recurring && "is-recurring",
+        "planner-calendar-item is-event",
+        singleLine && "is-single-line",
+        isWeekView && "is-week",
       )}
     >
-      <div className="planner-calendar-event__shell">
-        <span
-          className={cn(
-            source === "task"
-              ? "planner-calendar-event__handle"
-              : "planner-calendar-event__dot",
-          )}
-          aria-hidden
-        >
-          {source === "task" ? <CalendarTaskGripIcon /> : null}
-        </span>
-        <div className="planner-calendar-event__body">
-          {!compact && info.timeText ? (
-            <span className="planner-calendar-event__time">{info.timeText}</span>
-          ) : null}
-          <span className="planner-calendar-event__title" title={info.event.title}>
-            {info.event.title}
-          </span>
-        </div>
+      <span className="planner-calendar-item__rail" aria-hidden />
+      <div className="planner-calendar-item__content">
+        {singleLine ? (
+          <div className="planner-calendar-item__inline">
+            <span className="planner-calendar-item__title" title={info.event.title}>
+              {info.event.title}
+            </span>
+          </div>
+        ) : (
+          <>
+            <div className="planner-calendar-item__topline">
+              <div className="planner-calendar-item__title-group">
+                <span className="planner-calendar-item__title" title={info.event.title}>
+                  {info.event.title}
+                </span>
+              </div>
+              {!isWeekView ? (
+                <div className="planner-calendar-item__right">
+                  <span className="planner-calendar-item__kind">Event</span>
+                  {location ? (
+                    <span className="planner-calendar-item__kind is-location">
+                      {location}
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+            {!isWeekView && info.timeText ? (
+              <div className="planner-calendar-item__meta">
+                <span>{info.timeText}</span>
+              </div>
+            ) : null}
+          </>
+        )}
       </div>
     </div>
   );
@@ -483,8 +568,8 @@ function TaskCollectionView({
   onOpenTask: (taskId: string) => void;
 }) {
   return (
-    <section className="flex h-full flex-1 flex-col bg-white">
-      <header className="flex h-14 shrink-0 items-center justify-between border-b border-[var(--border)] bg-white px-6">
+    <section className="flex h-full flex-1 flex-col bg-[var(--background)]">
+      <header className="flex h-14 shrink-0 items-center justify-between border-b border-[var(--border)] bg-[var(--surface)] px-6">
         <div>
           <h1 className="text-lg font-semibold text-[var(--foreground-strong)]">
             {title}
@@ -494,7 +579,7 @@ function TaskCollectionView({
         <Badge tone="neutral">{tasks.length}</Badge>
       </header>
 
-      <div className="flex-1 overflow-y-auto bg-[#FAFAFA] p-6">
+      <div className="flex-1 overflow-y-auto bg-[var(--background)] p-6">
         {tasks.length ? (
           <div className="mx-auto grid max-w-4xl gap-3">
             {tasks.map((task) => (
@@ -502,11 +587,11 @@ function TaskCollectionView({
                 key={task.id}
                 type="button"
                 onClick={() => onOpenTask(task.id)}
-                className="group grid gap-3 rounded-xl border border-[var(--border)] bg-white p-4 text-left shadow-[var(--shadow-soft)] transition hover:-translate-y-0.5 hover:border-[var(--border-strong)]"
+                className="group grid gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 text-left shadow-[var(--shadow-soft)] transition hover:-translate-y-0.5 hover:border-[var(--border-strong)]"
               >
                 <div className="flex min-w-0 items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <h2 className="truncate text-sm font-semibold text-[var(--foreground-strong)] group-hover:text-blue-600">
+                    <h2 className="truncate text-sm font-semibold text-[var(--foreground-strong)] group-hover:text-[var(--accent-strong)]">
                       {task.title}
                     </h2>
                     {task.notes ? (
@@ -530,7 +615,7 @@ function TaskCollectionView({
           </div>
         ) : (
           <div className="mx-auto flex h-full max-w-xl items-center justify-center">
-            <div className="rounded-2xl border border-dashed border-[var(--border)] bg-white px-6 py-8 text-center">
+            <div className="rounded-2xl border border-dashed border-[var(--border)] bg-[var(--surface)] px-6 py-8 text-center">
               <p className="text-sm font-medium text-[var(--foreground-strong)]">
                 {emptyLabel}
               </p>
@@ -565,8 +650,8 @@ function CapacityView({
   );
 
   return (
-    <section className="flex h-full flex-1 flex-col bg-white">
-      <header className="flex h-14 shrink-0 items-center justify-between border-b border-[var(--border)] bg-white px-6">
+    <section className="flex h-full flex-1 flex-col bg-[var(--background)]">
+      <header className="flex h-14 shrink-0 items-center justify-between border-b border-[var(--border)] bg-[var(--surface)] px-6">
         <div>
           <h1 className="text-lg font-semibold text-[var(--foreground-strong)]">
             Capacity
@@ -580,7 +665,7 @@ function CapacityView({
         </Button>
       </header>
 
-      <div className="flex-1 overflow-y-auto bg-[#FAFAFA] p-6">
+      <div className="flex-1 overflow-y-auto bg-[var(--background)] p-6">
         <div className="mx-auto grid max-w-5xl gap-4">
           <div className="grid gap-3 md:grid-cols-4">
             {[
@@ -591,7 +676,7 @@ function CapacityView({
             ].map(([label, minutes]) => (
               <div
                 key={label}
-                className="rounded-xl border border-[var(--border)] bg-white p-4 shadow-[var(--shadow-soft)]"
+                className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[var(--shadow-soft)]"
               >
                 <p className="text-xs font-medium text-[var(--muted-foreground)]">
                   {label}
@@ -603,7 +688,7 @@ function CapacityView({
             ))}
           </div>
 
-          <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-white shadow-[var(--shadow-soft)]">
+          <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)] shadow-[var(--shadow-soft)]">
             {capacity.map((day) => {
               const usedMinutes = day.scheduledTaskMinutes + day.fixedEventMinutes;
               const usedPercentage = day.workMinutes
@@ -628,7 +713,7 @@ function CapacityView({
                       <div
                         className={cn(
                           "h-full rounded-full",
-                          day.overloaded ? "bg-[var(--danger)]" : "bg-blue-600",
+                          day.overloaded ? "bg-[var(--danger)]" : "bg-[var(--accent-strong)]",
                         )}
                         style={{ width: `${usedPercentage}%` }}
                       />
@@ -725,6 +810,17 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
     () => plannerData.tasks.filter((task) => !task.hasBlock).sort(compareBoardTasks),
     [plannerData.tasks],
   );
+  const planningWorkload = useMemo(() => {
+    const capacityForDay = plannerData.capacity.find((day) => day.date === focusedDate);
+
+    return {
+      scheduledMinutes:
+        (capacityForDay?.scheduledTaskMinutes ?? 0) +
+        (capacityForDay?.fixedEventMinutes ?? 0),
+      workMinutes: capacityForDay?.workMinutes ?? 0,
+      overloaded: capacityForDay?.overloaded ?? false,
+    };
+  }, [focusedDate, plannerData.capacity]);
   const areaTasks = useMemo(
     () =>
       activeAreaId
@@ -955,11 +1051,16 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
 
     if (!calendarApi) return;
 
-    if (surface === "week") {
-      calendarApi.changeView("timeGridWeek", focusedDate);
-    } else {
-      calendarApi.changeView("timeGridDay", focusedDate);
-    }
+    const frame = window.requestAnimationFrame(() => {
+      calendarApi.changeView(surface === "week" ? "timeGridWeek" : "timeGridDay", focusedDate);
+      calendarApi.updateSize();
+    });
+    const timeout = window.setTimeout(() => calendarApi.updateSize(), 240);
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(timeout);
+    };
   }, [focusedDate, surface]);
 
   useEffect(() => {
@@ -1240,22 +1341,35 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
     });
   };
 
-  const calendarEvents = plannerData.scheduledItems.map((item) => ({
-    id: item.id,
-    title: item.title,
-    start: item.start,
-    end: item.end,
-    editable: !item.readOnly,
-    durationEditable: !item.readOnly,
-    startEditable: !item.readOnly,
-    extendedProps: item,
-    classNames: [
-      item.source === "task" ? "planner-task-event" : "planner-meeting-event",
-      item.priority ? `priority-${item.priority}` : "",
-      item.status === "done" ? "is-done" : "",
-      item.recurring ? "is-recurring" : "",
-    ],
-  }));
+  const projectById = useMemo(
+    () => new Map(plannerData.projects.map((project) => [project.id, project])),
+    [plannerData.projects],
+  );
+  const calendarEvents = plannerData.scheduledItems.map((item) => {
+    const project = item.projectId ? projectById.get(item.projectId) : null;
+
+    return {
+      id: item.id,
+      title: item.title,
+      start: item.start,
+      end: item.end,
+      editable: !item.readOnly,
+      durationEditable: !item.readOnly,
+      startEditable: !item.readOnly,
+      extendedProps: {
+        ...item,
+        projectName: project?.name ?? "",
+        projectColor: project?.color ?? "",
+      },
+      classNames: [
+        item.source === "task" ? "planner-task-event" : "planner-meeting-event",
+        item.priority ? `priority-${item.priority}` : "",
+        item.status ? `status-${item.status}` : "",
+        item.status === "done" ? "is-done" : "",
+        item.recurring ? "is-recurring" : "",
+      ],
+    };
+  });
 
   function dismissRecurringEdit(options?: { revert?: boolean }) {
     if (options?.revert && pendingRecurringEdit) {
@@ -1308,6 +1422,21 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
     }
   }
 
+  async function updateTaskFields(taskId: string, input: UpdateTaskInput) {
+    try {
+      await requestJson(`/api/tasks/${taskId}`, {
+        method: "PATCH",
+        body: JSON.stringify(input),
+      });
+      toast.success("Task updated");
+      await refreshPlanner();
+    } catch (error) {
+      await refreshPlanner();
+      toast.error(error instanceof Error ? error.message : "Could not update task");
+      throw error;
+    }
+  }
+
   function updateTaskStatus(taskId: string, status: TaskStatus) {
     markTaskStatus(taskId, status);
     startTransition(async () => {
@@ -1348,16 +1477,20 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
         showUserButton={plannerData.mode === "clerk"}
         inboxCount={inboxTasks.length}
       />
-      <main className="flex-1 flex flex-col min-w-0 bg-[#FAFAFA] dark:bg-[var(--background)] relative h-full md:rounded-l-2xl md:border-l border-[var(--border)] overflow-hidden shadow-[-4px_0_24px_-4px_rgba(0,0,0,0.05)]">
+      <main className="relative flex h-full min-w-0 flex-1 flex-col overflow-hidden border-[var(--border)] bg-[var(--background)] shadow-[-4px_0_24px_-4px_rgba(0,0,0,0.05)] md:rounded-l-2xl md:border-l">
         {activeSidebarView === "planning" ? (
           <PlanningView
             tasks={planningPipelineTasks}
             onTaskDrop={updateTaskStatus}
             onOpenTask={(taskId) => setDrawerState({ type: "task", taskId })}
+            onOpenNewTask={() => openQuickAdd("task")}
             surface={surface === "day" || surface === "week" || surface === "agenda" ? surface : "week"}
             onChangeSurface={moveToSurface}
             focusedDate={focusedDate}
             onNavigateDate={(dir) => navigateSurface(dir)}
+            workload={planningWorkload}
+            storageKey={`inflara:planning:${plannerData.mode}:${plannerData.user.id}`}
+            overlayOpen={Boolean(quickAddKind || calendarCreateChoice)}
             externalDragRef={queueRef}
             calendarElement={
               <FullCalendar
@@ -1380,6 +1513,16 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
                 allDaySlot={false}
                 scrollTime={surface === "week" ? "09:00:00" : String(new Date().getHours()).padStart(2, "0") + ":00:00"}
                 slotDuration={`00:${String(plannerData.settings.slotMinutes).padStart(2, "0")}:00`}
+                snapDuration="00:15:00"
+                slotLabelFormat={{
+                  hour: "numeric",
+                  meridiem: "short",
+                }}
+                dayHeaderFormat={{
+                  weekday: "short",
+                  month: "numeric",
+                  day: "numeric",
+                }}
                 firstDay={plannerData.settings.weekStart}
                 eventTimeFormat={{
                   hour: "numeric",
@@ -1431,6 +1574,7 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
             onCreateMilestone={createMilestone}
             onUpdateMilestone={updateMilestone}
             onDeleteMilestone={deleteMilestone}
+            onUpdateTask={updateTaskFields}
           />
         )}
       </main>

@@ -664,3 +664,793 @@ body {
   background-image: radial-gradient(var(--border-strong) 1px, transparent 1px);
   background-size: 4px 4px;
 }
+
+.planning-drop-active {
+  background: var(--surface-elevated);
+  border-color: var(--border-strong);
+}
+
+.planning-drop-active-blue {
+  background: rgba(59, 130, 246, 0.06);
+  border-color: rgba(59, 130, 246, 0.38);
+}
+
+.planning-drop-active-purple {
+  background: rgba(139, 92, 246, 0.06);
+  border-color: rgba(139, 92, 246, 0.38);
+}
+
+.planning-drop-active-neutral {
+  background: var(--surface-muted);
+  border-color: var(--border-strong);
+}
+
+.planning-workload-pill {
+  position: relative;
+  isolation: isolate;
+  display: inline-flex;
+  height: 2.25rem;
+  align-items: center;
+  gap: 0.55rem;
+  overflow: hidden;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  padding: 0 1rem;
+  color: var(--muted-foreground);
+  font-size: 0.875rem;
+  font-weight: 600;
+  box-shadow: 0 8px 18px -16px rgba(15, 23, 42, 0.4);
+}
+
+.planning-workload-pill::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(
+    110deg,
+    transparent 0%,
+    transparent 34%,
+    rgba(34, 197, 94, 0.14) 48%,
+    transparent 62%,
+    transparent 100%
+  );
+  transform: translateX(-105%);
+  animation: planning-workload-sheen 3.2s ease-in-out infinite;
+}
+
+.planning-workload-pill__dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 999px;
+  background: #22c55e;
+  box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.34);
+  animation: planning-workload-pulse 1.8s ease-out infinite;
+}
+
+.planning-workload-pill.is-full .planning-workload-pill__dot {
+  background: #f59e0b;
+  box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.34);
+}
+
+.planning-workload-pill.is-overloaded .planning-workload-pill__dot {
+  background: var(--danger);
+  box-shadow: 0 0 0 0 rgba(244, 63, 94, 0.34);
+}
+
+@keyframes planning-workload-sheen {
+  0% {
+    transform: translateX(-105%);
+  }
+  44%,
+  100% {
+    transform: translateX(105%);
+  }
+}
+
+@keyframes planning-workload-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.34);
+  }
+  70% {
+    box-shadow: 0 0 0 8px rgba(34, 197, 94, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .planning-workload-pill::before,
+  .planning-workload-pill__dot {
+    animation: none;
+  }
+}
+
+.fc {
+  --fc-border-color: var(--border);
+  --fc-page-bg-color: transparent;
+  --fc-neutral-bg-color: transparent;
+  --fc-now-indicator-color: #ef4444;
+  --fc-today-bg-color: rgba(17, 24, 39, 0.025);
+  height: 100%;
+  background: var(--surface);
+}
+
+.dark .fc {
+  --fc-today-bg-color: rgba(255, 255, 255, 0.035);
+}
+
+.fc-theme-standard .fc-scrollgrid {
+  border: 0 !important;
+}
+
+.fc-theme-standard td,
+.fc-theme-standard th {
+  border-color: var(--border);
+}
+
+.fc .fc-col-header-cell {
+  background: var(--surface);
+}
+
+.fc .fc-col-header-cell-cushion,
+.fc .fc-timegrid-axis-cushion,
+.fc .fc-timegrid-slot-label-cushion {
+  color: var(--muted-foreground);
+  font-size: 0.78rem;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.fc .fc-col-header-cell-cushion {
+  padding: 0.75rem 0.5rem;
+}
+
+.fc .fc-timegrid-axis {
+  width: 4.25rem !important;
+}
+
+.fc .fc-timegrid-slot {
+  height: 2.75rem;
+}
+
+.fc .fc-timegrid-slot-minor {
+  border-top: 0;
+}
+
+.fc .fc-timegrid-now-indicator-line {
+  border-color: #ef4444;
+  border-width: 1px 0 0;
+  z-index: 8;
+}
+
+.fc .fc-timegrid-now-indicator-arrow {
+  width: 0.65rem;
+  height: 0.65rem;
+  border: 0;
+  border-radius: 999px;
+  background: #ef4444;
+  transform: translate(-0.28rem, -0.32rem);
+}
+
+.fc .fc-event {
+  overflow: hidden;
+  border-radius: 8px;
+  border-width: 1px;
+  box-shadow: 0 10px 26px -24px rgba(15, 23, 42, 0.48);
+}
+
+.fc .planner-task-event {
+  border: 1px dashed var(--border-strong) !important;
+  border-left: 4px solid #fb923c !important;
+  background: var(--surface-muted) !important;
+  color: var(--foreground-strong) !important;
+}
+
+.fc .planner-task-event.priority-high,
+.fc .planner-task-event.priority-critical {
+  border-left-color: #fb7185 !important;
+}
+
+.fc .planner-task-event.priority-low {
+  border-left-color: var(--muted-foreground) !important;
+}
+
+.fc .planner-meeting-event {
+  border-color: var(--border) !important;
+  background: var(--surface-muted) !important;
+  color: var(--foreground-strong) !important;
+}
+
+.planner-calendar-event {
+  height: 100%;
+  padding: 0.45rem 0.7rem;
+}
+
+.planner-calendar-event__shell {
+  align-items: flex-start;
+  gap: 0.6rem;
+}
+
+.planner-calendar-event__handle {
+  width: 0.28rem;
+  height: 1.1rem;
+  margin-top: 0.1rem;
+  border: 0;
+  border-radius: 999px;
+  background: #a1a1aa;
+  color: transparent;
+  box-shadow: none;
+}
+
+.planner-calendar-event__grip-icon {
+  display: none;
+}
+
+.planner-calendar-event__dot {
+  width: 0.28rem;
+  height: 1.1rem;
+  margin-top: 0.1rem;
+  border-radius: 999px;
+  background: #a1a1aa;
+}
+
+.planner-calendar-event__body,
+.planner-calendar-event.is-compact .planner-calendar-event__body,
+.planner-calendar-event.is-task .planner-calendar-event__body {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.35rem;
+}
+
+.planner-calendar-event__title,
+.planner-calendar-event.is-task .planner-calendar-event__title,
+.planner-calendar-event.is-event .planner-calendar-event__title {
+  max-width: 100%;
+  color: var(--foreground-strong);
+  font-size: 0.82rem;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.planner-calendar-event__time,
+.planner-calendar-event.is-task .planner-calendar-event__time {
+  color: var(--muted-foreground);
+  font-size: 0.74rem;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.planner-calendar-event__label {
+  margin-left: auto;
+  white-space: nowrap;
+  color: var(--muted-foreground);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.fc .planner-task-event .fc-event-resizer-end::before {
+  background: var(--muted-foreground);
+  box-shadow:
+    -5px 0 0 var(--muted-foreground),
+    5px 0 0 var(--muted-foreground);
+}
+
+/* Aura-style planning calendar */
+.planning-kanban-panel.is-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  width: 100vw;
+  height: 100vh !important;
+  height: 100dvh !important;
+  min-height: 100vh !important;
+  min-height: 100dvh !important;
+  background: var(--surface);
+}
+
+.planning-schedule-panel {
+  --planning-calendar-bg: var(--surface);
+  --planning-calendar-grid: rgba(17, 24, 39, 0.055);
+  --planning-calendar-axis: rgba(17, 24, 39, 0.075);
+  --planning-calendar-label: #9ca3af;
+  --planning-calendar-now: #f06d63;
+  --planning-calendar-event-bg: rgba(248, 249, 251, 0.84);
+  --planning-calendar-event-border: rgba(17, 24, 39, 0.085);
+  --planning-calendar-event-rail: #a1a5ad;
+  --planning-calendar-task-border: rgba(100, 116, 139, 0.34);
+  --planning-calendar-task-bg: rgba(255, 255, 255, 0.36);
+  --planning-calendar-chip-bg: rgba(17, 24, 39, 0.045);
+  --planning-calendar-chip-border: rgba(17, 24, 39, 0.07);
+  background: var(--planning-calendar-bg);
+}
+
+.planning-schedule-panel.is-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  height: 100vh !important;
+  height: 100dvh !important;
+  min-height: 100vh;
+  min-height: 100dvh;
+  background: var(--planning-calendar-bg);
+}
+
+.dark .planning-schedule-panel {
+  --planning-calendar-bg: var(--surface);
+  --planning-calendar-grid: rgba(148, 163, 184, 0.09);
+  --planning-calendar-axis: rgba(148, 163, 184, 0.14);
+  --planning-calendar-label: #8d96a6;
+  --planning-calendar-event-bg: rgba(255, 255, 255, 0.045);
+  --planning-calendar-event-border: rgba(148, 163, 184, 0.14);
+  --planning-calendar-event-rail: #7f8794;
+  --planning-calendar-task-border: rgba(148, 163, 184, 0.32);
+  --planning-calendar-task-bg: rgba(255, 255, 255, 0.018);
+  --planning-calendar-chip-bg: rgba(255, 255, 255, 0.06);
+  --planning-calendar-chip-border: rgba(255, 255, 255, 0.08);
+}
+
+.planning-schedule-header {
+  border-bottom: 1px solid var(--planning-calendar-grid);
+  background: var(--planning-calendar-bg);
+}
+
+.planning-calendar-shell {
+  min-height: 0;
+  height: 100%;
+}
+
+.planning-calendar-shell > * {
+  min-height: 0;
+  height: 100%;
+}
+
+.planning-calendar-shell .fc {
+  --fc-border-color: transparent;
+  --fc-page-bg-color: transparent;
+  --fc-neutral-bg-color: transparent;
+  --fc-now-indicator-color: var(--planning-calendar-now);
+  --fc-today-bg-color: transparent;
+  height: 100%;
+  background: transparent;
+  color: var(--foreground);
+  font-size: 0.875rem;
+}
+
+.planning-calendar-shell .fc .fc-view-harness,
+.planning-calendar-shell .fc .fc-view-harness-active,
+.planning-calendar-shell .fc .fc-scroller-harness,
+.planning-calendar-shell .fc .fc-timegrid,
+.planning-calendar-shell .fc .fc-timegrid-body,
+.planning-calendar-shell .fc .fc-timegrid-body table {
+  min-height: 0;
+}
+
+.planning-calendar-shell .fc-theme-standard .fc-scrollgrid,
+.planning-calendar-shell .fc-theme-standard td,
+.planning-calendar-shell .fc-theme-standard th {
+  border-color: transparent;
+}
+
+.planning-calendar-shell .fc .fc-timegrid-divider,
+.planning-calendar-shell .fc .fc-scrollgrid-section-footer,
+.planning-calendar-shell .fc .fc-scrollgrid-section-header th {
+  border: 0;
+}
+
+.planning-calendar-shell .fc .fc-timeGridDay-view .fc-col-header {
+  display: none;
+}
+
+.planning-calendar-shell .fc .fc-col-header-cell {
+  border: 0;
+  background: transparent;
+}
+
+.planning-calendar-shell .fc .fc-col-header-cell-cushion {
+  padding: 0.55rem 0.5rem 0.65rem;
+  color: var(--planning-calendar-label);
+  font-size: 0.74rem;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.planning-calendar-shell .fc .fc-timegrid-axis {
+  width: 4.3rem !important;
+  border-right: 1px solid var(--planning-calendar-axis);
+}
+
+.planning-calendar-shell .fc .fc-timegrid-axis-cushion,
+.planning-calendar-shell .fc .fc-timegrid-slot-label-cushion {
+  padding-right: 1.05rem;
+  color: var(--planning-calendar-label);
+  font-size: 0.78rem;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.planning-calendar-shell .fc .fc-timegrid-slot {
+  height: 3rem;
+  border: 0;
+}
+
+.planning-calendar-shell .fc .fc-timegrid-slot-lane {
+  border-top: 1px solid var(--planning-calendar-grid);
+}
+
+.planning-calendar-shell .fc .fc-timegrid-slot-minor,
+.planning-calendar-shell .fc .fc-timegrid-slot-minor .fc-timegrid-slot-lane {
+  border-top: 0 !important;
+}
+
+.planning-calendar-shell .fc .fc-timegrid-col {
+  border-left: 1px solid rgba(17, 24, 39, 0.025);
+}
+
+.dark .planning-calendar-shell .fc .fc-timegrid-col {
+  border-left-color: rgba(148, 163, 184, 0.055);
+}
+
+.planning-calendar-shell .fc .fc-timegrid-col:first-of-type {
+  border-left-color: transparent;
+}
+
+.planning-calendar-shell .fc .fc-event {
+  overflow: hidden;
+  border-radius: 7px;
+  box-shadow: none;
+}
+
+.planning-calendar-shell .fc .fc-event-main {
+  height: 100%;
+  padding: 0;
+  color: inherit;
+  pointer-events: none;
+}
+
+.planning-calendar-shell .fc .fc-timegrid-event-harness {
+  margin-inline: 6px;
+}
+
+.planning-calendar-shell .fc .planner-task-event {
+  border: 1px dashed var(--planning-calendar-task-border) !important;
+  background: var(--planning-calendar-task-bg) !important;
+  color: var(--foreground-strong) !important;
+}
+
+.planning-calendar-shell .fc .planner-meeting-event {
+  border: 1px solid var(--planning-calendar-event-border) !important;
+  background: var(--planning-calendar-event-bg) !important;
+  color: var(--foreground-strong) !important;
+}
+
+.planning-calendar-shell .fc .planner-task-event.is-done {
+  opacity: 0.54;
+}
+
+.planner-calendar-item {
+  position: relative;
+  display: flex;
+  height: 100%;
+  min-height: 100%;
+  gap: 0.58rem;
+  overflow: hidden;
+  padding: 0.34rem 0.72rem 0.24rem;
+  color: var(--foreground-strong);
+  pointer-events: none;
+}
+
+.planner-calendar-item.is-task {
+  padding-left: 1.05rem;
+}
+
+.planner-calendar-item.is-compact,
+.planner-calendar-item.is-single-line {
+  align-items: center;
+  padding-block: 0.32rem;
+}
+
+.planner-calendar-item.is-week {
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.28rem 0.44rem 0.28rem 0.56rem;
+}
+
+.planner-calendar-item__rail {
+  flex: 0 0 auto;
+  width: 0.24rem;
+  height: 1rem;
+  margin-top: 0.12rem;
+  border-radius: 999px;
+  background: var(--planning-calendar-event-rail);
+}
+
+.planner-calendar-item.is-task .planner-calendar-item__rail {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0.24rem;
+  height: auto;
+  margin: 0;
+  border-radius: 7px 0 0 7px;
+  background: var(--calendar-item-accent, #fb923c);
+}
+
+.planner-calendar-item.is-week .planner-calendar-item__rail {
+  position: static;
+  width: 0.2rem;
+  height: 0.8rem;
+  margin: 0;
+  border-radius: 999px;
+  background: var(--calendar-item-accent, var(--planning-calendar-event-rail));
+}
+
+.planner-calendar-item__content {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: 0.22rem;
+}
+
+.planner-calendar-item.is-compact .planner-calendar-item__content,
+.planner-calendar-item.is-single-line .planner-calendar-item__content {
+  gap: 0;
+}
+
+.planner-calendar-item__topline {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.55rem;
+}
+
+.planner-calendar-item__title-group {
+  display: inline-flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: center;
+}
+
+.planner-calendar-item__right {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 50%;
+  flex: 0 1 50%;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-left: auto;
+}
+
+.planner-calendar-item__inline {
+  display: flex;
+  min-width: 0;
+  width: 100%;
+  height: 100%;
+  align-items: center;
+  gap: 0.42rem;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.planner-calendar-item__title {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--foreground-strong);
+  font-size: 0.8rem;
+  font-weight: 500;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.planner-calendar-item__title-group .planner-calendar-item__title,
+.planner-calendar-item__inline .planner-calendar-item__title {
+  flex: 0 1 auto;
+}
+
+.planner-calendar-item.is-week .planner-calendar-item__title {
+  font-size: 0.76rem;
+  font-weight: 500;
+}
+
+.planner-calendar-item.is-single-line .planner-calendar-item__title {
+  font-size: 0.78rem;
+  line-height: 1;
+}
+
+.planner-calendar-item__meta {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.35rem;
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-size: 0.7rem;
+  font-weight: 400;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+.planner-calendar-item__inline-meta {
+  flex: 0 0 auto;
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-size: 0.68rem;
+  font-weight: 400;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.planner-calendar-item__inline-meta + .planner-calendar-item__inline-meta::before {
+  content: "•";
+  margin-right: 0.42rem;
+  color: var(--planning-calendar-label);
+}
+
+.planner-calendar-item__duration {
+  color: var(--planning-calendar-label);
+}
+
+.planner-calendar-item__project {
+  display: inline-flex;
+  min-width: 0;
+  max-width: min(12rem, 100%);
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 0.35rem;
+  overflow: hidden;
+  border: 1px solid var(--planning-calendar-chip-border);
+  border-radius: 5px;
+  background: var(--planning-calendar-chip-bg);
+  padding: 0.24rem 0.45rem;
+  color: var(--muted-foreground);
+  font-size: 0.72rem;
+  font-weight: 500;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.planner-calendar-item__title-group .planner-calendar-item__project {
+  max-width: 9rem;
+  padding-block: 0.18rem;
+}
+
+.planner-calendar-item__right .planner-calendar-item__project {
+  max-width: 100%;
+}
+
+.planner-calendar-item__project-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.planner-calendar-item__inline .planner-calendar-item__project {
+  max-width: 8rem;
+  padding: 0.18rem 0.4rem;
+  font-size: 0.68rem;
+}
+
+.planner-calendar-item__project-dot {
+  width: 0.38rem;
+  height: 0.38rem;
+  flex: 0 0 auto;
+  border-radius: 999px;
+}
+
+.planner-calendar-item__status {
+  flex: 0 0 auto;
+  border-radius: 4px;
+  background: rgba(59, 130, 246, 0.08);
+  padding: 0.2rem 0.45rem;
+  color: #2563eb;
+  font-size: 0.64rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  line-height: 1;
+}
+
+.planner-calendar-item__inline .planner-calendar-item__status,
+.planner-calendar-item__inline .planner-calendar-item__kind {
+  padding-block: 0.16rem;
+  font-size: 0.6rem;
+}
+
+.dark .planner-calendar-item__status {
+  background: rgba(96, 165, 250, 0.12);
+  color: #93c5fd;
+}
+
+.planner-calendar-item__kind {
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-size: 0.7rem;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.planner-calendar-item__right > .planner-calendar-item__kind:first-child {
+  flex: 0 0 auto;
+}
+
+.planner-calendar-item__title-group .planner-calendar-item__kind {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.planner-calendar-item__resize {
+  position: absolute;
+  right: 0.48rem;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 1px solid var(--planning-calendar-chip-border);
+  border-radius: 4px;
+  background: var(--planning-calendar-chip-bg);
+  padding: 0.16rem 0.4rem;
+  color: var(--planning-calendar-label);
+  font-size: 0.68rem;
+  font-weight: 400;
+  line-height: 1;
+}
+
+.planning-calendar-shell .fc .fc-timegrid-now-indicator-line {
+  z-index: 8;
+  border-color: var(--planning-calendar-now);
+  border-width: 1px 0 0;
+}
+
+.planning-calendar-shell .fc .fc-timegrid-now-indicator-arrow {
+  width: 0.65rem;
+  height: 0.65rem;
+  border: 0 !important;
+  border-radius: 999px;
+  background: var(--planning-calendar-now);
+  transform: translate(-0.3rem, -0.32rem);
+}
+
+.planning-calendar-shell .fc .planner-task-event .fc-event-resizer-start {
+  display: none !important;
+}
+
+.planning-calendar-shell .fc .planner-task-event .fc-event-resizer-end {
+  left: 50% !important;
+  right: auto !important;
+  bottom: 3px !important;
+  width: 1.5rem;
+  height: 0.7rem;
+  transform: translateX(-50%);
+  border: 0;
+  background: transparent;
+  cursor: ns-resize;
+}
+
+.planning-calendar-shell .fc .planner-task-event .fc-event-resizer-end::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0.16rem;
+  height: 0.16rem;
+  border-radius: 999px;
+  background: var(--planning-calendar-label);
+  transform: translate(-50%, -50%);
+  box-shadow:
+    -0.32rem 0 0 var(--planning-calendar-label),
+    0.32rem 0 0 var(--planning-calendar-label);
+  opacity: 0.55;
+}
