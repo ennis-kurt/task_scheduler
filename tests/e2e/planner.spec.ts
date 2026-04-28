@@ -108,7 +108,7 @@ test("left rail navigates planning, inbox, capacity, areas, and project tabs", a
   const sidebar = page.locator("aside");
 
   await page.getByRole("button", { name: "Planning", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Planning" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Planning", exact: true })).toBeVisible();
   await expect(page.getByText("Task Flow")).toBeVisible();
   await expect(page.getByTestId("planning-workload")).toBeVisible();
   await expect(page.locator(".fc").first()).toBeVisible();
@@ -243,6 +243,9 @@ test("planning kanban supports custom columns, local task columns, and collapse"
 
   await expect(page.getByTestId("planning-workload")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Schedule", exact: true })).toBeVisible();
+  await expect(page.getByTestId("planning-card-task-plan")).toHaveCount(1);
+  await expect(page.getByTestId("planning-card-task-outline")).toHaveCount(1);
+  await expect(page.getByTestId("planning-card-task-kickoff")).toHaveCount(1);
   await page.getByTestId("surface-day").click();
   const shortCalendarItem = page
     .locator(".planner-calendar-item", { hasText: "Daily planning reset" })
@@ -538,6 +541,9 @@ test("scheduled quick add creates a task block and settings persist", async ({ p
       return snapshot.taskBlocks.some((block) => block.taskId === scheduledTask.id);
     })
     .toBe(true);
+
+  await page.getByRole("button", { name: "Planning", exact: true }).click();
+  await expect(page.getByTestId(`planning-card-${scheduledTask.id}`)).toHaveCount(1);
 
   await page.getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Calendar slot size").selectOption("60");

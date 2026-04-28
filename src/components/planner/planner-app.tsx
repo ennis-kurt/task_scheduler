@@ -807,7 +807,7 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
     [plannerData.unscheduledTasks],
   );
   const planningPipelineTasks = useMemo(
-    () => plannerData.tasks.filter((task) => !task.hasBlock).sort(compareBoardTasks),
+    () => plannerData.tasks.slice().sort(compareBoardTasks),
     [plannerData.tasks],
   );
   const planningWorkload = useMemo(() => {
