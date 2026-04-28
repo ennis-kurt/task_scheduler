@@ -134,6 +134,38 @@ test("left rail navigates planning, inbox, capacity, areas, and project tabs", a
   await page.getByRole("button", { name: "Dashboard" }).click();
   await expect(page.getByText("Overall Progress")).toBeVisible();
   await expect(page.getByText(/10000%/)).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Notes" }).click();
+  await expect(page.getByTestId("project-notes")).toBeVisible();
+  await expect(page.getByText("Collaboration")).toBeVisible();
+});
+
+test("project notes support markdown blocks, comments, and local persistence", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.locator("aside").getByRole("button", { name: "Planner MVP", exact: true }).click();
+  await page.getByRole("button", { name: "Notes" }).click();
+
+  await expect(page.getByTestId("project-notes")).toBeVisible();
+  await page.getByTestId("project-note-title").fill("Architecture Notes");
+
+  const firstBlock = page.getByTestId("project-note-block-0").getByRole("textbox");
+  await firstBlock.fill("# Launch Readiness");
+  await expect(firstBlock).toHaveText("Launch Readiness");
+
+  await page.getByTestId("project-note-comment-input").fill("Add rollout risks to this note.");
+  await page.getByRole("button", { name: "Send comment" }).click();
+  await expect(page.getByText("Add rollout risks to this note.")).toBeVisible();
+
+  await page.reload();
+  await page.locator("aside").getByRole("button", { name: "Planner MVP", exact: true }).click();
+  await page.getByRole("button", { name: "Notes" }).click();
+  await expect(page.getByTestId("project-note-title")).toHaveValue("Architecture Notes");
+  await expect(page.getByTestId("project-note-block-0").getByRole("textbox")).toHaveText(
+    "Launch Readiness",
+  );
+  await expect(page.getByText("Add rollout risks to this note.")).toBeVisible();
 });
 
 test("project design inline date, status, and priority controls persist without full editors", async ({

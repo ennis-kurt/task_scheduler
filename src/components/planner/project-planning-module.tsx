@@ -44,6 +44,7 @@ import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { ProjectNotesNotebook } from "@/components/planner/project-notes-notebook";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
@@ -60,7 +61,7 @@ import type {
 import { cn } from "@/lib/utils";
 import { Icon } from "@iconify/react";
 
-export type ProjectPlanningSurface = "plan" | "timeline" | "charts";
+export type ProjectPlanningSurface = "plan" | "timeline" | "charts" | "notes";
 
 const DAY_WIDTH = 42;
 const LABEL_WIDTH = 240;
@@ -1452,8 +1453,13 @@ export function ProjectPlanningModule({
             </button>
             <button
               type="button"
-              disabled
-              className="h-full cursor-not-allowed border-b-2 border-transparent text-sm font-medium text-[var(--muted-foreground)] opacity-55"
+              onClick={() => setActiveTab("notes")}
+              className={cn(
+                "h-full border-b-2 text-sm font-medium transition-colors",
+                activeTab === "notes"
+                  ? "border-[var(--foreground-strong)] text-[var(--foreground-strong)]"
+                  : "border-transparent text-[var(--muted-foreground)] hover:text-[var(--foreground-strong)]",
+              )}
             >
               Notes
             </button>
@@ -2214,6 +2220,10 @@ export function ProjectPlanningModule({
         </article>
       </div>
         </>
+      ) : null}
+
+      {activeTab === "notes" ? (
+        <ProjectNotesNotebook key={activeProject.project.id} projectPlan={activeProject} />
       ) : null}
     </section>
   );
