@@ -144,41 +144,86 @@ test("project notes support markdown blocks, comments, and local persistence", a
   page,
 }) => {
   await page.goto("/");
+  await page.evaluate(() => {
+    for (const key of Object.keys(window.localStorage)) {
+      if (key.startsWith("inflara:project-notes:project-launch")) {
+        window.localStorage.removeItem(key);
+      }
+    }
+  });
+  await page.reload();
   await page.locator("aside").getByRole("button", { name: "Planner MVP", exact: true }).click();
   await page.getByRole("button", { name: "Notes" }).click();
 
   await expect(page.getByTestId("project-notes")).toBeVisible();
   await page.getByTestId("project-note-title").fill("Architecture Notes");
 
-  const firstBlockContainer = page.getByTestId("project-note-block-0");
-  await firstBlockContainer.click();
-  const firstBlock = firstBlockContainer.getByRole("textbox");
-  await firstBlock.fill("# Launch Readiness");
-  await expect(firstBlock).toHaveValue("Launch Readiness");
+  const editor = page.getByTestId("project-note-rich-surface");
+  await editor.click();
+  await page.keyboard.press("ControlOrMeta+A");
+  await page.keyboard.press("Backspace");
+  await page.keyboard.type("Temporary paragraph");
+  await expect(editor).toContainText("Temporary paragraph");
+  await page.keyboard.press("ControlOrMeta+A");
+  await page.keyboard.press("Backspace");
+  await expect(editor).not.toContainText("Temporary paragraph");
 
-  const paragraphBlockContainer = page.getByTestId("project-note-block-1");
-  await paragraphBlockContainer.click();
-  const paragraphBlock = paragraphBlockContainer.getByRole("textbox");
-  await paragraphBlock.fill("First paragraph");
-  await paragraphBlock.press("Enter");
-  await paragraphBlock.type("Second paragraph with **bold** and *italic* text.");
-  await expect(paragraphBlock).toHaveValue(
-    "First paragraph\nSecond paragraph with **bold** and *italic* text.",
-  );
+  await page.keyboard.type("# Launch Readiness");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("First paragraph with ");
+  await page.keyboard.type("**bold** ");
+  await page.keyboard.type("and ");
+  await page.keyboard.type("*italic* ");
+  await page.keyboard.type("text.");
 
-  await page.getByTestId("project-note-title").click();
-  await expect(paragraphBlockContainer.locator("strong").filter({ hasText: "bold" })).toHaveCount(1);
-  await expect(paragraphBlockContainer.locator("em").filter({ hasText: "italic" })).toHaveCount(1);
+  await expect(editor.locator("h1")).toContainText("Launch Readiness");
+  await expect(editor.locator("strong").filter({ hasText: "bold" })).toBeVisible();
+  await expect(editor.locator("em").filter({ hasText: "italic" })).toBeVisible();
+
+  await page.keyboard.press("ControlOrMeta+End");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("/todo");
+  await expect(page.getByTestId("notes-slash-menu")).toBeVisible();
+  await page.getByTestId("notes-slash-menu").getByRole("button", { name: /Checklist/ }).click();
+  await page.keyboard.type("Confirm rollout checklist");
+  await expect(
+    editor.getByRole("checkbox", { name: /Confirm rollout checklist/ }),
+  ).toBeVisible();
+
+  await page.setInputFiles('[data-testid="project-note-image-input"]', {
+    name: "note.png",
+    mimeType: "image/png",
+    buffer: Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
+      "base64",
+    ),
+  });
+  await expect(editor.locator('img[alt="note.png"]')).toBeVisible();
+
+  await editor.locator("strong").filter({ hasText: "bold" }).click();
+  await expect(editor).not.toContainText("**bold**");
 
   await page.getByTestId("project-note-comment-input").fill("Add rollout risks to this note.");
   await page.getByRole("button", { name: "Send comment" }).click();
   await expect(page.getByText("Add rollout risks to this note.")).toBeVisible();
 
+  await expect
+    .poll(async () =>
+      page.evaluate(() => window.localStorage.getItem("inflara:project-notes:project-launch:v2")),
+    )
+    .toContain("Add rollout risks to this note.");
+
   await page.reload();
   await page.locator("aside").getByRole("button", { name: "Planner MVP", exact: true }).click();
   await page.getByRole("button", { name: "Notes" }).click();
   await expect(page.getByTestId("project-note-title")).toHaveValue("Architecture Notes");
-  await expect(page.getByTestId("project-note-block-0")).toContainText("Launch Readiness");
+  const reloadedEditor = page.getByTestId("project-note-rich-surface");
+  await expect(reloadedEditor.locator("h1")).toContainText("Launch Readiness");
+  await expect(reloadedEditor.locator("strong").filter({ hasText: "bold" })).toBeVisible();
+  await expect(
+    reloadedEditor.getByRole("checkbox", { name: /Confirm rollout checklist/ }),
+  ).toBeVisible();
+  await expect(reloadedEditor.locator('img[alt="note.png"]')).toBeVisible();
   await expect(page.getByText("Add rollout risks to this note.")).toBeVisible();
 });
 

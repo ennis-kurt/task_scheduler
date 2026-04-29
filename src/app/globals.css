@@ -1454,3 +1454,196 @@ body {
     0.32rem 0 0 var(--planning-calendar-label);
   opacity: 0.55;
 }
+
+.project-notes-editor {
+  --notes-editor-gap: 0.78rem;
+}
+
+.project-notes-editor .tiptap {
+  min-height: 34rem;
+  outline: none;
+  color: var(--foreground);
+  font-size: 1rem;
+  line-height: 1.75;
+}
+
+.project-notes-editor .tiptap > * + * {
+  margin-top: var(--notes-editor-gap);
+}
+
+.project-notes-editor .tiptap p {
+  min-height: 1.75rem;
+}
+
+.project-notes-editor .tiptap h1,
+.project-notes-editor .tiptap h2,
+.project-notes-editor .tiptap h3 {
+  color: var(--foreground-strong);
+  font-weight: 650;
+  letter-spacing: 0;
+}
+
+.project-notes-editor .tiptap h1 {
+  margin-top: 1.8rem;
+  font-size: 2rem;
+  line-height: 1.15;
+}
+
+.project-notes-editor .tiptap h2 {
+  margin-top: 1.55rem;
+  font-size: 1.35rem;
+  line-height: 1.25;
+}
+
+.project-notes-editor .tiptap h3 {
+  margin-top: 1.2rem;
+  font-size: 1.08rem;
+  line-height: 1.35;
+}
+
+.project-notes-editor .tiptap h1:first-child,
+.project-notes-editor .tiptap h2:first-child,
+.project-notes-editor .tiptap h3:first-child {
+  margin-top: 0;
+}
+
+.project-notes-editor .tiptap ul,
+.project-notes-editor .tiptap ol {
+  padding-left: 1.35rem;
+}
+
+.project-notes-editor .tiptap li {
+  padding-left: 0.15rem;
+}
+
+.project-notes-editor .tiptap li + li {
+  margin-top: 0.3rem;
+}
+
+.project-notes-editor .tiptap ul[data-type="taskList"] {
+  padding-left: 0;
+  list-style: none;
+}
+
+.project-notes-editor .tiptap li[data-type="taskItem"] {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  padding-left: 0;
+}
+
+.project-notes-editor .tiptap li[data-type="taskItem"] > label {
+  display: flex;
+  flex: 0 0 auto;
+  padding-top: 0.3rem;
+}
+
+.project-notes-editor .tiptap li[data-type="taskItem"] input[type="checkbox"] {
+  width: 1rem;
+  height: 1rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 0.3rem;
+  accent-color: var(--foreground-strong);
+}
+
+.project-notes-editor .tiptap li[data-type="taskItem"] > div {
+  min-width: 0;
+  flex: 1;
+}
+
+.project-notes-editor .tiptap blockquote {
+  border-left: 3px solid var(--accent-strong);
+  border-radius: 0.75rem;
+  background: var(--surface-muted);
+  padding: 0.85rem 1rem;
+  color: var(--foreground);
+}
+
+.project-notes-editor .tiptap blockquote p {
+  min-height: 0;
+}
+
+.project-notes-editor .tiptap pre {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 0.85rem;
+  background: color-mix(in srgb, var(--surface-muted) 72%, var(--foreground-strong) 8%);
+  padding: 1rem;
+  color: var(--foreground);
+  font-size: 0.9rem;
+  line-height: 1.65;
+}
+
+.project-notes-editor .tiptap code {
+  border-radius: 0.35rem;
+  background: var(--surface-muted);
+  padding: 0.12rem 0.32rem;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
+    monospace;
+  font-size: 0.88em;
+}
+
+.project-notes-editor .tiptap pre code {
+  background: transparent;
+  padding: 0;
+}
+
+.project-notes-editor .tiptap a {
+  color: var(--accent-strong);
+  text-decoration: underline;
+  text-underline-offset: 0.16em;
+}
+
+.project-notes-editor .tiptap hr {
+  margin: 1.65rem 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
+.project-notes-editor .tiptap img {
+  max-height: 32rem;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 0.9rem;
+  object-fit: contain;
+  box-shadow: var(--shadow-soft);
+}
+
+.project-notes-editor .tiptap .is-empty::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  color: var(--muted-foreground);
+  pointer-events: none;
+}
+
+.project-notes-editor .tiptap ::selection {
+  background: var(--accent-soft);
+}
+
+.notes-bubble-menu,
+.notes-floating-menu {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  border: 1px solid var(--border);
+  border-radius: 0.8rem;
+  background: var(--surface-elevated);
+  padding: 0.2rem;
+  box-shadow: var(--shadow-float);
+}
+
+.notes-floating-menu {
+  gap: 0.25rem;
+}
+
+.dark .project-notes-editor .tiptap blockquote,
+.neon .project-notes-editor .tiptap blockquote {
+  background: color-mix(in srgb, var(--surface-muted) 78%, white 3%);
+}
+
+.dark .project-notes-editor .tiptap pre,
+.neon .project-notes-editor .tiptap pre {
+  background: color-mix(in srgb, var(--surface-muted) 80%, white 4%);
+}
