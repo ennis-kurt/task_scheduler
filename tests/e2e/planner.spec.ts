@@ -182,6 +182,34 @@ test("project notes support markdown blocks, comments, and local persistence", a
 
   await page.keyboard.press("ControlOrMeta+End");
   await page.keyboard.press("Enter");
+  await page.keyboard.type("/bold");
+  await expect(page.getByTestId("notes-slash-menu")).toBeVisible();
+  await page.getByTestId("notes-slash-menu").getByRole("button", { name: /Bold text/ }).click();
+  await page.keyboard.type("Slash bold");
+  await page.keyboard.press("ControlOrMeta+B");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("/italic");
+  await expect(page.getByTestId("notes-slash-menu")).toBeVisible();
+  await page.getByTestId("notes-slash-menu").getByRole("button", { name: /Italic text/ }).click();
+  await page.keyboard.type("Slash italic");
+  await page.keyboard.press("ControlOrMeta+I");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("/blue");
+  await expect(page.getByTestId("notes-slash-menu")).toBeVisible();
+  await page.getByTestId("notes-slash-menu").getByRole("button", { name: /Blue text/ }).click();
+  await page.keyboard.type("Slash blue");
+  await expect(editor.locator("strong").filter({ hasText: "Slash bold" })).toBeVisible();
+  await expect(editor.locator("em").filter({ hasText: "Slash italic" })).toBeVisible();
+  const blueSlashText = editor.locator("span").filter({ hasText: "Slash blue" }).last();
+  await expect(blueSlashText).toBeVisible();
+  await expect
+    .poll(() => blueSlashText.evaluate((node) => window.getComputedStyle(node).color))
+    .toBe("rgb(37, 99, 235)");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("/default");
+  await expect(page.getByTestId("notes-slash-menu")).toBeVisible();
+  await page.getByTestId("notes-slash-menu").getByRole("button", { name: /Default color/ }).click();
+  await page.keyboard.press("Enter");
   await page.keyboard.type("/todo");
   await expect(page.getByTestId("notes-slash-menu")).toBeVisible();
   await page.getByTestId("notes-slash-menu").getByRole("button", { name: /Checklist/ }).click();
@@ -200,7 +228,7 @@ test("project notes support markdown blocks, comments, and local persistence", a
   });
   await expect(editor.locator('img[alt="note.png"]')).toBeVisible();
 
-  await editor.locator("strong").filter({ hasText: "bold" }).click();
+  await editor.getByText("bold", { exact: true }).click();
   await expect(editor).not.toContainText("**bold**");
 
   await page.getByTestId("project-note-comment-input").fill("Add rollout risks to this note.");
@@ -219,7 +247,14 @@ test("project notes support markdown blocks, comments, and local persistence", a
   await expect(page.getByTestId("project-note-title")).toHaveValue("Architecture Notes");
   const reloadedEditor = page.getByTestId("project-note-rich-surface");
   await expect(reloadedEditor.locator("h1")).toContainText("Launch Readiness");
-  await expect(reloadedEditor.locator("strong").filter({ hasText: "bold" })).toBeVisible();
+  await expect(reloadedEditor.getByText("bold", { exact: true })).toBeVisible();
+  await expect(reloadedEditor.locator("strong").filter({ hasText: "Slash bold" })).toBeVisible();
+  await expect(reloadedEditor.locator("em").filter({ hasText: "Slash italic" })).toBeVisible();
+  const reloadedBlueSlashText = reloadedEditor.locator("span").filter({ hasText: "Slash blue" }).last();
+  await expect(reloadedBlueSlashText).toBeVisible();
+  await expect
+    .poll(() => reloadedBlueSlashText.evaluate((node) => window.getComputedStyle(node).color))
+    .toBe("rgb(37, 99, 235)");
   await expect(
     reloadedEditor.getByRole("checkbox", { name: /Confirm rollout checklist/ }),
   ).toBeVisible();

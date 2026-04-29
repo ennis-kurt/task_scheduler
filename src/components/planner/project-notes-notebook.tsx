@@ -9,11 +9,13 @@ import {
   useRef,
   useState,
 } from "react";
+import Color from "@tiptap/extension-color";
 import Image from "@tiptap/extension-image";
 import Link from "@tiptap/extension-link";
 import Placeholder from "@tiptap/extension-placeholder";
 import TaskItem from "@tiptap/extension-task-item";
 import TaskList from "@tiptap/extension-task-list";
+import { TextStyle } from "@tiptap/extension-text-style";
 import Underline from "@tiptap/extension-underline";
 import { Markdown } from "@tiptap/markdown";
 import {
@@ -37,6 +39,7 @@ import {
   List,
   ListOrdered,
   MessageSquare,
+  Palette,
   PanelRight,
   Quote,
   Save,
@@ -46,6 +49,7 @@ import {
   Text,
   Underline as UnderlineIcon,
   Users,
+  type LucideIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -131,10 +135,52 @@ type BlockStyle = "paragraph" | "heading1" | "heading2";
 
 const NOTE_STATUSES: ProjectNoteDocumentV2["status"][] = ["Draft", "Shared", "Final"];
 
+const NOTE_TEXT_COLORS = {
+  red: "#e11d48",
+  orange: "#ea580c",
+  blue: "#2563eb",
+  green: "#059669",
+  purple: "#7c3aed",
+} as const;
+
+type SlashCommandId =
+  | "paragraph"
+  | "heading1"
+  | "heading2"
+  | "bold"
+  | "italic"
+  | "colorDefault"
+  | "colorRed"
+  | "colorOrange"
+  | "colorBlue"
+  | "colorGreen"
+  | "colorPurple"
+  | "bulletList"
+  | "orderedList"
+  | "taskList"
+  | "quote"
+  | "callout"
+  | "codeBlock"
+  | "divider"
+  | "image";
+
+type SlashCommand = {
+  id: SlashCommandId;
+  label: string;
+  hint: string;
+  icon: LucideIcon;
+  keywords: string;
+  color?: string;
+};
+
 const editorExtensions = [
   StarterKit.configure({
     link: false,
     underline: false,
+  }),
+  TextStyle,
+  Color.configure({
+    types: ["textStyle"],
   }),
   Underline,
   Link.configure({
@@ -175,7 +221,7 @@ const editorExtensions = [
   }),
 ];
 
-const slashCommands = [
+const slashCommands: SlashCommand[] = [
   {
     id: "paragraph",
     label: "Text",
@@ -196,6 +242,67 @@ const slashCommands = [
     hint: "Subsection title",
     icon: Heading2,
     keywords: "h2 subtitle heading",
+  },
+  {
+    id: "bold",
+    label: "Bold text",
+    hint: "Continue typing in bold",
+    icon: Bold,
+    keywords: "bold strong heavy emphasis",
+  },
+  {
+    id: "italic",
+    label: "Italic text",
+    hint: "Continue typing in italic",
+    icon: Italic,
+    keywords: "italic emphasis slant",
+  },
+  {
+    id: "colorDefault",
+    label: "Default color",
+    hint: "Remove text color",
+    icon: Palette,
+    keywords: "default color reset clear",
+  },
+  {
+    id: "colorRed",
+    label: "Red text",
+    hint: "Continue typing in red",
+    icon: Palette,
+    keywords: "red color rose danger priority",
+    color: NOTE_TEXT_COLORS.red,
+  },
+  {
+    id: "colorOrange",
+    label: "Orange text",
+    hint: "Continue typing in orange",
+    icon: Palette,
+    keywords: "orange color amber warning",
+    color: NOTE_TEXT_COLORS.orange,
+  },
+  {
+    id: "colorBlue",
+    label: "Blue text",
+    hint: "Continue typing in blue",
+    icon: Palette,
+    keywords: "blue color accent link",
+    color: NOTE_TEXT_COLORS.blue,
+  },
+  {
+    id: "colorGreen",
+    label: "Green text",
+    hint: "Continue typing in green",
+    icon: Palette,
+    keywords: "green color success",
+    color: NOTE_TEXT_COLORS.green,
+  },
+  {
+    id: "colorPurple",
+    label: "Purple text",
+    hint: "Continue typing in purple",
+    icon: Palette,
+    keywords: "purple color violet",
+    color: NOTE_TEXT_COLORS.purple,
   },
   {
     id: "bulletList",
@@ -253,9 +360,7 @@ const slashCommands = [
     icon: ImagePlus,
     keywords: "image photo attachment picture",
   },
-] as const;
-
-type SlashCommand = (typeof slashCommands)[number];
+];
 
 function createId(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -822,6 +927,30 @@ export function ProjectNotesNotebook({ projectPlan }: ProjectNotesNotebookProps)
       case "heading2":
         chain.setHeading({ level: 2 }).run();
         break;
+      case "bold":
+        chain.toggleBold().run();
+        break;
+      case "italic":
+        chain.toggleItalic().run();
+        break;
+      case "colorDefault":
+        chain.unsetColor().removeEmptyTextStyle().run();
+        break;
+      case "colorRed":
+        chain.setColor(NOTE_TEXT_COLORS.red).run();
+        break;
+      case "colorOrange":
+        chain.setColor(NOTE_TEXT_COLORS.orange).run();
+        break;
+      case "colorBlue":
+        chain.setColor(NOTE_TEXT_COLORS.blue).run();
+        break;
+      case "colorGreen":
+        chain.setColor(NOTE_TEXT_COLORS.green).run();
+        break;
+      case "colorPurple":
+        chain.setColor(NOTE_TEXT_COLORS.purple).run();
+        break;
       case "bulletList":
         chain.toggleBulletList().run();
         break;
@@ -1172,7 +1301,15 @@ function SlashCommandMenu({
             }}
           >
             <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--surface)]">
-              <Icon className="h-4 w-4" />
+              {command.color ? (
+                <span
+                  aria-hidden="true"
+                  className="h-4 w-4 rounded-full border border-black/10 shadow-sm dark:border-white/20"
+                  style={{ backgroundColor: command.color }}
+                />
+              ) : (
+                <Icon className="h-4 w-4" />
+              )}
             </span>
             <span className="min-w-0">
               <span className="block text-sm font-semibold">{command.label}</span>
