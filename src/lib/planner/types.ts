@@ -6,6 +6,7 @@ export type PreferredTimeBand =
   | "afternoon"
   | "evening";
 export type TaskStatus = "todo" | "in_progress" | "done";
+export type TaskAvailability = "ready" | "later";
 export type PlannerItemSource = "task" | "event";
 export type PlannerView = "timeGridWeek" | "timeGridDay" | "listDay";
 export type PlannerSurface = "week" | "day" | "agenda";
@@ -101,6 +102,7 @@ export type TaskRecord = {
   preferredWindowStart: string | null;
   preferredWindowEnd: string | null;
   status: TaskStatus;
+  availability: TaskAvailability;
   completedAt: string | null;
   areaId: string | null;
   projectId: string | null;
@@ -146,6 +148,38 @@ export type TaskChecklistItemRecord = {
 export type TaskTagRecord = {
   taskId: string;
   tagId: string;
+};
+
+export type ProjectNoteStatus = "Draft" | "Shared" | "Final";
+export type ProjectNoteKind = "note" | "section";
+export type ProjectNoteLinkedEntityType = "project" | "milestone" | "task" | "manual";
+
+export type ProjectNoteCommentRecord = {
+  id: string;
+  author: string;
+  initials: string;
+  body: string;
+  createdAt: string;
+};
+
+export type ProjectNotePageRecord = {
+  id: string;
+  userId: string;
+  projectId: string;
+  kind: ProjectNoteKind;
+  sectionId: string | null;
+  parentSectionId: string | null;
+  linkedEntityType: ProjectNoteLinkedEntityType;
+  linkedEntityId: string | null;
+  systemKey: string | null;
+  title: string;
+  status: ProjectNoteStatus;
+  content: unknown;
+  markdown: string;
+  comments: ProjectNoteCommentRecord[];
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type WorkspaceSnapshot = {
@@ -310,6 +344,8 @@ export type NewTaskInput = {
   recurrence?: RecurrenceRule | null;
   startsAt?: string | null;
   endsAt?: string | null;
+  availability?: TaskAvailability;
+  addToProjectNotes?: boolean;
 };
 
 export type UpdateTaskInput = Partial<NewTaskInput> & {
@@ -356,6 +392,7 @@ export type UpdateEventInput = Partial<NewEventInput>;
 
 export type NewTaxonomyInput = {
   name: string;
+  notes?: string;
   color?: string;
   areaId?: string | null;
   deadlineAt?: string | null;
@@ -367,3 +404,20 @@ export type UpdateProjectInput = Partial<NewTaxonomyInput>;
 export type UpdateSettingsInput = Partial<
   Pick<UserSettingsRecord, "timezone" | "weekStart" | "slotMinutes" | "workHours">
 >;
+
+export type NewProjectNotePageInput = {
+  kind?: ProjectNoteKind;
+  sectionId?: string | null;
+  parentSectionId?: string | null;
+  linkedEntityType?: ProjectNoteLinkedEntityType;
+  linkedEntityId?: string | null;
+  systemKey?: string | null;
+  title?: string;
+  status?: ProjectNoteStatus;
+  content?: unknown;
+  markdown?: string;
+  comments?: ProjectNoteCommentRecord[];
+  sortOrder?: number;
+};
+
+export type UpdateProjectNotePageInput = Partial<NewProjectNotePageInput>;

@@ -93,6 +93,7 @@ export const tasks = pgTable("tasks", {
   preferredWindowStart: text("preferred_window_start"),
   preferredWindowEnd: text("preferred_window_end"),
   status: text("status").notNull(),
+  availability: text("availability").notNull().default("ready"),
   completedAt: timestamp("completed_at", { withTimezone: true }),
   areaId: text("area_id").references(() => areas.id, { onDelete: "set null" }),
   projectId: text("project_id").references(() => projects.id, {
@@ -154,4 +155,28 @@ export const taskTags = pgTable("task_tags", {
   tagId: text("tag_id")
     .notNull()
     .references(() => tags.id, { onDelete: "cascade" }),
+});
+
+export const projectNotePages = pgTable("project_note_pages", {
+  id: text("id").primaryKey(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  projectId: text("project_id")
+    .notNull()
+    .references(() => projects.id, { onDelete: "cascade" }),
+  kind: text("kind").notNull().default("note"),
+  sectionId: text("section_id"),
+  parentSectionId: text("parent_section_id"),
+  linkedEntityType: text("linked_entity_type").notNull().default("manual"),
+  linkedEntityId: text("linked_entity_id"),
+  systemKey: text("system_key"),
+  title: text("title").notNull(),
+  status: text("status").notNull().default("Draft"),
+  content: jsonb("content").notNull(),
+  markdown: text("markdown").notNull().default(""),
+  comments: jsonb("comments").notNull().default([]),
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });

@@ -3,6 +3,7 @@ import { readFile, rm } from "node:fs/promises";
 import path from "node:path";
 
 const demoStorePath = path.join(process.cwd(), "data", ".planner-demo-store.json");
+const demoNotePagesPath = path.join(process.cwd(), "data", ".planner-demo-note-pages.json");
 
 type DemoSnapshot = {
   settings: {
@@ -31,6 +32,7 @@ type DemoSnapshot = {
     priority: "low" | "medium" | "high" | "critical";
     dueAt: string | null;
     status: "todo" | "in_progress" | "done";
+    availability: "ready" | "later";
     areaId: string | null;
     projectId: string | null;
   }>;
@@ -44,10 +46,15 @@ type DemoSnapshot = {
 
 async function resetDemoStore() {
   await rm(demoStorePath, { force: true });
+  await rm(demoNotePagesPath, { force: true });
 }
 
 async function readSnapshot() {
   return JSON.parse(await readFile(demoStorePath, "utf8")) as DemoSnapshot;
+}
+
+async function readNotePagesStore() {
+  return JSON.parse(await readFile(demoNotePagesPath, "utf8")) as Record<string, Record<string, Array<{ title: string; comments: Array<{ body: string }> }>>>;
 }
 
 async function waitForTask(title: string) {
@@ -93,9 +100,10 @@ test.beforeEach(async () => {
 test("local demo mode opens the redesigned workspace without Clerk", async ({ page }) => {
   await page.goto("/");
 
-  await expect(page.getByText("INFLARA").first()).toBeVisible();
+  await expect(page.locator("aside").first().getByText("INFLARA")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Planner MVP" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Planning", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Focus", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Capacity", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Create Task" })).toBeVisible();
   await expect(page.getByText("Welcome back")).toHaveCount(0);
@@ -109,9 +117,14 @@ test("left rail navigates planning, inbox, capacity, areas, and project tabs", a
 
   await page.getByRole("button", { name: "Planning", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Planning", exact: true })).toBeVisible();
-  await expect(page.getByText("Task Flow")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Task Flow" })).toBeVisible();
   await expect(page.getByTestId("planning-workload")).toBeVisible();
   await expect(page.locator(".fc").first()).toBeVisible();
+
+  await page.getByRole("button", { name: "Focus", exact: true }).click();
+  await expect(page.getByTestId("focus-view")).toBeVisible();
+  await expect(page.getByText("Focus Time")).toBeVisible();
+  await expect(page.getByTestId("focus-task-menu")).toBeVisible();
 
   await page.getByRole("button", { name: /Inbox/ }).click();
   await expect(page.getByRole("heading", { name: "Inbox" })).toBeVisible();
@@ -137,10 +150,48 @@ test("left rail navigates planning, inbox, capacity, areas, and project tabs", a
 
   await page.getByRole("button", { name: "Notes" }).click();
   await expect(page.getByTestId("project-notes")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Show collaboration" })).toBeVisible();
+  await page.getByRole("button", { name: "Show collaboration" }).click();
   await expect(page.getByText("Collaboration")).toBeVisible();
 });
 
-test("project notes support markdown blocks, comments, and local persistence", async ({
+test("focus view selects a task, marks it in progress, and starts a sprint", async ({ page }) => {
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "Focus", exact: true }).click();
+  await expect(page.getByTestId("focus-view")).toBeVisible();
+  await expect(page.getByText("Focus Time")).toBeVisible();
+
+  await page.getByTestId("focus-task-category-todo").click();
+  await page.getByRole("button", { name: /Review overdue follow-ups/ }).click();
+  await expect(page.getByText("Mark this task In Progress?")).toBeVisible();
+  await page.getByRole("button", { name: "Yes" }).click();
+  await expect(page.getByText("Mark this task In Progress?")).toHaveCount(0);
+  await expect(page.getByText("Review overdue follow-ups").first()).toBeVisible();
+
+  await page.getByRole("button", { name: "Start", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Pause", exact: true })).toBeVisible();
+
+  await page.waitForTimeout(1100);
+  await page.getByRole("button", { name: "Planning", exact: true }).click();
+  const globalFocusTimer = page.getByTestId("global-focus-timer");
+  await expect(globalFocusTimer).toBeVisible();
+  await expect(globalFocusTimer).toContainText(/Focus|Break/);
+  await expect(globalFocusTimer).toContainText(/24:|25:/);
+
+  await page.getByRole("button", { name: "Focus", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Pause", exact: true })).toBeVisible();
+
+  await expect
+    .poll(async () => {
+      const snapshot = await readSnapshot();
+      return snapshot.tasks.find((task) => task.title === "Review overdue follow-ups")?.status;
+    })
+    .toBe("in_progress");
+});
+
+test("project notes support markdown blocks, comments, and cloud persistence", async ({
+  browser,
   page,
 }) => {
   await page.goto("/");
@@ -231,6 +282,7 @@ test("project notes support markdown blocks, comments, and local persistence", a
   await editor.getByText("bold", { exact: true }).click();
   await expect(editor).not.toContainText("**bold**");
 
+  await page.getByRole("button", { name: "Show comments" }).click();
   await page.getByTestId("project-note-comment-input").fill("Add rollout risks to this note.");
   await page.getByRole("button", { name: "Send comment" }).click();
   await expect(page.getByText("Add rollout risks to this note.")).toBeVisible();
@@ -259,7 +311,401 @@ test("project notes support markdown blocks, comments, and local persistence", a
     reloadedEditor.getByRole("checkbox", { name: /Confirm rollout checklist/ }),
   ).toBeVisible();
   await expect(reloadedEditor.locator('img[alt="note.png"]')).toBeVisible();
+  await page.getByRole("button", { name: "Show comments" }).click();
   await expect(page.getByText("Add rollout risks to this note.")).toBeVisible();
+  await expect
+    .poll(async () => {
+      const store = await readNotePagesStore();
+      const projectPages = store["demo-user"]?.["project-launch"] ?? [];
+      return projectPages.some(
+        (notePage) =>
+          notePage.title === "Architecture Notes" &&
+          notePage.comments.some((comment) => comment.body === "Add rollout risks to this note."),
+      );
+    })
+    .toBe(true);
+
+  const secondContext = await browser.newContext();
+  const secondPage = await secondContext.newPage();
+  await secondPage.goto("/");
+  await secondPage.locator("aside").getByRole("button", { name: "Planner MVP", exact: true }).click();
+  await secondPage.getByRole("button", { name: "Notes" }).click();
+  await expect(secondPage.getByTestId("project-note-title")).toHaveValue("Architecture Notes");
+  await expect(secondPage.getByTestId("project-note-rich-surface").locator("h1")).toContainText("Launch Readiness");
+  await secondPage.getByRole("button", { name: "Show comments" }).click();
+  await expect(secondPage.getByText("Add rollout risks to this note.")).toBeVisible();
+  await secondContext.close();
+});
+
+test("project notes support manual sections, subsections, notes, and drag moves", async ({
+  page,
+  request,
+}) => {
+  await page.goto("/");
+  await page.locator("aside").getByRole("button", { name: "Planner MVP", exact: true }).click();
+  await page.getByRole("button", { name: "Notes" }).click();
+  await expect(page.getByTestId("project-notes")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Milestones", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "General Notes", exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Discovery", exact: true }),
+  ).toBeVisible();
+
+  page.once("dialog", (dialog) => dialog.accept("Manual Research"));
+  await page.getByRole("button", { name: "Create section", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Manual Research", exact: true })).toBeVisible();
+
+  page.once("dialog", (dialog) => dialog.accept("Evidence"));
+  await page.getByRole("button", { name: "Create subsection in Manual Research" }).click();
+  await expect(page.getByRole("button", { name: "Evidence", exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "Create note in Manual Research" }).click();
+  await page.getByTestId("project-note-title").fill("Research Note");
+  await page.getByTestId("project-note-rich-surface").click();
+  await page.keyboard.press("ControlOrMeta+A");
+  await page.keyboard.press("Backspace");
+  await page.keyboard.type("Research content inside a manual section.");
+  await expect(page.getByRole("button", { name: "Research Note", exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "Create note page", exact: true }).click();
+  await page.getByTestId("project-note-title").fill("Drag Me Note");
+  await page.getByTestId("project-note-rich-surface").click();
+  await page.keyboard.press("ControlOrMeta+A");
+  await page.keyboard.press("Backspace");
+  await page.keyboard.type("This note will be moved into Manual Research.");
+  const dragMeNote = page.locator('[data-note-kind="note"][data-note-title="Drag Me Note"]');
+  await expect(dragMeNote).toBeAttached();
+  await dragMeNote.scrollIntoViewIfNeeded();
+
+  await dragMeNote.dragTo(
+    page.locator('[data-note-kind="section"][data-note-title="Manual Research"]'),
+  );
+
+  await expect
+    .poll(async () => {
+      const response = await request.get("/api/projects/project-launch/notes");
+      const pages = (await response.json()) as Array<{
+        id: string;
+        kind: string;
+        title: string;
+        sectionId: string | null;
+        parentSectionId: string | null;
+      }>;
+      const manualSection = pages.find(
+        (page) => page.kind === "section" && page.title === "Manual Research",
+      );
+      const subsection = pages.find(
+        (page) =>
+          page.kind === "section" &&
+          page.title === "Evidence" &&
+          page.parentSectionId === manualSection?.id,
+      );
+      const sectionNote = pages.find(
+        (page) =>
+          page.kind === "note" &&
+          page.title === "Research Note" &&
+          page.sectionId === manualSection?.id,
+      );
+      const movedNote = pages.find(
+        (page) =>
+          page.kind === "note" &&
+          page.title === "Drag Me Note" &&
+          page.sectionId === manualSection?.id,
+      );
+
+      return Boolean(manualSection && subsection && sectionNote && movedNote);
+    })
+    .toBe(true);
+});
+
+test("project note page API supports one-level page CRUD", async ({ request }) => {
+  const firstResponse = await request.post("/api/projects/project-launch/notes", {
+    data: {
+      title: "Planning Notes",
+      status: "Draft",
+      markdown: "# Planning Notes\n\nInitial project page.",
+    },
+  });
+  expect(firstResponse.status()).toBe(201);
+  const firstPage = await firstResponse.json();
+  expect(firstPage.title).toBe("Planning Notes");
+
+  const secondResponse = await request.post("/api/projects/project-launch/notes", {
+    data: {
+      title: "Decision Log",
+      status: "Draft",
+      markdown: "Key decisions stay flat in this project notebook.",
+    },
+  });
+  expect(secondResponse.status()).toBe(201);
+  const secondPage = await secondResponse.json();
+
+  const updateResponse = await request.patch(
+    `/api/projects/project-launch/notes/${secondPage.id}`,
+    {
+      data: {
+        title: "Renamed Decision Log",
+        status: "Shared",
+        markdown: "Updated decision log content.",
+      },
+    },
+  );
+  expect(updateResponse.ok()).toBeTruthy();
+  const updatedSecondPage = await updateResponse.json();
+  expect(updatedSecondPage).toMatchObject({
+    id: secondPage.id,
+    title: "Renamed Decision Log",
+    status: "Shared",
+    markdown: "Updated decision log content.",
+  });
+
+  const listResponse = await request.get("/api/projects/project-launch/notes");
+  expect(listResponse.ok()).toBeTruthy();
+  const pages = await listResponse.json();
+  expect(
+    pages
+      .filter((page: { linkedEntityType: string }) => page.linkedEntityType === "manual")
+      .map((page: { title: string }) => page.title),
+  ).toEqual([
+    "Planning Notes",
+    "Renamed Decision Log",
+  ]);
+  expect(
+    pages.map((page: { title: string; kind: string; systemKey: string | null }) => ({
+      title: page.title,
+      kind: page.kind,
+      systemKey: page.systemKey,
+    })),
+  ).toEqual(
+    expect.arrayContaining([
+      {
+        title: "Project Description",
+        kind: "note",
+        systemKey: "project:description",
+      },
+      {
+        title: "Milestones",
+        kind: "section",
+        systemKey: "project:milestones",
+      },
+      {
+        title: "General Notes",
+        kind: "section",
+        systemKey: "project:general-notes",
+      },
+    ]),
+  );
+
+  const deleteFirstResponse = await request.delete(
+    `/api/projects/project-launch/notes/${firstPage.id}`,
+  );
+  expect(deleteFirstResponse.ok()).toBeTruthy();
+
+  const deleteLastResponse = await request.delete(
+    `/api/projects/project-launch/notes/${secondPage.id}`,
+  );
+  expect(deleteLastResponse.ok()).toBeTruthy();
+
+  const remainingResponse = await request.get("/api/projects/project-launch/notes");
+  expect(remainingResponse.ok()).toBeTruthy();
+  const remainingPages = await remainingResponse.json();
+  expect(
+    remainingPages.some(
+      (page: { title: string; systemKey: string | null }) =>
+        page.title === "Project Description" && page.systemKey === "project:description",
+    ),
+  ).toBe(true);
+});
+
+test("task notes stay on tasks unless explicitly added to project notes", async ({
+  request,
+}) => {
+  const defaultTaskResponse = await request.post("/api/tasks", {
+    data: {
+      title: "Task notes stay private",
+      notes: "This should stay on the task record only.",
+      projectId: "project-launch",
+      milestoneId: "milestone-discovery",
+      estimatedMinutes: 45,
+      priority: "medium",
+    },
+  });
+  expect(defaultTaskResponse.status()).toBe(201);
+  const defaultTask = await defaultTaskResponse.json();
+
+  let notesResponse = await request.get("/api/projects/project-launch/notes");
+  expect(notesResponse.ok()).toBeTruthy();
+  let pages = (await notesResponse.json()) as Array<{
+    title: string;
+    systemKey: string | null;
+  }>;
+  expect(
+    pages.some(
+      (page) =>
+        page.title === defaultTask.title ||
+        page.systemKey === `task:${defaultTask.id}:project-note`,
+    ),
+  ).toBe(false);
+
+  const optInTaskResponse = await request.post("/api/tasks", {
+    data: {
+      title: "Task notes go to project notes",
+      notes: "This should become a project note.",
+      projectId: "project-launch",
+      milestoneId: "milestone-discovery",
+      estimatedMinutes: 45,
+      priority: "medium",
+      addToProjectNotes: true,
+    },
+  });
+  expect(optInTaskResponse.status()).toBe(201);
+  const optInTask = await optInTaskResponse.json();
+
+  notesResponse = await request.get("/api/projects/project-launch/notes");
+  expect(notesResponse.ok()).toBeTruthy();
+  pages = (await notesResponse.json()) as Array<{
+    id: string;
+    kind: string;
+    title: string;
+    markdown: string;
+    sectionId: string | null;
+    systemKey: string | null;
+  }>;
+  const milestonesSection = pages.find(
+    (page) => page.kind === "section" && page.systemKey === "project:milestones",
+  );
+  const taskNote = pages.find(
+    (page) => page.systemKey === `task:${optInTask.id}:project-note`,
+  );
+
+  expect(taskNote).toMatchObject({
+    title: "Task notes go to project notes",
+    markdown: "This should become a project note.",
+    sectionId: milestonesSection?.id,
+  });
+});
+
+test("project notes cleanup flattens legacy generated milestone and task nodes", async ({
+  request,
+}) => {
+  let notesResponse = await request.get("/api/projects/project-launch/notes");
+  expect(notesResponse.ok()).toBeTruthy();
+  let pages = (await notesResponse.json()) as Array<{
+    id: string;
+    kind: string;
+    title: string;
+    markdown: string;
+    sectionId: string | null;
+    parentSectionId: string | null;
+    systemKey: string | null;
+  }>;
+  const milestonesSection = pages.find(
+    (page) => page.kind === "section" && page.systemKey === "project:milestones",
+  );
+  expect(milestonesSection).toBeTruthy();
+
+  const legacySectionResponse = await request.post("/api/projects/project-launch/notes", {
+    data: {
+      kind: "section",
+      title: "Legacy Discovery Folder",
+      parentSectionId: milestonesSection!.id,
+      linkedEntityType: "milestone",
+      linkedEntityId: "milestone-discovery",
+      systemKey: "milestone:milestone-discovery:section",
+    },
+  });
+  expect(legacySectionResponse.status()).toBe(201);
+  const legacySection = await legacySectionResponse.json();
+
+  const legacyTasksResponse = await request.post("/api/projects/project-launch/notes", {
+    data: {
+      kind: "section",
+      title: "Tasks",
+      parentSectionId: legacySection.id,
+      linkedEntityType: "milestone",
+      linkedEntityId: "milestone-discovery",
+      systemKey: "milestone:milestone-discovery:tasks",
+    },
+  });
+  expect(legacyTasksResponse.status()).toBe(201);
+  const legacyTasksSection = await legacyTasksResponse.json();
+
+  await request.post("/api/projects/project-launch/notes", {
+    data: {
+      title: "Milestone Details",
+      sectionId: legacySection.id,
+      linkedEntityType: "milestone",
+      linkedEntityId: "milestone-discovery",
+      systemKey: "milestone:milestone-discovery:details",
+      markdown: "# Legacy details",
+    },
+  });
+  await request.post("/api/projects/project-launch/notes", {
+    data: {
+      title: "Milestone Description",
+      sectionId: legacySection.id,
+      linkedEntityType: "milestone",
+      linkedEntityId: "milestone-discovery",
+      systemKey: "milestone:milestone-discovery:description",
+      markdown: "Legacy milestone note body.",
+    },
+  });
+  await request.post("/api/projects/project-launch/notes", {
+    data: {
+      title: "Legacy Task Mirror",
+      sectionId: legacyTasksSection.id,
+      linkedEntityType: "task",
+      linkedEntityId: "task-outline",
+      systemKey: "task:task-outline:note",
+      markdown: "Legacy task note mirror.",
+    },
+  });
+  await request.post("/api/projects/project-launch/notes", {
+    data: {
+      title: "Manual legacy idea",
+      sectionId: legacyTasksSection.id,
+      markdown: "Keep this user-authored note visible.",
+    },
+  });
+
+  notesResponse = await request.get("/api/projects/project-launch/notes");
+  expect(notesResponse.ok()).toBeTruthy();
+  pages = (await notesResponse.json()) as Array<{
+    id: string;
+    kind: string;
+    title: string;
+    markdown: string;
+    sectionId: string | null;
+    parentSectionId: string | null;
+    systemKey: string | null;
+  }>;
+  const refreshedMilestonesSection = pages.find(
+    (page) => page.kind === "section" && page.systemKey === "project:milestones",
+  );
+  const discoveryNote = pages.find(
+    (page) => page.systemKey === "milestone:milestone-discovery:note",
+  );
+  const manualLegacyNote = pages.find((page) => page.title === "Manual legacy idea");
+
+  expect(discoveryNote).toMatchObject({
+    title: "Discovery",
+    markdown: "Legacy milestone note body.",
+    sectionId: refreshedMilestonesSection?.id,
+  });
+  expect(manualLegacyNote).toMatchObject({
+    sectionId: refreshedMilestonesSection?.id,
+  });
+  expect(
+    pages.some((page) =>
+      [
+        "milestone:milestone-discovery:section",
+        "milestone:milestone-discovery:tasks",
+        "milestone:milestone-discovery:details",
+        "milestone:milestone-discovery:description",
+        "task:task-outline:note",
+      ].includes(page.systemKey ?? ""),
+    ),
+  ).toBe(false);
 });
 
 test("project design inline date, status, and priority controls persist without full editors", async ({
@@ -531,6 +977,7 @@ test("planning kanban supports custom columns, local task columns, and collapse"
   await page.getByRole("button", { name: "Create Task" }).click();
   await page.getByLabel("Task name").fill("Review lane planning task");
   await page.getByLabel("Estimated minutes").fill("45");
+  await page.getByRole("button", { name: "Start soon" }).click();
   await page.getByRole("button", { name: "Add to inbox" }).click();
   await expect(page.getByText("Added to your planner").first()).toBeVisible();
 
@@ -582,6 +1029,40 @@ test("planning kanban supports custom columns, local task columns, and collapse"
   await expect(page.getByTestId("planning-column-list")).toBeVisible();
 });
 
+test("AI daily planner generates draft schedules and applies them to the calendar", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Planning", exact: true }).click();
+
+  const initialBlockCount = (await readSnapshot()).taskBlocks.length;
+
+  await page.getByTestId("ai-planner-mode-standard").click();
+  await expect(page.getByTestId("ai-planner-timeline")).toBeVisible();
+  await expect(page.getByText("Apply Plan")).toBeVisible();
+
+  await page.getByTestId("ai-planner-apply").click();
+  await expect(page.getByText("AI plan applied to schedule").first()).toBeVisible();
+  await expect
+    .poll(async () => {
+      const snapshot = await readSnapshot();
+      return snapshot.taskBlocks.length;
+    })
+    .toBeGreaterThan(initialBlockCount);
+
+  await page.getByTestId("ai-planner-mode-custom").click();
+  await expect(page.getByTestId("ai-planner-custom-form")).toBeVisible();
+  await page.getByLabel("Intensity").fill("lighter schedule");
+  await page.getByLabel("Prioritize").fill("urgent deadlines");
+  await page.getByLabel("Avoid").fill("cleanup");
+  await page.getByLabel("Session length").fill("45");
+  await page
+    .getByTestId("ai-planner-custom-form")
+    .getByRole("button", { name: "Generate" })
+    .click();
+  await expect(page.getByTestId("ai-planner-timeline")).toBeVisible();
+});
+
 test("quick add creates unscheduled tasks and pipeline status edits persist", async ({
   page,
 }) => {
@@ -598,10 +1079,32 @@ test("quick add creates unscheduled tasks and pipeline status edits persist", as
   const createdTask = await waitForTask("Redesign QA task");
   const snapshot = await readSnapshot();
   expect(snapshot.taskBlocks.some((block) => block.taskId === createdTask.id)).toBe(false);
+  expect(snapshot.tasks.find((task) => task.id === createdTask.id)?.availability).toBe("later");
 
   await page.getByRole("button", { name: /Inbox/ }).click();
   await expect(page.getByRole("heading", { name: "Inbox" })).toBeVisible();
   await expect(page.getByText("Redesign QA task")).toBeVisible();
+  await expect(page.getByText("Later").first()).toBeVisible();
+
+  await page.getByRole("button", { name: "Planning", exact: true }).click();
+  await expect(page.getByTestId(`planning-card-${createdTask.id}`)).toHaveCount(0);
+
+  await page.getByRole("button", { name: /Inbox/ }).click();
+  await page.getByText("Redesign QA task").click();
+  await page
+    .getByRole("dialog", { name: "Task details" })
+    .getByRole("button", { name: "Start soon", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Save task" }).click();
+  await expect(page.getByText("Task updated").first()).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  await expect
+    .poll(async () => {
+      const latest = await readSnapshot();
+      return latest.tasks.find((task) => task.id === createdTask.id)?.availability ?? null;
+    })
+    .toBe("ready");
 
   await page.getByRole("button", { name: "Planning", exact: true }).click();
   await expect(page.getByTestId(`planning-card-${createdTask.id}`)).toBeVisible();

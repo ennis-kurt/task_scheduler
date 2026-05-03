@@ -4,10 +4,13 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:demo": "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY= CLERK_SECRET_KEY= DATABASE_URL= PLANNER_DEMO_STORE_PATH=.planner-demo-store.json next dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
     "test:e2e": "playwright test",
+    "test:e2e:mobile": "playwright test tests/e2e/mobile.spec.ts",
+    "test:e2e:mobile:webkit": "playwright test tests/e2e/mobile.spec.ts --browser=webkit",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push"
   },

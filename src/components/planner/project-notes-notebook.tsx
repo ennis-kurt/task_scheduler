@@ -28,9 +28,15 @@ import StarterKit from "@tiptap/starter-kit";
 import {
   Bold,
   CalendarDays,
+  ChevronDown,
+  ChevronRight,
   CheckSquare,
   ClipboardCopy,
   Code2,
+  FileText,
+  Folder,
+  FolderOpen,
+  FolderPlus,
   Heading1,
   Heading2,
   ImagePlus,
@@ -41,12 +47,14 @@ import {
   MessageSquare,
   Palette,
   PanelRight,
+  Plus,
   Quote,
   Save,
   Send,
   Sparkles,
   Strikethrough,
   Text,
+  Trash2,
   Underline as UnderlineIcon,
   Users,
   type LucideIcon,
@@ -55,7 +63,12 @@ import { toast } from "sonner";
 
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
-import type { ProjectPlan } from "@/lib/planner/types";
+import type {
+  ProjectNoteKind,
+  ProjectNoteLinkedEntityType,
+  ProjectNotePageRecord,
+  ProjectPlan,
+} from "@/lib/planner/types";
 import { cn } from "@/lib/utils";
 
 type NoteBlockType =
@@ -105,6 +118,32 @@ type ProjectNoteDocumentV2 = {
   updatedAt: string;
 };
 
+type ProjectNotePage = {
+  id: string;
+  kind: ProjectNoteKind;
+  sectionId: string | null;
+  parentSectionId: string | null;
+  linkedEntityType: ProjectNoteLinkedEntityType;
+  linkedEntityId: string | null;
+  systemKey: string | null;
+  title: string;
+  status: ProjectNoteDocumentV2["status"];
+  content: JSONContent | string;
+  contentType: "json" | "markdown";
+  markdown: string;
+  comments: NoteComment[];
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type ProjectNotesCollectionV3 = {
+  version: 3;
+  activePageId: string;
+  pages: ProjectNotePage[];
+  updatedAt: string;
+};
+
 type NoteMeta = Pick<ProjectNoteDocumentV2, "title" | "status" | "comments" | "updatedAt">;
 
 type LoadedNoteDocument = NoteMeta & {
@@ -113,11 +152,20 @@ type LoadedNoteDocument = NoteMeta & {
   contentType: "json" | "markdown";
 };
 
+type LoadedNoteCollection = {
+  source: "default" | "v1" | "v2" | "v3";
+  activePageId: string;
+  pages: ProjectNotePage[];
+};
+
 type NoteHeading = {
   index: number;
   level: 1 | 2;
   text: string;
 };
+
+type NotesPanel = "collaboration" | "outline" | "comments";
+type SaveState = "loading" | "saving" | "saved" | "offline";
 
 type SlashMenuState = {
   query: string;
@@ -134,6 +182,8 @@ type ProjectNotesNotebookProps = {
 type BlockStyle = "paragraph" | "heading1" | "heading2";
 
 const NOTE_STATUSES: ProjectNoteDocumentV2["status"][] = ["Draft", "Shared", "Final"];
+const LOCAL_NOTE_PAGE_PREFIX = "local-note-page";
+const MAX_EMBEDDED_IMAGE_BYTES = 1_500_000;
 
 const NOTE_TEXT_COLORS = {
   red: "#e11d48",
@@ -366,8 +416,85 @@ function createId(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function storageKeyForProject(projectId: string, version: 1 | 2) {
+function storageKeyForProject(projectId: string, version: 1 | 2 | 3) {
   return `inflara:project-notes:${projectId}:v${version}`;
+}
+
+function migrationKeyForProject(projectId: string) {
+  return `inflara:project-notes:${projectId}:cloud-migrated:v1`;
+}
+
+function isCloudNotePageId(notePageId: string) {
+  return notePageId.startsWith("note_") || notePageId.startsWith("section_");
+}
+
+function getNoteSaveLabel(state: SaveState) {
+  switch (state) {
+    case "loading":
+      return "Loading...";
+    case "saving":
+      return "Saving...";
+    case "offline":
+      return "Offline/local draft";
+    default:
+      return "Saved";
+  }
+}
+
+function noteApiPath(projectId: string, notePageId?: string) {
+  const base = `/api/projects/${encodeURIComponent(projectId)}/notes`;
+  return notePageId ? `${base}/${encodeURIComponent(notePageId)}` : base;
+}
+
+function notePageToPayload(page: ProjectNotePage) {
+  return {
+    kind: page.kind,
+    sectionId: page.kind === "note" ? page.sectionId : null,
+    parentSectionId: page.kind === "section" ? page.parentSectionId : null,
+    linkedEntityType: page.linkedEntityType,
+    linkedEntityId: page.linkedEntityId,
+    systemKey: page.systemKey,
+    title: page.title || "Untitled page",
+    status: page.status,
+    content: page.content,
+    markdown: page.markdown,
+    comments: page.comments,
+    sortOrder: page.sortOrder,
+  };
+}
+
+function dataUrlByteSize(src: string) {
+  const commaIndex = src.indexOf(",");
+  const payload = commaIndex >= 0 ? src.slice(commaIndex + 1) : src;
+
+  return Math.ceil((payload.length * 3) / 4);
+}
+
+function hasOversizedEmbeddedImage(value: unknown): boolean {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  if (Array.isArray(value)) {
+    return value.some(hasOversizedEmbeddedImage);
+  }
+
+  const record = value as Record<string, unknown>;
+  const attrs = record.attrs;
+
+  if (record.type === "image" && attrs && typeof attrs === "object") {
+    const src = (attrs as Record<string, unknown>).src;
+
+    if (
+      typeof src === "string" &&
+      src.startsWith("data:image/") &&
+      dataUrlByteSize(src) > MAX_EMBEDDED_IMAGE_BYTES
+    ) {
+      return true;
+    }
+  }
+
+  return Object.values(record).some(hasOversizedEmbeddedImage);
 }
 
 function defaultMarkdown(projectPlan: ProjectPlan) {
@@ -418,6 +545,20 @@ function defaultLoadedDocument(projectPlan: ProjectPlan): LoadedNoteDocument {
 
 function normalizeStatus(value: unknown): ProjectNoteDocumentV2["status"] {
   return value === "Shared" || value === "Final" ? value : "Draft";
+}
+
+function normalizeKind(value: unknown): ProjectNoteKind {
+  return value === "section" ? "section" : "note";
+}
+
+function normalizeLinkedEntityType(value: unknown): ProjectNoteLinkedEntityType {
+  return value === "project" || value === "milestone" || value === "task"
+    ? value
+    : "manual";
+}
+
+function nullableString(value: unknown) {
+  return typeof value === "string" && value ? value : null;
 }
 
 function normalizeComments(value: unknown): NoteComment[] {
@@ -490,6 +631,222 @@ function loadDocumentFromStorage(projectPlan: ProjectPlan): LoadedNoteDocument {
   }
 
   return defaultLoadedDocument(projectPlan);
+}
+
+function pageFromLoadedDocument(
+  loaded: LoadedNoteDocument,
+  projectPlan: ProjectPlan,
+): ProjectNotePage {
+  const now = new Date().toISOString();
+  const markdown = typeof loaded.content === "string" ? loaded.content : "";
+
+  return {
+    id: createId(`note-page-${projectPlan.project.id}`),
+    kind: "note",
+    sectionId: null,
+    parentSectionId: null,
+    linkedEntityType: "manual",
+    linkedEntityId: null,
+    systemKey: null,
+    title: loaded.title,
+    status: loaded.status,
+    content: loaded.content,
+    contentType: loaded.contentType,
+    markdown,
+    comments: loaded.comments,
+    sortOrder: 0,
+    createdAt: loaded.updatedAt || now,
+    updatedAt: loaded.updatedAt || now,
+  };
+}
+
+function normalizeNotePage(value: unknown, fallback: ProjectNotePage): ProjectNotePage | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const raw = value as Partial<ProjectNotePage>;
+  const id = typeof raw.id === "string" && raw.id ? raw.id : createId("note-page");
+  const title = typeof raw.title === "string" && raw.title.trim() ? raw.title : fallback.title;
+  const content = isJSONContent(raw.content) || typeof raw.content === "string" ? raw.content : fallback.content;
+  const contentType = isJSONContent(content) ? "json" : "markdown";
+  const updatedAt = typeof raw.updatedAt === "string" ? raw.updatedAt : fallback.updatedAt;
+
+  return {
+    id,
+    kind: normalizeKind(raw.kind),
+    sectionId: nullableString(raw.sectionId),
+    parentSectionId: nullableString(raw.parentSectionId),
+    linkedEntityType: normalizeLinkedEntityType(raw.linkedEntityType),
+    linkedEntityId: nullableString(raw.linkedEntityId),
+    systemKey: nullableString(raw.systemKey),
+    title,
+    status: normalizeStatus(raw.status),
+    content,
+    contentType,
+    markdown: typeof raw.markdown === "string" ? raw.markdown : fallback.markdown,
+    comments: normalizeComments(raw.comments),
+    sortOrder: typeof raw.sortOrder === "number" ? raw.sortOrder : fallback.sortOrder,
+    createdAt: typeof raw.createdAt === "string" ? raw.createdAt : fallback.createdAt,
+    updatedAt,
+  };
+}
+
+function loadCollectionFromStorage(projectPlan: ProjectPlan): LoadedNoteCollection {
+  const fallback = pageFromLoadedDocument(defaultLoadedDocument(projectPlan), projectPlan);
+
+  if (typeof window === "undefined") {
+    return {
+      source: "default",
+      activePageId: fallback.id,
+      pages: [fallback],
+    };
+  }
+
+  const v3Key = storageKeyForProject(projectPlan.project.id, 3);
+
+  try {
+    const savedV3 = window.localStorage.getItem(v3Key);
+
+    if (savedV3) {
+      const raw = JSON.parse(savedV3) as Partial<ProjectNotesCollectionV3>;
+      const pages = Array.isArray(raw.pages)
+        ? raw.pages
+            .map((page, index) =>
+              normalizeNotePage(page, { ...fallback, sortOrder: index }),
+            )
+            .filter((page): page is ProjectNotePage => Boolean(page))
+            .sort((a, b) => a.sortOrder - b.sortOrder)
+        : [];
+
+      if (pages.length) {
+        const activePage = resolveActiveNotePage(
+          pages,
+          typeof raw.activePageId === "string" ? raw.activePageId : "",
+        );
+
+        return {
+          source: "v3",
+          activePageId: activePage?.id ?? pages[0].id,
+          pages,
+        };
+      }
+    }
+  } catch {
+    // Fall through to v2/v1 migration.
+  }
+
+  const legacy = loadDocumentFromStorage(projectPlan);
+  const legacyPage = pageFromLoadedDocument(legacy, projectPlan);
+
+  return {
+    source: legacy.source,
+    activePageId: legacyPage.id,
+    pages: [legacyPage],
+  };
+}
+
+function writeCollectionBackup(
+  storageKey: string,
+  legacyStorageKey: string,
+  activePageId: string,
+  pages: ProjectNotePage[],
+) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const updatedAt = new Date().toISOString();
+  const sortedPages = [...pages].sort((a, b) => a.sortOrder - b.sortOrder);
+  const activePage = resolveActiveNotePage(sortedPages, activePageId);
+
+  window.localStorage.setItem(
+    storageKey,
+    JSON.stringify({
+      version: 3,
+      activePageId,
+      pages: sortedPages,
+      updatedAt,
+    } satisfies ProjectNotesCollectionV3),
+  );
+
+  if (!activePage) {
+    return;
+  }
+
+  window.localStorage.setItem(
+    legacyStorageKey,
+    JSON.stringify({
+      version: 2,
+      title: activePage.title,
+      status: activePage.status,
+      content: isJSONContent(activePage.content)
+        ? activePage.content
+        : { type: "doc", content: [{ type: "paragraph" }] },
+      markdown: activePage.markdown,
+      comments: activePage.comments,
+      updatedAt: activePage.updatedAt,
+    } satisfies ProjectNoteDocumentV2),
+  );
+}
+
+function firstEditableNote(pages: ProjectNotePage[]) {
+  return pages.find((page) => page.kind === "note") ?? pages[0];
+}
+
+function resolveActiveNotePage(pages: ProjectNotePage[], activePageId: string) {
+  return (
+    pages.find((page) => page.id === activePageId && page.kind === "note") ??
+    firstEditableNote(pages)
+  );
+}
+
+async function readNotePagesFromApi(projectId: string) {
+  const response = await fetch(noteApiPath(projectId), { cache: "no-store" });
+
+  if (!response.ok) {
+    throw new Error(`NOTES_LIST_FAILED_${response.status}`);
+  }
+
+  return (await response.json()) as ProjectNotePageRecord[];
+}
+
+async function createNotePageInApi(projectId: string, page: ProjectNotePage) {
+  const response = await fetch(noteApiPath(projectId), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(notePageToPayload(page)),
+  });
+
+  if (!response.ok) {
+    throw new Error(`NOTES_CREATE_FAILED_${response.status}`);
+  }
+
+  return (await response.json()) as ProjectNotePageRecord;
+}
+
+async function updateNotePageInApi(projectId: string, page: ProjectNotePage) {
+  const response = await fetch(noteApiPath(projectId, page.id), {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(notePageToPayload(page)),
+  });
+
+  if (!response.ok) {
+    throw new Error(`NOTES_UPDATE_FAILED_${response.status}`);
+  }
+
+  return (await response.json()) as ProjectNotePageRecord;
+}
+
+async function deleteNotePageFromApi(projectId: string, notePageId: string) {
+  const response = await fetch(noteApiPath(projectId, notePageId), {
+    method: "DELETE",
+  });
+
+  if (!response.ok) {
+    throw new Error(`NOTES_DELETE_FAILED_${response.status}`);
+  }
 }
 
 function normalizeLegacyDocument(value: unknown, projectPlan: ProjectPlan): LegacyProjectNoteDocument {
@@ -592,6 +949,32 @@ function textFromNode(node: JSONContent): string {
   return (node.content ?? []).map(textFromNode).join("");
 }
 
+function plainMarkdownCandidateFromJson(node: JSONContent): string | null {
+  if (node.type === "doc") {
+    const blocks = node.content ?? [];
+    const lines = blocks.map(plainMarkdownCandidateFromJson);
+
+    return lines.every((line): line is string => line !== null) ? lines.join("\n\n") : null;
+  }
+
+  if (node.type === "paragraph") {
+    const inline = node.content ?? [];
+    const parts = inline.map(plainMarkdownCandidateFromJson);
+
+    return parts.every((part): part is string => part !== null) ? parts.join("") : "";
+  }
+
+  if (node.type === "text") {
+    return node.text ?? "";
+  }
+
+  if (node.type === "hardBreak") {
+    return "\n";
+  }
+
+  return null;
+}
+
 function collectHeadings(content: JSONContent[] | undefined, headings: NoteHeading[] = []) {
   for (const node of content ?? []) {
     if (node.type === "heading") {
@@ -607,6 +990,27 @@ function collectHeadings(content: JSONContent[] | undefined, headings: NoteHeadi
   }
 
   return headings;
+}
+
+function looksLikeMarkdownDocument(value: string) {
+  const text = value.trim();
+
+  if (!text) {
+    return false;
+  }
+
+  return [
+    /^#{1,6}\s+\S/m,
+    /^\s*[-+*]\s+\S/m,
+    /^\s*\d+\.\s+\S/m,
+    /^\s*[-+*]\s+\[[ xX]\]\s+\S/m,
+    /^>\s+\S/m,
+    /^```[\s\S]*```/m,
+    /^---+$/m,
+    /^\|.+\|$/m,
+    /!\[[^\]]*]\([^)]+\)/,
+    /\[[^\]]+]\([^)]+\)/,
+  ].some((pattern) => pattern.test(text));
 }
 
 function formatRelativeDate(value: string) {
@@ -682,38 +1086,80 @@ function readImageFile(file: File) {
 }
 
 export function ProjectNotesNotebook({ projectPlan }: ProjectNotesNotebookProps) {
-  const loadedDocument = useMemo(() => loadDocumentFromStorage(projectPlan), [projectPlan]);
-  const storageKey = storageKeyForProject(projectPlan.project.id, 2);
+  const projectId = projectPlan.project.id;
+  const loadedCollection = useMemo(
+    () => loadCollectionFromStorage(projectPlan),
+    [projectPlan],
+  );
+  const storageKey = storageKeyForProject(projectId, 3);
+  const legacyStorageKey = storageKeyForProject(projectId, 2);
+  const cloudMigrationKey = migrationKeyForProject(projectId);
+  const [pages, setPages] = useState<ProjectNotePage[]>(loadedCollection.pages);
+  const [activePageId, setActivePageId] = useState(loadedCollection.activePageId);
+  const notePages = useMemo(() => pages.filter((page) => page.kind === "note"), [pages]);
+  const pagesRef = useRef(pages);
+  const activePageIdRef = useRef(activePageId);
+  const activePage =
+    notePages.find((page) => page.id === activePageId) ??
+    notePages[0] ??
+    pageFromLoadedDocument(defaultLoadedDocument(projectPlan), projectPlan);
   const [noteMeta, setNoteMeta] = useState<NoteMeta>({
-    title: loadedDocument.title,
-    status: loadedDocument.status,
-    comments: loadedDocument.comments,
-    updatedAt: loadedDocument.updatedAt,
+    title: activePage.title,
+    status: activePage.status,
+    comments: activePage.comments,
+    updatedAt: activePage.updatedAt,
   });
   const noteMetaRef = useRef(noteMeta);
   const [commentDraft, setCommentDraft] = useState("");
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(() => new Set());
   const [showSidebar, setShowSidebar] = useState(() =>
     typeof window === "undefined" ? true : window.matchMedia("(min-width: 1280px)").matches,
   );
+  const [activeNotesPanel, setActiveNotesPanel] = useState<NotesPanel>("outline");
   const [wordCount, setWordCount] = useState(0);
   const [headings, setHeadings] = useState<NoteHeading[]>([]);
-  const [lastSavedAt, setLastSavedAt] = useState(loadedDocument.updatedAt);
+  const [lastSavedAt, setLastSavedAt] = useState(activePage.updatedAt);
+  const [saveState, setSaveState] = useState<SaveState>("loading");
   const [slashMenu, setSlashMenu] = useState<SlashMenuState | null>(null);
   const [slashIndex, setSlashIndex] = useState(0);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const editorShellRef = useRef<HTMLDivElement | null>(null);
   const persistTimerRef = useRef<number | null>(null);
-  const didPersistMigrationRef = useRef(loadedDocument.source === "v2");
+  const cloudLoadTokenRef = useRef(0);
+  const saveTokenRef = useRef(0);
+  const localDirtyDuringCloudLoadRef = useRef(false);
+
+  useEffect(() => {
+    pagesRef.current = pages;
+  }, [pages]);
+
+  useEffect(() => {
+    activePageIdRef.current = activePageId;
+  }, [activePageId]);
 
   useEffect(() => {
     noteMetaRef.current = noteMeta;
   }, [noteMeta]);
 
+  useEffect(() => {
+    setExpandedSections((current) => {
+      const next = new Set(current);
+
+      for (const page of pages) {
+        if (page.kind === "section" && page.linkedEntityType !== "manual") {
+          next.add(page.id);
+        }
+      }
+
+      return next;
+    });
+  }, [pages]);
+
   const editor = useEditor(
     {
       extensions: editorExtensions,
-      content: loadedDocument.content,
-      contentType: loadedDocument.contentType,
+      content: activePage.content,
+      contentType: activePage.contentType,
       immediatelyRender: false,
       shouldRerenderOnTransaction: true,
       editorProps: {
@@ -727,26 +1173,190 @@ export function ProjectNotesNotebook({ projectPlan }: ProjectNotesNotebookProps)
     [storageKey],
   );
 
+  useEffect(() => {
+    const nextPages = loadedCollection.pages;
+    const nextActivePage =
+      resolveActiveNotePage(nextPages, loadedCollection.activePageId) ?? nextPages[0];
+    const nextActivePageId = nextActivePage.id;
+
+    pagesRef.current = nextPages;
+    activePageIdRef.current = nextActivePageId;
+    setPages(nextPages);
+    setActivePageId(nextActivePageId);
+    const nextMeta = {
+      title: nextActivePage.title,
+      status: nextActivePage.status,
+      comments: nextActivePage.comments,
+      updatedAt: nextActivePage.updatedAt,
+    };
+    noteMetaRef.current = nextMeta;
+    setNoteMeta(nextMeta);
+    setLastSavedAt(nextActivePage.updatedAt);
+    setSaveState("loading");
+    setCommentDraft("");
+    localDirtyDuringCloudLoadRef.current = false;
+
+    if (editor) {
+      editor.commands.setContent(nextActivePage.content, {
+        emitUpdate: false,
+        contentType: nextActivePage.contentType,
+      });
+    }
+  }, [editor, loadedCollection]);
+
+  const commitRemotePage = useCallback(
+    (previousPageId: string, remotePage: ProjectNotePageRecord) => {
+      const fallback =
+        pagesRef.current.find((page) => page.id === previousPageId) ??
+        pagesRef.current[0] ??
+        pageFromLoadedDocument(defaultLoadedDocument(projectPlan), projectPlan);
+      const normalizedPage = normalizeNotePage(remotePage, fallback);
+
+      if (!normalizedPage) {
+        return;
+      }
+
+      const currentPage = pagesRef.current.find((page) => page.id === previousPageId);
+      const committedPage = currentPage
+        ? {
+            ...normalizedPage,
+            kind: currentPage.kind,
+            sectionId: currentPage.kind === "note" ? currentPage.sectionId : null,
+            parentSectionId:
+              currentPage.kind === "section" ? currentPage.parentSectionId : null,
+            linkedEntityType: currentPage.linkedEntityType,
+            linkedEntityId: currentPage.linkedEntityId,
+            systemKey: currentPage.systemKey,
+            title: currentPage.title,
+            status: currentPage.status,
+            content: currentPage.content,
+            contentType: currentPage.contentType,
+            markdown: currentPage.markdown,
+            comments: currentPage.comments,
+            sortOrder: currentPage.sortOrder,
+          }
+        : normalizedPage;
+      const hasExistingPage = pagesRef.current.some((page) => page.id === previousPageId);
+      const nextPages = hasExistingPage
+        ? pagesRef.current.map((page) => {
+            if (page.id === previousPageId) {
+              return committedPage;
+            }
+
+            return {
+              ...page,
+              sectionId: page.sectionId === previousPageId ? committedPage.id : page.sectionId,
+              parentSectionId:
+                page.parentSectionId === previousPageId ? committedPage.id : page.parentSectionId,
+            };
+          })
+        : [...pagesRef.current, committedPage];
+      const nextActivePageId =
+        activePageIdRef.current === previousPageId ? committedPage.id : activePageIdRef.current;
+
+      pagesRef.current = nextPages;
+      activePageIdRef.current = nextActivePageId;
+      setPages(nextPages);
+      setActivePageId(nextActivePageId);
+      setExpandedSections((current) => {
+        if (!current.has(previousPageId)) {
+          return current;
+        }
+
+        const next = new Set(current);
+        next.delete(previousPageId);
+        next.add(committedPage.id);
+        return next;
+      });
+
+      if (nextActivePageId === committedPage.id) {
+        const nextMeta = {
+          title: committedPage.title,
+          status: committedPage.status,
+          comments: committedPage.comments,
+          updatedAt: committedPage.updatedAt,
+        };
+        noteMetaRef.current = nextMeta;
+        setNoteMeta(nextMeta);
+        setLastSavedAt(normalizedPage.updatedAt);
+      }
+
+      writeCollectionBackup(storageKey, legacyStorageKey, nextActivePageId, nextPages);
+    },
+    [legacyStorageKey, projectPlan, storageKey],
+  );
+
+  const syncPageToCloud = useCallback(
+    async (page: ProjectNotePage) => {
+      if (hasOversizedEmbeddedImage(page.content)) {
+        throw new Error("EMBEDDED_IMAGE_TOO_LARGE");
+      }
+
+      const remotePage = isCloudNotePageId(page.id)
+        ? await updateNotePageInApi(projectId, page)
+        : await createNotePageInApi(projectId, page);
+
+      commitRemotePage(page.id, remotePage);
+      return remotePage;
+    },
+    [commitRemotePage, projectId],
+  );
+
   const persistDocument = useCallback(
     (editorInstance: Editor | null, metaSnapshot: NoteMeta = noteMetaRef.current) => {
       if (!editorInstance || typeof window === "undefined") {
         return;
       }
 
+      localDirtyDuringCloudLoadRef.current = true;
       const updatedAt = new Date().toISOString();
-      const saved: ProjectNoteDocumentV2 = {
-        version: 2,
-        ...metaSnapshot,
-        updatedAt,
-        content: editorInstance.getJSON(),
-        markdown: editorInstance.getMarkdown(),
-      };
+      const currentPageId = activePageIdRef.current;
+      const nextPages = pagesRef.current.map((page) =>
+        page.id === currentPageId
+          ? {
+              ...page,
+              ...metaSnapshot,
+              updatedAt,
+              content: editorInstance.getJSON(),
+              contentType: "json" as const,
+              markdown: editorInstance.getMarkdown(),
+            }
+          : page,
+      );
+      const activeSavedPage = nextPages.find((page) => page.id === currentPageId);
 
-      window.localStorage.setItem(storageKey, JSON.stringify(saved));
+      pagesRef.current = nextPages;
+      setPages(nextPages);
+      writeCollectionBackup(storageKey, legacyStorageKey, currentPageId, nextPages);
       setLastSavedAt(updatedAt);
       setNoteMeta((current) => ({ ...current, updatedAt }));
+
+      if (!activeSavedPage) {
+        return;
+      }
+
+      if (hasOversizedEmbeddedImage(activeSavedPage.content)) {
+        setSaveState("offline");
+        toast.error("Images over 1.5 MB cannot be synced yet");
+        return;
+      }
+
+      const saveToken = ++saveTokenRef.current;
+      setSaveState("saving");
+      void syncPageToCloud(activeSavedPage)
+        .then(() => {
+          if (saveTokenRef.current === saveToken) {
+            localDirtyDuringCloudLoadRef.current = false;
+            setSaveState("saved");
+          }
+        })
+        .catch(() => {
+          if (saveTokenRef.current === saveToken) {
+            setSaveState("offline");
+          }
+        });
     },
-    [storageKey],
+    [legacyStorageKey, storageKey, syncPageToCloud],
   );
 
   const schedulePersist = useCallback(
@@ -792,11 +1402,6 @@ export function ProjectNotesNotebook({ projectPlan }: ProjectNotesNotebookProps)
     editor.on("blur", () => setSlashMenu(null));
     refreshEditorState(editor);
 
-    if (!didPersistMigrationRef.current) {
-      persistDocument(editor);
-      didPersistMigrationRef.current = true;
-    }
-
     return () => {
       editor.off("update", handleUpdate);
       editor.off("selectionUpdate", handleSelectionUpdate);
@@ -806,6 +1411,279 @@ export function ProjectNotesNotebook({ projectPlan }: ProjectNotesNotebookProps)
       }
     };
   }, [editor, persistDocument, refreshEditorState, schedulePersist]);
+
+  useEffect(() => {
+    if (!editor) {
+      return;
+    }
+
+    const markdownCandidate = plainMarkdownCandidateFromJson(editor.getJSON());
+
+    if (!markdownCandidate || !looksLikeMarkdownDocument(markdownCandidate)) {
+      return;
+    }
+
+    editor.commands.setContent(markdownCandidate, {
+      contentType: "markdown",
+      emitUpdate: false,
+    });
+    refreshEditorState(editor);
+    persistDocument(editor);
+  }, [activePageId, activePage?.updatedAt, editor, persistDocument, refreshEditorState]);
+
+  useEffect(() => {
+    if (!editor || typeof window === "undefined") {
+      return;
+    }
+
+    const activeEditor = editor;
+    const loadToken = ++cloudLoadTokenRef.current;
+    let cancelled = false;
+
+    const applyRemotePages = (remotePages: ProjectNotePageRecord[]) => {
+      const fallback = pageFromLoadedDocument(defaultLoadedDocument(projectPlan), projectPlan);
+      const normalizedPages = remotePages
+        .map((page, index) =>
+          normalizeNotePage(page, { ...fallback, sortOrder: index }),
+        )
+        .filter((page): page is ProjectNotePage => Boolean(page))
+        .sort((a, b) => a.sortOrder - b.sortOrder);
+
+      if (!normalizedPages.length) {
+        return false;
+      }
+
+      const currentActivePageId = activePageIdRef.current;
+      const nextActivePage =
+        resolveActiveNotePage(normalizedPages, currentActivePageId) ?? normalizedPages[0];
+      const nextMeta = {
+        title: nextActivePage.title,
+        status: nextActivePage.status,
+        comments: nextActivePage.comments,
+        updatedAt: nextActivePage.updatedAt,
+      };
+
+      pagesRef.current = normalizedPages;
+      activePageIdRef.current = nextActivePage.id;
+      noteMetaRef.current = nextMeta;
+      setPages(normalizedPages);
+      setActivePageId(nextActivePage.id);
+      setNoteMeta(nextMeta);
+      setLastSavedAt(nextActivePage.updatedAt);
+      setCommentDraft("");
+      editor.commands.setContent(nextActivePage.content, {
+        emitUpdate: false,
+        contentType: nextActivePage.contentType,
+      });
+      refreshEditorState(editor);
+      writeCollectionBackup(storageKey, legacyStorageKey, nextActivePage.id, normalizedPages);
+      localDirtyDuringCloudLoadRef.current = false;
+      return true;
+    };
+
+    async function loadCloudPages() {
+      setSaveState("loading");
+
+      try {
+        const remotePages = await readNotePagesFromApi(projectId);
+
+        if (cancelled || cloudLoadTokenRef.current !== loadToken) {
+          return;
+        }
+
+        if (remotePages.length && localDirtyDuringCloudLoadRef.current) {
+          const fallback = pageFromLoadedDocument(defaultLoadedDocument(projectPlan), projectPlan);
+          const normalizedRemotePages = remotePages
+            .map((page, index) =>
+              normalizeNotePage(page, { ...fallback, sortOrder: index }),
+            )
+            .filter((page): page is ProjectNotePage => Boolean(page))
+            .sort((a, b) => a.sortOrder - b.sortOrder);
+          const currentPages = pagesRef.current.length
+            ? pagesRef.current
+            : loadCollectionFromStorage(projectPlan).pages;
+          const currentActivePageId = activePageIdRef.current;
+          const currentActiveIndex = currentPages.findIndex((page) => page.id === currentActivePageId);
+          const activeIndex = currentActiveIndex >= 0 ? currentActiveIndex : 0;
+          const reconciledPages = [
+            ...currentPages.map((page, index) => {
+              const remotePage = normalizedRemotePages[index];
+
+              return remotePage
+                ? {
+                    ...page,
+                    id: remotePage.id,
+                    sortOrder: index,
+                    createdAt: remotePage.createdAt,
+                  }
+                : { ...page, sortOrder: index };
+            }),
+            ...normalizedRemotePages.slice(currentPages.length),
+          ].map((page, index) => ({ ...page, sortOrder: index }));
+          const nextActivePage =
+            resolveActiveNotePage(reconciledPages, currentActivePageId) ??
+            reconciledPages[activeIndex] ??
+            normalizedRemotePages.find((page) => page.kind === "note");
+
+          if (nextActivePage) {
+            const activePageWithLatestEditor = {
+              ...nextActivePage,
+              ...noteMetaRef.current,
+              content: activeEditor.getJSON(),
+              contentType: "json" as const,
+              markdown: activeEditor.getMarkdown(),
+              updatedAt: new Date().toISOString(),
+            };
+            const nextPages = reconciledPages.map((page) =>
+              page.id === nextActivePage.id ? activePageWithLatestEditor : page,
+            );
+            const nextMeta = {
+              title: activePageWithLatestEditor.title,
+              status: activePageWithLatestEditor.status,
+              comments: activePageWithLatestEditor.comments,
+              updatedAt: activePageWithLatestEditor.updatedAt,
+            };
+
+            pagesRef.current = nextPages;
+            activePageIdRef.current = activePageWithLatestEditor.id;
+            noteMetaRef.current = nextMeta;
+            setPages(nextPages);
+            setActivePageId(activePageWithLatestEditor.id);
+            setNoteMeta(nextMeta);
+            setLastSavedAt(activePageWithLatestEditor.updatedAt);
+            writeCollectionBackup(storageKey, legacyStorageKey, activePageWithLatestEditor.id, nextPages);
+            localDirtyDuringCloudLoadRef.current = false;
+            setSaveState("saving");
+            void syncPageToCloud(activePageWithLatestEditor)
+              .then(() => setSaveState("saved"))
+              .catch(() => setSaveState("offline"));
+            return;
+          }
+        }
+
+        if (remotePages.length) {
+          applyRemotePages(remotePages);
+          setSaveState("saved");
+          return;
+        }
+
+        const localCollection = localDirtyDuringCloudLoadRef.current
+          ? {
+              activePageId: activePageIdRef.current,
+              pages: pagesRef.current.length ? pagesRef.current : loadCollectionFromStorage(projectPlan).pages,
+            }
+          : loadCollectionFromStorage(projectPlan);
+        const pagesToUpload = localCollection.pages.map((page) =>
+          page.id === localCollection.activePageId
+            ? {
+                ...page,
+                ...noteMetaRef.current,
+                content: activeEditor.getJSON(),
+                contentType: "json" as const,
+                markdown: activeEditor.getMarkdown(),
+                updatedAt: new Date().toISOString(),
+              }
+            : page,
+        );
+        const uploadedPages: ProjectNotePageRecord[] = [];
+
+        for (const page of pagesToUpload) {
+          uploadedPages.push(await createNotePageInApi(projectId, page));
+        }
+
+        if (cancelled || cloudLoadTokenRef.current !== loadToken) {
+          return;
+        }
+
+        const fallback = pageFromLoadedDocument(defaultLoadedDocument(projectPlan), projectPlan);
+        const normalizedUploadedPages = uploadedPages
+          .map((page, index) =>
+            normalizeNotePage(page, { ...fallback, sortOrder: index }),
+          )
+          .filter((page): page is ProjectNotePage => Boolean(page))
+          .sort((a, b) => a.sortOrder - b.sortOrder);
+        const currentPages = pagesRef.current.length ? pagesRef.current : pagesToUpload;
+        const currentActivePageId = activePageIdRef.current;
+        const currentActiveIndex = currentPages.findIndex((page) => page.id === currentActivePageId);
+        const activeIndex = currentActiveIndex >= 0 ? currentActiveIndex : 0;
+        const reconciledPages = [
+          ...currentPages.map((page, index) => {
+            const remotePage = normalizedUploadedPages[index];
+
+            return remotePage
+              ? {
+                  ...page,
+                  id: remotePage.id,
+                  sortOrder: index,
+                  createdAt: remotePage.createdAt,
+                }
+              : { ...page, sortOrder: index };
+          }),
+          ...normalizedUploadedPages.slice(currentPages.length),
+        ].map((page, index) => ({ ...page, sortOrder: index }));
+        const nextActivePage =
+          resolveActiveNotePage(reconciledPages, currentActivePageId) ??
+          reconciledPages[activeIndex];
+
+        if (nextActivePage) {
+          const activePageWithLatestEditor = {
+            ...nextActivePage,
+            ...noteMetaRef.current,
+            content: activeEditor.getJSON(),
+            contentType: "json" as const,
+            markdown: activeEditor.getMarkdown(),
+            updatedAt: new Date().toISOString(),
+          };
+          const nextPages = reconciledPages.map((page) =>
+            page.id === nextActivePage.id ? activePageWithLatestEditor : page,
+          );
+          const nextMeta = {
+            title: activePageWithLatestEditor.title,
+            status: activePageWithLatestEditor.status,
+            comments: activePageWithLatestEditor.comments,
+            updatedAt: activePageWithLatestEditor.updatedAt,
+          };
+
+          pagesRef.current = nextPages;
+          activePageIdRef.current = activePageWithLatestEditor.id;
+          noteMetaRef.current = nextMeta;
+          setPages(nextPages);
+          setActivePageId(activePageWithLatestEditor.id);
+          setNoteMeta(nextMeta);
+          setLastSavedAt(activePageWithLatestEditor.updatedAt);
+          writeCollectionBackup(storageKey, legacyStorageKey, activePageWithLatestEditor.id, nextPages);
+          window.localStorage.setItem(cloudMigrationKey, new Date().toISOString());
+          localDirtyDuringCloudLoadRef.current = false;
+          setSaveState("saving");
+          void syncPageToCloud(activePageWithLatestEditor)
+            .then(() => setSaveState("saved"))
+            .catch(() => setSaveState("offline"));
+          return;
+        }
+
+        setSaveState("saved");
+      } catch {
+        if (!cancelled && cloudLoadTokenRef.current === loadToken) {
+          setSaveState("offline");
+        }
+      }
+    }
+
+    void loadCloudPages();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    cloudMigrationKey,
+    editor,
+    legacyStorageKey,
+    projectId,
+    projectPlan,
+    refreshEditorState,
+    storageKey,
+    syncPageToCloud,
+  ]);
 
   useEffect(() => {
     setSlashIndex(0);
@@ -824,8 +1702,22 @@ export function ProjectNotesNotebook({ projectPlan }: ProjectNotesNotebookProps)
   }, [slashMenu]);
 
   const saveMeta = (nextMeta: NoteMeta) => {
+    localDirtyDuringCloudLoadRef.current = true;
     noteMetaRef.current = nextMeta;
     setNoteMeta(nextMeta);
+    const nextPages = pagesRef.current.map((page) =>
+      page.id === activePageIdRef.current
+        ? {
+            ...page,
+            title: nextMeta.title,
+            status: nextMeta.status,
+            comments: nextMeta.comments,
+            updatedAt: nextMeta.updatedAt,
+          }
+        : page,
+    );
+    pagesRef.current = nextPages;
+    setPages(nextPages);
     schedulePersist(nextMeta);
   };
 
@@ -835,6 +1727,256 @@ export function ProjectNotesNotebook({ projectPlan }: ProjectNotesNotebookProps)
 
   const handleStatusChange = (status: ProjectNoteDocumentV2["status"]) => {
     saveMeta({ ...noteMetaRef.current, status });
+  };
+
+  const selectNotePage = (pageId: string) => {
+    if (!editor || pageId === activePageIdRef.current) {
+      return;
+    }
+
+    if (persistTimerRef.current) {
+      window.clearTimeout(persistTimerRef.current);
+      persistTimerRef.current = null;
+    }
+
+    persistDocument(editor);
+    const page = pagesRef.current.find(
+      (candidate) => candidate.id === pageId && candidate.kind === "note",
+    );
+
+    if (!page) {
+      return;
+    }
+
+    activePageIdRef.current = page.id;
+    setActivePageId(page.id);
+    const nextMeta = {
+      title: page.title,
+      status: page.status,
+      comments: page.comments,
+      updatedAt: page.updatedAt,
+    };
+    noteMetaRef.current = nextMeta;
+    setNoteMeta(nextMeta);
+    setLastSavedAt(page.updatedAt);
+    setCommentDraft("");
+    editor.commands.setContent(page.content, {
+      emitUpdate: false,
+      contentType: page.contentType,
+    });
+    refreshEditorState(editor);
+  };
+
+  const createNotePage = (sectionId: string | null = null) => {
+    localDirtyDuringCloudLoadRef.current = true;
+    const now = new Date().toISOString();
+    const nextPage: ProjectNotePage = {
+      id: createId(LOCAL_NOTE_PAGE_PREFIX),
+      kind: "note",
+      sectionId,
+      parentSectionId: null,
+      linkedEntityType: "manual",
+      linkedEntityId: null,
+      systemKey: null,
+      title: "Untitled page",
+      status: "Draft",
+      content: "# Untitled page\n\n",
+      contentType: "markdown",
+      markdown: "# Untitled page\n\n",
+      comments: [],
+      sortOrder: pagesRef.current.length,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    if (editor) {
+      persistDocument(editor);
+    }
+
+    const nextPages = [...pagesRef.current, nextPage];
+
+    pagesRef.current = nextPages;
+    activePageIdRef.current = nextPage.id;
+    setPages(nextPages);
+    setActivePageId(nextPage.id);
+    const nextMeta = {
+      title: nextPage.title,
+      status: nextPage.status,
+      comments: nextPage.comments,
+      updatedAt: nextPage.updatedAt,
+    };
+    noteMetaRef.current = nextMeta;
+    setNoteMeta(nextMeta);
+    setLastSavedAt(now);
+    setCommentDraft("");
+    writeCollectionBackup(storageKey, legacyStorageKey, nextPage.id, nextPages);
+    editor?.commands.setContent(nextPage.content, {
+      emitUpdate: false,
+      contentType: nextPage.contentType,
+    });
+    editor?.commands.focus("end");
+    setSaveState("saving");
+    void createNotePageInApi(projectId, nextPage)
+      .then((remotePage) => {
+        commitRemotePage(nextPage.id, remotePage);
+        if (editor) {
+          persistDocument(editor);
+        }
+        localDirtyDuringCloudLoadRef.current = false;
+        setSaveState("saved");
+      })
+      .catch(() => setSaveState("offline"));
+  };
+
+  const createSection = (parentSectionId: string | null = null) => {
+    const title = window.prompt(
+      parentSectionId ? "Subsection name" : "Section name",
+      parentSectionId ? "New subsection" : "New section",
+    );
+
+    if (!title?.trim()) {
+      return;
+    }
+
+    localDirtyDuringCloudLoadRef.current = true;
+    const now = new Date().toISOString();
+    const nextSection: ProjectNotePage = {
+      id: createId("local-note-section"),
+      kind: "section",
+      sectionId: null,
+      parentSectionId,
+      linkedEntityType: "manual",
+      linkedEntityId: null,
+      systemKey: null,
+      title: title.trim(),
+      status: "Draft",
+      content: "",
+      contentType: "markdown",
+      markdown: "",
+      comments: [],
+      sortOrder: pagesRef.current.length,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const nextPages = [...pagesRef.current, nextSection];
+
+    pagesRef.current = nextPages;
+    setPages(nextPages);
+    setExpandedSections((current) => {
+      const next = new Set(current);
+      next.add(nextSection.id);
+      if (parentSectionId) {
+        next.add(parentSectionId);
+      }
+      return next;
+    });
+    writeCollectionBackup(storageKey, legacyStorageKey, activePageIdRef.current, nextPages);
+    setSaveState("saving");
+    void createNotePageInApi(projectId, nextSection)
+      .then((remotePage) => {
+        commitRemotePage(nextSection.id, remotePage);
+        localDirtyDuringCloudLoadRef.current = false;
+        setSaveState("saved");
+      })
+      .catch(() => setSaveState("offline"));
+  };
+
+  const updatePageOrganization = (pageId: string, patch: Partial<ProjectNotePage>) => {
+    const page = pagesRef.current.find((candidate) => candidate.id === pageId);
+
+    if (!page) {
+      return;
+    }
+
+    localDirtyDuringCloudLoadRef.current = true;
+    const updatedAt = new Date().toISOString();
+    const nextPage = {
+      ...page,
+      ...patch,
+      updatedAt,
+    };
+    const nextPages = pagesRef.current.map((candidate) =>
+      candidate.id === pageId ? nextPage : candidate,
+    );
+
+    pagesRef.current = nextPages;
+    setPages(nextPages);
+    writeCollectionBackup(storageKey, legacyStorageKey, activePageIdRef.current, nextPages);
+    setSaveState("saving");
+    void syncPageToCloud(nextPage)
+      .then(() => {
+        setSaveState("saved");
+      })
+      .catch(() => setSaveState("offline"));
+  };
+
+  const deleteNotePage = (pageId: string) => {
+    const noteCount = pagesRef.current.filter((page) => page.kind === "note").length;
+
+    if (noteCount <= 1) {
+      toast.error("Keep at least one note page in this project");
+      return;
+    }
+
+    const page = pagesRef.current.find((candidate) => candidate.id === pageId);
+    if (!page || page.kind !== "note" || page.systemKey) {
+      return;
+    }
+
+    if (!window.confirm(`Delete "${page.title || "Untitled page"}"?`)) {
+      return;
+    }
+
+    const finishDelete = () => {
+      localDirtyDuringCloudLoadRef.current = true;
+      const nextPages = pagesRef.current
+        .filter((candidate) => candidate.id !== pageId)
+        .map((candidate, index) => ({ ...candidate, sortOrder: index }));
+      const nextActivePage =
+        pageId === activePageIdRef.current
+          ? resolveActiveNotePage(nextPages, "")
+          : resolveActiveNotePage(nextPages, activePageIdRef.current);
+
+      if (!nextActivePage) {
+        return;
+      }
+
+      pagesRef.current = nextPages;
+      activePageIdRef.current = nextActivePage.id;
+      setPages(nextPages);
+      setActivePageId(nextActivePage.id);
+      const nextMeta = {
+        title: nextActivePage.title,
+        status: nextActivePage.status,
+        comments: nextActivePage.comments,
+        updatedAt: nextActivePage.updatedAt,
+      };
+      noteMetaRef.current = nextMeta;
+      setNoteMeta(nextMeta);
+      setLastSavedAt(nextActivePage.updatedAt);
+      setCommentDraft("");
+      writeCollectionBackup(storageKey, legacyStorageKey, nextActivePage.id, nextPages);
+      editor?.commands.setContent(nextActivePage.content, {
+        emitUpdate: false,
+        contentType: nextActivePage.contentType,
+      });
+    };
+
+    if (!isCloudNotePageId(pageId)) {
+      finishDelete();
+      return;
+    }
+
+    setSaveState("saving");
+    void deleteNotePageFromApi(projectId, pageId)
+      .then(() => {
+        finishDelete();
+        setSaveState("saved");
+      })
+      .catch(() => {
+        setSaveState("offline");
+        toast.error("Could not delete the note page while offline");
+      });
   };
 
   const setBlockStyle = (style: BlockStyle) => {
@@ -882,6 +2024,11 @@ export function ProjectNotesNotebook({ projectPlan }: ProjectNotesNotebookProps)
       return;
     }
 
+    if (file.size > MAX_EMBEDDED_IMAGE_BYTES) {
+      toast.error("Images over 1.5 MB cannot be synced yet");
+      return;
+    }
+
     try {
       const src = await readImageFile(file);
       editor.chain().focus().setImage({ src, alt: file.name, title: file.name }).run();
@@ -902,12 +2049,20 @@ export function ProjectNotesNotebook({ projectPlan }: ProjectNotesNotebookProps)
   const handleEditorPaste = (event: ReactClipboardEvent<HTMLDivElement>) => {
     const imageFile = Array.from(event.clipboardData.files).find((file) => file.type.startsWith("image/"));
 
-    if (!imageFile) {
+    if (imageFile) {
+      event.preventDefault();
+      void insertImageFile(imageFile);
+      return;
+    }
+
+    const text = event.clipboardData.getData("text/plain");
+
+    if (!editor || !looksLikeMarkdownDocument(text)) {
       return;
     }
 
     event.preventDefault();
-    void insertImageFile(imageFile);
+    editor.chain().focus().insertContent(text, { contentType: "markdown" }).run();
   };
 
   const runSlashCommand = (commandId: SlashCommand["id"]) => {
@@ -1072,8 +2227,84 @@ export function ProjectNotesNotebook({ projectPlan }: ProjectNotesNotebookProps)
       className="flex min-h-0 flex-1 flex-col bg-[var(--background)]"
     >
       <div className="flex min-h-0 flex-1 overflow-hidden">
-        <main className="min-w-0 flex-1 overflow-y-auto px-6 py-6" style={{ scrollbarWidth: "thin" }}>
+        <aside className="hidden w-[clamp(13rem,18vw,17rem)] shrink-0 flex-col border-r border-[var(--border)] bg-[var(--surface)] p-3 lg:flex">
+          <div className="mb-2 flex items-center justify-between gap-2 px-1">
+            <div>
+              <h2 className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-foreground)]">
+                Project Notes
+              </h2>
+              <p className="text-[11px] text-[var(--muted-foreground)]">
+                Sections mirror planning
+              </p>
+            </div>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                aria-label="Create section"
+                title="Create section"
+                onClick={() => createSection(null)}
+                className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--surface-elevated)] text-[var(--muted-foreground)] transition hover:bg-[var(--surface-muted)] hover:text-[var(--foreground-strong)]"
+              >
+                <FolderPlus className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                aria-label="Create note page"
+                title="Create note"
+                onClick={() => createNotePage(null)}
+                className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--surface-elevated)] text-[var(--muted-foreground)] transition hover:bg-[var(--surface-muted)] hover:text-[var(--foreground-strong)]"
+              >
+                <Plus className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+          <NotesNavigationTree
+            pages={pages}
+            activePageId={activePageId}
+            expandedSections={expandedSections}
+            onToggleSection={(sectionId) =>
+              setExpandedSections((current) => {
+                const next = new Set(current);
+                if (next.has(sectionId)) {
+                  next.delete(sectionId);
+                } else {
+                  next.add(sectionId);
+                }
+                return next;
+              })
+            }
+            onSelectNote={selectNotePage}
+            onCreateNote={createNotePage}
+            onCreateSection={createSection}
+            onDeleteNote={deleteNotePage}
+            onMoveNote={(noteId, sectionId) => updatePageOrganization(noteId, { sectionId })}
+          />
+        </aside>
+
+        <main className="min-w-0 flex-1 overflow-y-auto px-3 pb-8 pt-4 sm:px-6 sm:py-6" style={{ scrollbarWidth: "thin" }}>
           <div className="mx-auto max-w-5xl">
+            <div className="mb-3 flex items-center gap-2 lg:hidden">
+              <Select
+                aria-label="Select note page"
+                value={activePageId}
+                onChange={(event) => selectNotePage(event.target.value)}
+                className="h-9 min-w-0 flex-1 rounded-lg text-sm"
+              >
+                {notePages.map((page) => (
+                  <option key={page.id} value={page.id}>
+                    {page.title || "Untitled page"}
+                  </option>
+                ))}
+              </Select>
+              <button
+                type="button"
+                aria-label="Create note page"
+                onClick={() => createNotePage(null)}
+                className="flex h-9 w-9 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)]"
+              >
+                <Plus className="h-4 w-4" />
+              </button>
+            </div>
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2 shadow-[var(--shadow-soft)]">
               <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <Select
@@ -1133,7 +2364,7 @@ export function ProjectNotesNotebook({ projectPlan }: ProjectNotesNotebookProps)
                 </button>
                 <span className="hidden items-center gap-1.5 rounded-full border border-[var(--border)] px-2.5 py-1 text-[11px] font-medium text-[var(--muted-foreground)] sm:flex">
                   <Save className="h-3.5 w-3.5" />
-                  Saved
+                  {getNoteSaveLabel(saveState)}
                 </span>
                 <button
                   type="button"
@@ -1155,12 +2386,12 @@ export function ProjectNotesNotebook({ projectPlan }: ProjectNotesNotebookProps)
             </div>
 
             <article className="rounded-xl border border-[var(--border)] bg-[var(--surface)] shadow-[var(--shadow-soft)]">
-              <div className="border-b border-[var(--border)] px-8 py-7">
+              <div className="border-b border-[var(--border)] px-4 py-5 sm:px-8 sm:py-7">
                 <Input
                   data-testid="project-note-title"
                   value={noteMeta.title}
                   onChange={(event) => handleTitleChange(event.target.value)}
-                  className="h-auto border-0 bg-transparent px-0 py-0 text-3xl font-semibold tracking-[-0.03em] text-[var(--foreground-strong)] shadow-none focus:ring-0"
+                  className="h-auto border-0 bg-transparent px-0 py-0 text-2xl font-semibold tracking-[-0.03em] text-[var(--foreground-strong)] shadow-none focus:ring-0 sm:text-3xl"
                 />
                 <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-[var(--muted-foreground)]">
                   <span className="flex items-center gap-1.5">
@@ -1188,7 +2419,7 @@ export function ProjectNotesNotebook({ projectPlan }: ProjectNotesNotebookProps)
                 ref={editorShellRef}
                 data-notes-editor-shell="true"
                 data-testid="project-note-editor"
-                className="project-notes-editor relative px-8 py-7"
+                className="project-notes-editor relative px-4 py-5 sm:px-8 sm:py-7"
                 onKeyDown={handleEditorKeyDown}
                 onPaste={handleEditorPaste}
               >
@@ -1212,9 +2443,26 @@ export function ProjectNotesNotebook({ projectPlan }: ProjectNotesNotebookProps)
           </div>
         </main>
 
-        {showSidebar ? (
-          <aside className="fixed inset-y-0 right-0 z-[80] flex w-[320px] shrink-0 flex-col border-l border-[var(--border)] bg-[var(--surface)] shadow-[var(--shadow-float)] xl:static xl:z-auto xl:shadow-none">
+        <aside
+          className={cn(
+            "fixed inset-y-0 right-0 z-[80] min-h-0 shrink-0 border-l border-[var(--border)] bg-[var(--surface)] shadow-[var(--shadow-float)] lg:static lg:z-auto lg:shadow-none",
+            showSidebar
+              ? "flex w-[min(84vw,18.5rem)] lg:w-[clamp(14.5rem,19.8vw,18.5rem)]"
+              : "hidden w-12 lg:flex",
+          )}
+        >
+          <NotesPanelRail
+            activePanel={activeNotesPanel}
+            expanded={showSidebar}
+            onSelect={(panel) => {
+              setActiveNotesPanel(panel);
+              setShowSidebar(true);
+            }}
+            onToggle={() => setShowSidebar((current) => !current)}
+          />
+          {showSidebar ? (
             <NotesSidebar
+              activePanel={activeNotesPanel}
               outline={headings}
               comments={noteMeta.comments}
               commentDraft={commentDraft}
@@ -1223,8 +2471,216 @@ export function ProjectNotesNotebook({ projectPlan }: ProjectNotesNotebookProps)
               onClose={() => setShowSidebar(false)}
               onJumpToHeading={jumpToHeading}
             />
-          </aside>
+          ) : null}
+        </aside>
+      </div>
+    </div>
+  );
+}
+
+function NotesNavigationTree({
+  pages,
+  activePageId,
+  expandedSections,
+  onToggleSection,
+  onSelectNote,
+  onCreateNote,
+  onCreateSection,
+  onDeleteNote,
+  onMoveNote,
+}: {
+  pages: ProjectNotePage[];
+  activePageId: string;
+  expandedSections: Set<string>;
+  onToggleSection: (sectionId: string) => void;
+  onSelectNote: (pageId: string) => void;
+  onCreateNote: (sectionId: string | null) => void;
+  onCreateSection: (parentSectionId: string | null) => void;
+  onDeleteNote: (pageId: string) => void;
+  onMoveNote: (pageId: string, sectionId: string | null) => void;
+}) {
+  const sortedPages = useMemo(
+    () => [...pages].sort((a, b) => a.sortOrder - b.sortOrder),
+    [pages],
+  );
+  const notes = sortedPages.filter((page) => page.kind === "note");
+  const sections = sortedPages.filter((page) => page.kind === "section");
+  const sectionsByParent = new Map<string | null, ProjectNotePage[]>();
+  const notesBySection = new Map<string | null, ProjectNotePage[]>();
+
+  for (const section of sections) {
+    const parentId = section.parentSectionId ?? null;
+    sectionsByParent.set(parentId, [...(sectionsByParent.get(parentId) ?? []), section]);
+  }
+
+  for (const note of notes) {
+    const sectionId = note.sectionId ?? null;
+    notesBySection.set(sectionId, [...(notesBySection.get(sectionId) ?? []), note]);
+  }
+
+  const projectDescriptionNotes = (notesBySection.get(null) ?? []).filter(
+    (note) => note.systemKey === "project:description",
+  );
+  const uncategorizedNotes = (notesBySection.get(null) ?? []).filter(
+    (note) => note.systemKey !== "project:description",
+  );
+
+  const handleDrop = (
+    event: React.DragEvent<HTMLDivElement>,
+    sectionId: string | null,
+  ) => {
+    event.preventDefault();
+    const noteId = event.dataTransfer.getData("application/x-inflara-note-page");
+    const note = notes.find((candidate) => candidate.id === noteId);
+
+    if (note && note.sectionId !== sectionId) {
+      onMoveNote(note.id, sectionId);
+    }
+  };
+
+  const renderNote = (note: ProjectNotePage, depth = 0) => (
+    <div
+      key={note.id}
+      data-note-kind="note"
+      data-note-title={note.title || "Untitled page"}
+      draggable
+      onDragStart={(event) => {
+        event.dataTransfer.setData("application/x-inflara-note-page", note.id);
+        event.dataTransfer.effectAllowed = "move";
+      }}
+      className={cn(
+        "group flex items-center gap-2 rounded-lg border py-1.5 pr-1.5 transition",
+        note.id === activePageId
+          ? "border-[var(--accent-soft)] bg-[var(--accent-soft)] text-[var(--foreground-strong)]"
+          : "border-transparent text-[var(--muted-foreground)] hover:bg-[var(--surface-muted)] hover:text-[var(--foreground-strong)]",
+      )}
+      style={{ paddingLeft: `${8 + depth * 14}px` }}
+    >
+      <button
+        type="button"
+        onClick={() => onSelectNote(note.id)}
+        className="flex min-w-0 flex-1 items-center gap-2 text-left"
+      >
+        <FileText className="h-4 w-4 shrink-0" />
+        <span className="truncate text-sm font-medium">
+          {note.title || "Untitled page"}
+        </span>
+      </button>
+      <button
+        type="button"
+        aria-label={`Delete ${note.title || "Untitled page"}`}
+        onClick={() => onDeleteNote(note.id)}
+        disabled={notes.length <= 1 || Boolean(note.systemKey)}
+        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--muted-foreground)] opacity-0 transition hover:bg-[var(--surface)] hover:text-[var(--danger)] disabled:cursor-not-allowed disabled:opacity-0 group-hover:opacity-100"
+      >
+        <Trash2 className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+
+  const renderSection = (section: ProjectNotePage, depth = 0): React.ReactNode => {
+    const isExpanded = expandedSections.has(section.id);
+    const childSections = sectionsByParent.get(section.id) ?? [];
+    const sectionNotes = notesBySection.get(section.id) ?? [];
+
+    return (
+      <div key={section.id} className="space-y-1">
+        <div
+          data-note-kind="section"
+          data-note-title={section.title}
+          onDragOver={(event) => event.preventDefault()}
+          onDrop={(event) => handleDrop(event, section.id)}
+          className="group flex items-center gap-1 rounded-lg border border-transparent py-1.5 pr-1.5 text-[var(--muted-foreground)] transition hover:bg-[var(--surface-muted)] hover:text-[var(--foreground-strong)]"
+          style={{ paddingLeft: `${4 + depth * 14}px` }}
+        >
+          <button
+            type="button"
+            aria-label={isExpanded ? `Collapse ${section.title}` : `Expand ${section.title}`}
+            onClick={() => onToggleSection(section.id)}
+            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md hover:bg-[var(--surface)]"
+          >
+            {isExpanded ? (
+              <ChevronDown className="h-3.5 w-3.5" />
+            ) : (
+              <ChevronRight className="h-3.5 w-3.5" />
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={() => onToggleSection(section.id)}
+            className="flex min-w-0 flex-1 items-center gap-2 text-left"
+          >
+            {isExpanded ? (
+              <FolderOpen className="h-4 w-4 shrink-0" />
+            ) : (
+              <Folder className="h-4 w-4 shrink-0" />
+            )}
+            <span className="truncate text-sm font-semibold">{section.title}</span>
+          </button>
+          <button
+            type="button"
+            aria-label={`Create note in ${section.title}`}
+            title="Create note"
+            onClick={() => {
+              if (!isExpanded) {
+                onToggleSection(section.id);
+              }
+              onCreateNote(section.id);
+            }}
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md opacity-0 transition hover:bg-[var(--surface)] group-hover:opacity-100"
+          >
+            <Plus className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            aria-label={`Create subsection in ${section.title}`}
+            title="Create subsection"
+            onClick={() => {
+              if (!isExpanded) {
+                onToggleSection(section.id);
+              }
+              onCreateSection(section.id);
+            }}
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md opacity-0 transition hover:bg-[var(--surface)] group-hover:opacity-100"
+          >
+            <FolderPlus className="h-3.5 w-3.5" />
+          </button>
+        </div>
+        {isExpanded ? (
+          <div className="space-y-1">
+            {sectionNotes.map((note) => renderNote(note, depth + 1))}
+            {childSections.map((child) => renderSection(child, depth + 1))}
+          </div>
         ) : null}
+      </div>
+    );
+  };
+
+  return (
+    <div
+      className="min-h-0 flex-1 space-y-1 overflow-y-auto pr-1"
+      style={{ scrollbarWidth: "thin" }}
+    >
+      {projectDescriptionNotes.map((note) => renderNote(note))}
+      {(sectionsByParent.get(null) ?? []).map((section) => renderSection(section))}
+      <div
+        onDragOver={(event) => event.preventDefault()}
+        onDrop={(event) => handleDrop(event, null)}
+        className="mt-2 rounded-lg border border-dashed border-[var(--border)] p-1"
+      >
+        <div className="flex items-center gap-2 px-2 py-1 text-xs font-semibold uppercase tracking-wide text-[var(--muted-foreground)]">
+          <Folder className="h-3.5 w-3.5" />
+          Uncategorized
+        </div>
+        <div className="space-y-1">
+          {uncategorizedNotes.length ? (
+            uncategorizedNotes.map((note) => renderNote(note, 1))
+          ) : (
+            <p className="px-2 py-1.5 text-xs text-[var(--muted-foreground)]">
+              No uncategorized notes.
+            </p>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -1322,7 +2778,67 @@ function SlashCommandMenu({
   );
 }
 
+function NotesPanelRail({
+  activePanel,
+  expanded,
+  onSelect,
+  onToggle,
+}: {
+  activePanel: NotesPanel;
+  expanded: boolean;
+  onSelect: (panel: NotesPanel) => void;
+  onToggle: () => void;
+}) {
+  const items: Array<{
+    id: NotesPanel;
+    label: string;
+    icon: LucideIcon;
+  }> = [
+    { id: "collaboration", label: "Show collaboration", icon: Users },
+    { id: "outline", label: "Show outline", icon: PanelRight },
+    { id: "comments", label: "Show comments", icon: MessageSquare },
+  ];
+
+  return (
+    <div className="flex w-12 shrink-0 flex-col items-center gap-2 border-r border-[var(--border)] bg-[var(--surface-muted)]/80 px-1.5 py-3">
+      <button
+        type="button"
+        aria-label={expanded ? "Collapse notes sidebar" : "Expand notes sidebar"}
+        title={expanded ? "Collapse sidebar" : "Expand sidebar"}
+        onClick={onToggle}
+        className="flex h-9 w-9 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition hover:bg-[var(--surface)] hover:text-[var(--foreground-strong)]"
+      >
+        <PanelRight className={cn("h-4 w-4 transition-transform", !expanded && "rotate-180")} />
+      </button>
+      <span className="h-px w-7 bg-[var(--border)]" />
+      {items.map((item) => {
+        const Icon = item.icon;
+        const isActive = activePanel === item.id && expanded;
+
+        return (
+          <button
+            key={item.id}
+            type="button"
+            aria-label={item.label}
+            title={item.label.replace("Show ", "")}
+            onClick={() => onSelect(item.id)}
+            className={cn(
+              "flex h-9 w-9 items-center justify-center rounded-lg transition",
+              isActive
+                ? "bg-[var(--accent-soft)] text-[var(--accent-strong)]"
+                : "text-[var(--muted-foreground)] hover:bg-[var(--surface)] hover:text-[var(--foreground-strong)]",
+            )}
+          >
+            <Icon className="h-4 w-4" />
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function NotesSidebar({
+  activePanel,
   outline,
   comments,
   commentDraft,
@@ -1331,6 +2847,7 @@ function NotesSidebar({
   onClose,
   onJumpToHeading,
 }: {
+  activePanel: NotesPanel;
   outline: NoteHeading[];
   comments: NoteComment[];
   commentDraft: string;
@@ -1339,128 +2856,156 @@ function NotesSidebar({
   onClose: () => void;
   onJumpToHeading: (headingIndex: number) => void;
 }) {
+  const title =
+    activePanel === "collaboration"
+      ? "Collaboration"
+      : activePanel === "outline"
+        ? "Outline"
+        : "Comments";
+  const HeaderIcon =
+    activePanel === "collaboration"
+      ? Users
+      : activePanel === "outline"
+        ? PanelRight
+        : MessageSquare;
+
   return (
-    <>
-      <div className="border-b border-[var(--border)] p-5">
-        <div className="flex items-center justify-between gap-3">
-          <h2 className="text-sm font-semibold text-[var(--foreground-strong)]">Collaboration</h2>
-          <div className="flex items-center gap-2">
-            <Users className="h-4 w-4 text-[var(--muted-foreground)]" />
-            <button
-              type="button"
-              aria-label="Close notes sidebar"
-              onClick={onClose}
-              className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition hover:bg-[var(--surface-muted)] hover:text-[var(--foreground-strong)] xl:hidden"
-            >
-              x
-            </button>
-          </div>
+    <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[var(--border)] px-4 py-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <HeaderIcon className="h-4 w-4 shrink-0 text-[var(--muted-foreground)]" />
+          <h2 className="truncate text-sm font-semibold text-[var(--foreground-strong)]">
+            {title}
+          </h2>
         </div>
-        <p className="mt-5 text-[11px] font-semibold uppercase text-[var(--muted-foreground)]">
-          Active now
-        </p>
-        <div className="mt-3 flex items-center">
-          {[
-            ["JD", "bg-[color:#dbeafe] text-[color:#1d4ed8]"],
-            ["AL", "bg-[color:#dcfce7] text-[color:#15803d]"],
-            ["+2", "bg-[var(--surface-muted)] text-[var(--foreground-strong)]"],
-          ].map(([label, className], index) => (
-            <span
-              key={label}
-              className={cn(
-                "-ml-2 flex h-9 w-9 items-center justify-center rounded-full border-2 border-[var(--surface)] text-xs font-semibold first:ml-0",
-                className,
-              )}
-              style={{ zIndex: 3 - index }}
-            >
-              {label}
-            </span>
-          ))}
-        </div>
+        <button
+          type="button"
+          aria-label="Collapse notes sidebar"
+          onClick={onClose}
+          className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition hover:bg-[var(--surface-muted)] hover:text-[var(--foreground-strong)]"
+        >
+          <PanelRight className="h-4 w-4" />
+        </button>
       </div>
 
-      <div className="border-b border-[var(--border)] p-5">
-        <div className="flex items-center justify-between gap-3">
-          <h2 className="text-sm font-semibold text-[var(--foreground-strong)]">Outline</h2>
-          <PanelRight className="h-4 w-4 text-[var(--muted-foreground)]" />
-        </div>
-        <div className="mt-3 grid gap-1">
-          {outline.length ? (
-            outline.map((heading) => (
-              <button
-                key={`${heading.index}-${heading.text}`}
-                type="button"
+      {activePanel === "collaboration" ? (
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4" style={{ scrollbarWidth: "thin" }}>
+          <p className="text-[11px] font-semibold uppercase text-[var(--muted-foreground)]">
+            Active now
+          </p>
+          <div className="mt-3 flex items-center">
+            {[
+              ["JD", "bg-[color:#dbeafe] text-[color:#1d4ed8]"],
+              ["AL", "bg-[color:#dcfce7] text-[color:#15803d]"],
+              ["+2", "bg-[var(--surface-muted)] text-[var(--foreground-strong)]"],
+            ].map(([label, className], index) => (
+              <span
+                key={label}
                 className={cn(
-                  "truncate rounded-lg px-2 py-1.5 text-left text-xs text-[var(--muted-foreground)] transition hover:bg-[var(--surface-muted)] hover:text-[var(--foreground-strong)]",
-                  heading.level === 2 && "pl-5",
+                  "-ml-2 flex h-9 w-9 items-center justify-center rounded-full border-2 border-[var(--surface)] text-xs font-semibold first:ml-0",
+                  className,
                 )}
-                onClick={() => onJumpToHeading(heading.index)}
+                style={{ zIndex: 3 - index }}
               >
-                {heading.text}
-              </button>
-            ))
-          ) : (
-            <p className="text-xs leading-5 text-[var(--muted-foreground)]">No sections yet.</p>
-          )}
-        </div>
-      </div>
-
-      <div className="flex min-h-0 flex-1 flex-col p-5">
-        <div className="flex items-center justify-between gap-3">
-          <h2 className="text-sm font-semibold text-[var(--foreground-strong)]">Comments</h2>
-          <MessageSquare className="h-4 w-4 text-[var(--muted-foreground)]" />
-        </div>
-        <div className="mt-4 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1" style={{ scrollbarWidth: "thin" }}>
-          {comments.map((comment) => (
-            <article
-              key={comment.id}
-              className="rounded-xl border border-[var(--border)] bg-[var(--surface-muted)] p-3"
-            >
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex min-w-0 items-center gap-2">
-                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[var(--foreground-strong)] text-[10px] font-semibold text-[var(--surface)]">
-                    {comment.initials}
-                  </span>
-                  <p className="truncate text-xs font-semibold text-[var(--foreground-strong)]">
-                    {comment.author}
-                  </p>
-                </div>
-                <span className="shrink-0 text-[10px] text-[var(--muted-foreground)]">
-                  {formatRelativeDate(comment.createdAt)}
-                </span>
-              </div>
-              <p className="mt-2 text-xs leading-5 text-[var(--muted-foreground)]">
-                {comment.body}
-              </p>
-            </article>
-          ))}
-        </div>
-        <div className="mt-4 border-t border-[var(--border)] pt-4">
-          <div className="flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface-muted)] px-3 py-2">
-            <Input
-              data-testid="project-note-comment-input"
-              value={commentDraft}
-              onChange={(event) => setCommentDraft(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  onAddComment();
-                }
-              }}
-              placeholder="Add a comment..."
-              className="h-8 border-0 bg-transparent px-0 text-xs shadow-none focus:ring-0"
-            />
-            <button
-              type="button"
-              aria-label="Send comment"
-              onClick={onAddComment}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[var(--accent-strong)] transition hover:bg-[var(--accent-soft)]"
-            >
-              <Send className="h-4 w-4" />
-            </button>
+                {label}
+              </span>
+            ))}
+          </div>
+          <div className="mt-6 rounded-xl border border-[var(--border)] bg-[var(--surface-muted)] p-3">
+            <p className="text-xs font-semibold text-[var(--foreground-strong)]">Project collaborators</p>
+            <p className="mt-1 text-xs leading-5 text-[var(--muted-foreground)]">
+              People shown here can review notes and comments for this project.
+            </p>
           </div>
         </div>
-      </div>
-    </>
+      ) : null}
+
+      {activePanel === "outline" ? (
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4" style={{ scrollbarWidth: "thin" }}>
+          <div className="grid gap-1">
+            {outline.length ? (
+              outline.map((heading) => (
+                <button
+                  key={`${heading.index}-${heading.text}`}
+                  type="button"
+                  className={cn(
+                    "truncate rounded-lg px-2 py-1.5 text-left text-xs text-[var(--muted-foreground)] transition hover:bg-[var(--surface-muted)] hover:text-[var(--foreground-strong)]",
+                    heading.level === 2 && "pl-5",
+                  )}
+                  onClick={() => onJumpToHeading(heading.index)}
+                >
+                  {heading.text}
+                </button>
+              ))
+            ) : (
+              <p className="text-xs leading-5 text-[var(--muted-foreground)]">
+                A document outline will appear when you add headings.
+              </p>
+            )}
+          </div>
+        </div>
+      ) : null}
+
+      {activePanel === "comments" ? (
+        <div className="flex min-h-0 flex-1 flex-col px-4 py-4">
+          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1" style={{ scrollbarWidth: "thin" }}>
+            {comments.length ? (
+              comments.map((comment) => (
+                <article
+                  key={comment.id}
+                  className="rounded-xl border border-[var(--border)] bg-[var(--surface-muted)] p-3"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[var(--foreground-strong)] text-[10px] font-semibold text-[var(--surface)]">
+                        {comment.initials}
+                      </span>
+                      <p className="truncate text-xs font-semibold text-[var(--foreground-strong)]">
+                        {comment.author}
+                      </p>
+                    </div>
+                    <span className="shrink-0 text-[10px] text-[var(--muted-foreground)]">
+                      {formatRelativeDate(comment.createdAt)}
+                    </span>
+                  </div>
+                  <p className="mt-2 text-xs leading-5 text-[var(--muted-foreground)]">
+                    {comment.body}
+                  </p>
+                </article>
+              ))
+            ) : (
+              <p className="rounded-xl border border-dashed border-[var(--border)] p-3 text-xs leading-5 text-[var(--muted-foreground)]">
+                No comments yet.
+              </p>
+            )}
+          </div>
+          <div className="mt-4 shrink-0 border-t border-[var(--border)] pt-4">
+            <div className="flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface-muted)] px-3 py-2">
+              <Input
+                data-testid="project-note-comment-input"
+                value={commentDraft}
+                onChange={(event) => setCommentDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    onAddComment();
+                  }
+                }}
+                placeholder="Add a comment..."
+                className="h-8 border-0 bg-transparent px-0 text-xs shadow-none focus:ring-0"
+              />
+              <button
+                type="button"
+                aria-label="Send comment"
+                onClick={onAddComment}
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[var(--accent-strong)] transition hover:bg-[var(--accent-soft)]"
+              >
+                <Send className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
   );
 }

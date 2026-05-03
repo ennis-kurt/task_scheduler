@@ -47,7 +47,9 @@ const taskBaseSchema = z.object({
   startsAt: z.string().datetime().nullable().optional(),
   endsAt: z.string().datetime().nullable().optional(),
   status: z.enum(["todo", "in_progress", "done"]).optional(),
+  availability: z.enum(["ready", "later"]).optional(),
   completedAt: z.string().datetime().nullable().optional(),
+  addToProjectNotes: z.boolean().optional(),
 });
 
 const eventBaseSchema = z.object({
@@ -141,6 +143,7 @@ export const updateEventSchema = eventBaseSchema
 
 export const taxonomySchema = z.object({
   name: z.string().min(1).max(80),
+  notes: z.string().max(250000).optional(),
   color: z.string().max(32).optional(),
   areaId: z.string().nullable().optional(),
   deadlineAt: z.string().datetime().nullable().optional(),
@@ -193,3 +196,28 @@ export const settingsSchema = z.object({
     )
     .optional(),
 });
+
+const noteCommentSchema = z.object({
+  id: z.string().min(1),
+  author: z.string().min(1).max(120),
+  initials: z.string().min(1).max(6),
+  body: z.string().min(1).max(4000),
+  createdAt: z.string().datetime(),
+});
+
+export const projectNotePageSchema = z.object({
+  kind: z.enum(["note", "section"]).optional(),
+  sectionId: z.string().nullable().optional(),
+  parentSectionId: z.string().nullable().optional(),
+  linkedEntityType: z.enum(["project", "milestone", "task", "manual"]).optional(),
+  linkedEntityId: z.string().nullable().optional(),
+  systemKey: z.string().max(240).nullable().optional(),
+  title: z.string().min(1).max(160).optional(),
+  status: z.enum(["Draft", "Shared", "Final"]).optional(),
+  content: z.unknown().optional(),
+  markdown: z.string().max(250000).optional(),
+  comments: z.array(noteCommentSchema).optional(),
+  sortOrder: z.number().int().min(0).optional(),
+});
+
+export const updateProjectNotePageSchema = projectNotePageSchema.partial();

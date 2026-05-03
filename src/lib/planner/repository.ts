@@ -15,6 +15,7 @@ import type {
   NewTaskBlockInput,
   NewTaskInput,
   NewTaxonomyInput,
+  TaskAvailability,
   TaskChecklistItemRecord,
   TaskRecord,
   UpdateEventInput,
@@ -32,6 +33,14 @@ function now() {
 
 function id(prefix: string) {
   return `${prefix}_${crypto.randomUUID().slice(0, 8)}`;
+}
+
+function resolveTaskAvailability(input: {
+  startsAt?: string | null;
+  endsAt?: string | null;
+  availability?: TaskAvailability;
+}) {
+  return input.startsAt && input.endsAt ? "ready" : (input.availability ?? "later");
 }
 
 async function withSnapshot<T>(
@@ -144,6 +153,12 @@ function patchTask(
     milestoneId: relations.milestoneId,
     recurrence:
       input.recurrence === undefined ? task.recurrence : input.recurrence,
+    availability:
+      input.startsAt && input.endsAt
+        ? "ready"
+        : input.availability === undefined
+          ? task.availability
+          : input.availability,
     updatedAt: timestamp,
   });
 
@@ -184,6 +199,7 @@ const demoRepository = {
         preferredWindowStart: input.preferredWindowStart ?? null,
         preferredWindowEnd: input.preferredWindowEnd ?? null,
         status: "todo",
+        availability: resolveTaskAvailability(input),
         completedAt: null,
         areaId: input.areaId ?? null,
         projectId: linkedMilestone?.projectId ?? input.projectId ?? null,
@@ -290,6 +306,7 @@ const demoRepository = {
 
       if (task) {
         task.estimatedMinutes = calculateMinutes(input.startsAt, input.endsAt);
+        task.availability = "ready";
         task.updatedAt = now();
       }
 

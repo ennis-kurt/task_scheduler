@@ -13,7 +13,19 @@ import type {
   EventDropArg,
   EventMountArg,
 } from "@fullcalendar/core";
-import { CalendarClock, Trash2, X } from "lucide-react";
+import {
+  CalendarClock,
+  CalendarDays,
+  Hash,
+  Inbox,
+  Layers3,
+  Menu,
+  Plus,
+  Settings,
+  Target,
+  Trash2,
+  X,
+} from "lucide-react";
 import {
   useEffect,
   useEffectEvent,
@@ -43,7 +55,10 @@ import { Calendar } from "@/components/ui/calendar";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { ProjectPlanningModule } from "@/components/planner/project-planning-module";
+import {
+  ProjectPlanningModule,
+  type ProjectPlanningSurface,
+} from "@/components/planner/project-planning-module";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
@@ -62,25 +77,36 @@ import type {
   PlannerCalendarItem,
   PlannerPayload,
   ProjectPlan,
+  ProjectStatus,
   PlannerRange,
   PlannerSurface,
   PlannerTask,
   Priority,
   RecurrenceRule,
+  TaskAvailability,
   TaskStatus,
   UpdateSettingsInput,
   UpdateTaskInput,
 } from "@/lib/planner/types";
+import type { DailyPlanResponse } from "@/lib/planner/ai-daily-plan";
+import {
+  FOCUS_SESSION_EVENT,
+  formatFocusPhaseLabel,
+  formatFocusTimer,
+  playFocusChime,
+  projectPersistedFocusSession,
+  readPersistedFocusSession,
+  writePersistedFocusSession,
+} from "@/lib/planner/focus-session";
 import { cn } from "@/lib/utils";
-import { Sidebar, type ActiveViewType } from "../layout/sidebar";
+import { Sidebar, ThemeSelector, type ActiveViewType } from "../layout/sidebar";
+import { FocusView } from "./views/focus-view";
 import { PlanningView } from "./views/planning-view";
 
 type PlannerAppProps = {
   initialData: PlannerPayload;
   initialRange: PlannerRange;
 };
-
-type ProjectPlanningSurface = "plan" | "timeline" | "charts";
 
 type DrawerState =
   | { type: "task"; taskId: string; blockId?: string; instanceId?: string }
@@ -147,6 +173,15 @@ const BOARD_COLUMNS: Array<{
     description: "Closed loops for this plan.",
   },
 ];
+
+const AVAILABILITY_LABELS: Record<TaskAvailability, string> = {
+  ready: "Start soon",
+  later: "Later",
+};
+
+function taskAvailabilityLabel(task: Pick<PlannerTask, "availability">) {
+  return AVAILABILITY_LABELS[task.availability ?? "ready"];
+}
 
 function DateTimePicker({
   value,
@@ -535,6 +570,13 @@ function buildTaskItem(
   };
 }
 
+function localPlanTimeToISOString(date: string, time: string) {
+  const [hours, minutes] = time.split(":").map((part) => Number.parseInt(part, 10));
+  const base = parseISO(`${date}T00:00:00`);
+  base.setHours(Number.isFinite(hours) ? hours : 0, Number.isFinite(minutes) ? minutes : 0, 0, 0);
+  return base.toISOString();
+}
+
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
     ...init,
@@ -587,7 +629,10 @@ function TaskCollectionView({
                 key={task.id}
                 type="button"
                 onClick={() => onOpenTask(task.id)}
-                className="group grid gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 text-left shadow-[var(--shadow-soft)] transition hover:-translate-y-0.5 hover:border-[var(--border-strong)]"
+                className={cn(
+                  "group grid gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 text-left shadow-[var(--shadow-soft)] transition hover:-translate-y-0.5 hover:border-[var(--border-strong)]",
+                  task.availability === "later" && "bg-[var(--surface-muted)] opacity-80",
+                )}
               >
                 <div className="flex min-w-0 items-start justify-between gap-3">
                   <div className="min-w-0">
@@ -605,6 +650,9 @@ function TaskCollectionView({
                   </Badge>
                 </div>
                 <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--muted-foreground)]">
+                  <Badge tone={task.availability === "later" ? "neutral" : "accent"}>
+                    {taskAvailabilityLabel(task)}
+                  </Badge>
                   {task.project ? <span>{task.project.name}</span> : null}
                   {task.area ? <span>{task.area.name}</span> : null}
                   <span>{formatMinutes(task.estimatedMinutes)}</span>
@@ -732,6 +780,73 @@ function CapacityView({
   );
 }
 
+type HeaderFocusSession = {
+  taskTitle: string;
+  timerLabel: string;
+  phaseLabel: string;
+  remainingSeconds: number;
+};
+
+function useHeaderFocusSession(focusStorageKey: string, tasks: PlannerTask[]) {
+  const [session, setSession] = useState<HeaderFocusSession | null>(null);
+  const chimedSessionRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const syncFocusSession = () => {
+      const persisted = readPersistedFocusSession(focusStorageKey);
+
+      if (!persisted?.selectedTaskId) {
+        setSession(null);
+        return;
+      }
+
+      const projected = projectPersistedFocusSession(persisted);
+
+      if (projected.endedSinceLastSave && persisted.running) {
+        const chimeKey = `${persisted.updatedAt}:${persisted.selectedTaskId}:${persisted.phaseIndex}`;
+
+        if (chimedSessionRef.current !== chimeKey) {
+          chimedSessionRef.current = chimeKey;
+          playFocusChime();
+        }
+
+        writePersistedFocusSession(focusStorageKey, {
+          ...persisted,
+          phaseIndex: projected.phaseIndex,
+          remainingSeconds: projected.remainingSeconds,
+          running: false,
+          phases: projected.phases,
+        });
+      }
+
+      if (!projected.running) {
+        setSession(null);
+        return;
+      }
+
+      const task = tasks.find((item) => item.id === projected.selectedTaskId);
+
+      setSession({
+        taskTitle: task?.title ?? "Focus session",
+        timerLabel: formatFocusTimer(projected.remainingSeconds),
+        phaseLabel: formatFocusPhaseLabel(projected.activePhase.kind),
+        remainingSeconds: projected.remainingSeconds,
+      });
+    };
+
+    syncFocusSession();
+    window.addEventListener(FOCUS_SESSION_EVENT, syncFocusSession);
+    const interval = window.setInterval(syncFocusSession, 1000);
+
+    return () => {
+      window.removeEventListener(FOCUS_SESSION_EVENT, syncFocusSession);
+      window.clearInterval(interval);
+    };
+  }, [focusStorageKey, tasks]);
+
+  return session;
+}
+
 export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
   const initialProjectId = pickInitialProjectId(initialData.projectPlans);
   const calendarRef = useRef<FullCalendar | null>(null);
@@ -751,6 +866,7 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
   const [quickAddDefaults, setQuickAddDefaults] = useState<QuickAddDefaults>({});
   const [helpOpen, setHelpOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const showWeekends = false;
   const [milestoneComposerOpen, setMilestoneComposerOpen] = useState(false);
   const [calendarCreateChoice, setCalendarCreateChoice] = useState<QuickAddDefaults | null>(null);
@@ -821,6 +937,9 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
       overloaded: capacityForDay?.overloaded ?? false,
     };
   }, [focusedDate, plannerData.capacity]);
+  const planningStorageKey = `inflara:planning:${plannerData.mode}:${plannerData.user.id}`;
+  const focusStorageKey = `inflara:focus:${plannerData.mode}:${plannerData.user.id}`;
+  const activeFocusSession = useHeaderFocusSession(focusStorageKey, plannerData.tasks);
   const areaTasks = useMemo(
     () =>
       activeAreaId
@@ -949,6 +1068,7 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
       const updatedTask: PlannerTask = {
         ...task,
         estimatedMinutes: calculateMinutes(startsAt, endsAt),
+        availability: "ready",
         hasBlock: true,
         primaryBlock: {
           id: sourceId,
@@ -983,12 +1103,13 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
         return current;
       }
 
-      const nextTasks = current.tasks.map((task) =>
-        task.id === matchingItem.taskId
-          ? {
-              ...task,
-              estimatedMinutes: calculateMinutes(startsAt, endsAt),
-              hasBlock: true,
+      const nextTasks: PlannerTask[] = current.tasks.map((task) =>
+          task.id === matchingItem.taskId
+            ? {
+                ...task,
+                estimatedMinutes: calculateMinutes(startsAt, endsAt),
+                availability: "ready",
+                hasBlock: true,
               primaryBlock: {
                 id: sourceId,
                 startsAt,
@@ -1016,8 +1137,8 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
       ...current,
       ...(() => {
         const completedAt = status === "done" ? new Date().toISOString() : null;
-        const nextTasks = current.tasks.map((task) =>
-          task.id === taskId ? { ...task, status, completedAt } : task,
+        const nextTasks: PlannerTask[] = current.tasks.map((task) =>
+          task.id === taskId ? { ...task, status, availability: "ready", completedAt } : task,
         );
 
         return {
@@ -1038,7 +1159,7 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
 
     const apply = () => {
       setIsMobile(media.matches);
-      setSurface((current) => (media.matches && current === "week" ? "agenda" : current));
+      setSurface((current) => (media.matches && current === "week" ? "day" : current));
     };
 
     apply();
@@ -1443,7 +1564,7 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
       try {
         await requestJson(`/api/tasks/${taskId}`, {
           method: "PATCH",
-          body: JSON.stringify({ status }),
+          body: JSON.stringify({ status, availability: "ready" }),
         });
         toast.success(
           status === "done"
@@ -1460,11 +1581,91 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
     });
   }
 
+  async function applyDailyPlan(plan: DailyPlanResponse) {
+    const focusBlocks = plan.schedule.filter(
+      (block) => block.type === "focus_block" && block.task_id,
+    );
+
+    if (!focusBlocks.length) {
+      toast.error("This draft does not include any task blocks to apply");
+      return;
+    }
+
+    for (const block of focusBlocks) {
+      const startsAt = localPlanTimeToISOString(plan.date || focusedDate, block.start_time);
+      const endsAt = localPlanTimeToISOString(plan.date || focusedDate, block.end_time);
+
+      if (startsAt >= endsAt || !block.task_id) {
+        continue;
+      }
+
+      await requestJson("/api/task-blocks", {
+        method: "POST",
+        body: JSON.stringify({
+          taskId: block.task_id,
+          startsAt,
+          endsAt,
+        }),
+      });
+    }
+
+    toast.success("AI plan applied to schedule");
+    await refreshPlanner();
+  }
+
+  const mobileTitle = activeSidebarView.startsWith("project:")
+    ? plannerData.projectPlans.find((plan) => activeSidebarView === `project:${plan.project.id}`)
+        ?.project.name ?? "Project"
+    : activeSidebarView.startsWith("area:")
+      ? activeArea?.name ?? "Area"
+      : activeSidebarView === "inbox"
+        ? "Inbox"
+        : activeSidebarView === "focus"
+          ? "Focus"
+          : activeSidebarView === "capacity"
+            ? "Capacity"
+            : "Planning";
+
+  const changeMobileView = (view: ActiveViewType) => {
+    handleSidebarChange(view);
+    setMobileNavOpen(false);
+  };
+
   return (
     <div
       data-planner-root
-      className="flex h-screen w-full bg-[var(--background)] text-[var(--foreground)] text-sm antialiased overflow-hidden"
+      className="flex h-screen w-full flex-col overflow-hidden bg-[var(--background)] text-sm text-[var(--foreground)] antialiased md:flex-row"
     >
+      <MobileAppHeader
+        title={mobileTitle}
+        onOpenNav={() => setMobileNavOpen(true)}
+        onOpenCreateTask={() => openQuickAdd("task")}
+      />
+      <MobileNavigationDrawer
+        open={mobileNavOpen}
+        activeView={activeSidebarView}
+        projectPlans={plannerData.projectPlans}
+        areas={plannerData.areas}
+        inboxCount={inboxTasks.length}
+        onClose={() => setMobileNavOpen(false)}
+        onChangeView={changeMobileView}
+        onOpenNewProject={() => {
+          setMobileNavOpen(false);
+          openQuickAdd("project");
+        }}
+        onOpenNewArea={() => {
+          setMobileNavOpen(false);
+          openQuickAdd("area");
+        }}
+        onOpenCreateTask={() => {
+          setMobileNavOpen(false);
+          openQuickAdd("task");
+        }}
+        onOpenSettings={() => {
+          setMobileNavOpen(false);
+          setDrawerState({ type: "settings" });
+        }}
+      />
       <Sidebar
         activeView={activeSidebarView}
         onChangeView={handleSidebarChange}
@@ -1477,7 +1678,7 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
         showUserButton={plannerData.mode === "clerk"}
         inboxCount={inboxTasks.length}
       />
-      <main className="relative flex h-full min-w-0 flex-1 flex-col overflow-hidden border-[var(--border)] bg-[var(--background)] shadow-[-4px_0_24px_-4px_rgba(0,0,0,0.05)] md:rounded-l-2xl md:border-l">
+      <main className="relative flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden border-[var(--border)] bg-[var(--background)] shadow-[-4px_0_24px_-4px_rgba(0,0,0,0.05)] md:h-full md:rounded-l-2xl md:border-l">
         {activeSidebarView === "planning" ? (
           <PlanningView
             tasks={planningPipelineTasks}
@@ -1489,7 +1690,10 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
             focusedDate={focusedDate}
             onNavigateDate={(dir) => navigateSurface(dir)}
             workload={planningWorkload}
-            storageKey={`inflara:planning:${plannerData.mode}:${plannerData.user.id}`}
+            focusSession={activeFocusSession}
+            storageKey={planningStorageKey}
+            plannerData={plannerData}
+            onApplyDailyPlan={applyDailyPlan}
             overlayOpen={Boolean(quickAddKind || calendarCreateChoice)}
             externalDragRef={queueRef}
             calendarElement={
@@ -1509,7 +1713,7 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
                 eventContent={renderCalendarEventContent}
                 droppable={!isMobile}
                 nowIndicator
-                weekends={showWeekends}
+                weekends={surface === "day" ? true : showWeekends}
                 allDaySlot={false}
                 scrollTime={surface === "week" ? "09:00:00" : String(new Date().getHours()).padStart(2, "0") + ":00:00"}
                 slotDuration={`00:${String(plannerData.settings.slotMinutes).padStart(2, "0")}:00`}
@@ -1537,6 +1741,13 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
                 select={handleCalendarSelect}
               />
             }
+          />
+        ) : activeSidebarView === "focus" ? (
+          <FocusView
+            tasks={plannerData.tasks}
+            planningStorageKey={planningStorageKey}
+            focusStorageKey={focusStorageKey}
+            onTaskStatusChange={updateTaskStatus}
           />
         ) : activeSidebarView === "inbox" ? (
           <TaskCollectionView
@@ -1682,17 +1893,256 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
         }
       />
 
-      {isMobile ? (
-        <MobileActionDock
-          onToday={() => navigateSurface("today")}
-          onNewTask={() => openQuickAdd("task")}
-          onNewEvent={() => openQuickAdd("event")}
-          onHelp={() => setHelpOpen(true)}
-        />
-      ) : null}
-
       {helpOpen ? <KeyboardShortcuts onClose={() => setHelpOpen(false)} /> : null}
     </div>
+  );
+}
+
+function MobileAppHeader({
+  title,
+  onOpenNav,
+  onOpenCreateTask,
+}: {
+  title: string;
+  onOpenNav: () => void;
+  onOpenCreateTask: () => void;
+}) {
+  return (
+    <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-[var(--border)] bg-[var(--surface)] px-3 md:hidden">
+      <button
+        type="button"
+        aria-label="Open navigation"
+        data-testid="mobile-open-nav"
+        onClick={onOpenNav}
+        className="flex h-10 w-10 items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--surface)] text-[var(--foreground-strong)] shadow-sm"
+      >
+        <Menu className="h-5 w-5" />
+      </button>
+      <div className="min-w-0 flex-1">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--muted-foreground)]">
+          Inflara
+        </p>
+        <h1 className="truncate text-base font-semibold text-[var(--foreground-strong)]">
+          {title}
+        </h1>
+      </div>
+      <button
+        type="button"
+        aria-label="Create task"
+        onClick={onOpenCreateTask}
+        className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--button-solid-bg)] text-[var(--button-solid-fg)] shadow-sm"
+      >
+        <Plus className="h-5 w-5" />
+      </button>
+    </header>
+  );
+}
+
+function MobileNavigationDrawer({
+  open,
+  activeView,
+  projectPlans,
+  areas,
+  inboxCount,
+  onClose,
+  onChangeView,
+  onOpenNewProject,
+  onOpenNewArea,
+  onOpenCreateTask,
+  onOpenSettings,
+}: {
+  open: boolean;
+  activeView: ActiveViewType;
+  projectPlans: ProjectPlan[];
+  areas: PlannerPayload["areas"];
+  inboxCount: number;
+  onClose: () => void;
+  onChangeView: (view: ActiveViewType) => void;
+  onOpenNewProject: () => void;
+  onOpenNewArea: () => void;
+  onOpenCreateTask: () => void;
+  onOpenSettings: () => void;
+}) {
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <div className="fixed inset-0 z-[90] md:hidden" data-testid="mobile-navigation">
+      <button
+        type="button"
+        aria-label="Close navigation"
+        className="absolute inset-0 bg-[var(--modal-backdrop)]"
+        onClick={onClose}
+      />
+      <aside className="absolute inset-y-0 left-0 flex w-[min(19.8rem,88vw)] flex-col border-r border-[var(--border-strong)] bg-[var(--mobile-menu-surface)] shadow-[var(--shadow-float)] backdrop-blur-xl">
+        <div className="flex h-14 items-center justify-between border-b border-[var(--border)] px-4">
+          <div className="flex min-w-0 items-center gap-2">
+            <div className="flex h-7 w-7 items-center justify-center rounded bg-[var(--foreground-strong)] text-xs font-semibold tracking-tighter text-[var(--surface)]">
+              IN
+            </div>
+            <span className="truncate text-sm font-semibold uppercase tracking-tight text-[var(--foreground-strong)]">
+              Inflara
+            </span>
+          </div>
+          <button
+            type="button"
+            aria-label="Close navigation"
+            onClick={onClose}
+            className="flex h-9 w-9 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition hover:bg-[var(--button-ghost-hover)] hover:text-[var(--foreground-strong)]"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto px-3 py-4">
+          <nav className="grid gap-1">
+            <MobileNavButton
+              active={activeView === "inbox"}
+              icon={<Inbox className="h-4 w-4" />}
+              label="Inbox"
+              count={inboxCount}
+              onClick={() => onChangeView("inbox")}
+            />
+            <MobileNavButton
+              active={activeView === "planning"}
+              icon={<CalendarDays className="h-4 w-4" />}
+              label="Planning"
+              onClick={() => onChangeView("planning")}
+            />
+            <MobileNavButton
+              active={activeView === "focus"}
+              icon={<Target className="h-4 w-4" />}
+              label="Focus"
+              onClick={() => onChangeView("focus")}
+            />
+            <MobileNavButton
+              active={activeView === "capacity"}
+              icon={<Layers3 className="h-4 w-4" />}
+              label="Capacity"
+              onClick={() => onChangeView("capacity")}
+            />
+          </nav>
+
+          <div className="mt-6 grid gap-1">
+            <div className="flex items-center justify-between px-2 py-1">
+              <span className="text-xs font-medium uppercase tracking-tight text-[var(--muted-foreground)]">
+                Projects
+              </span>
+              <button
+                type="button"
+                aria-label="Add project"
+                onClick={onOpenNewProject}
+                className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition hover:bg-[var(--button-ghost-hover)] hover:text-[var(--foreground-strong)]"
+              >
+                <Plus className="h-4 w-4" />
+              </button>
+            </div>
+            {projectPlans.map((plan) => {
+              const isActive = activeView === `project:${plan.project.id}`;
+
+              return (
+                <MobileNavButton
+                  key={plan.project.id}
+                  active={isActive}
+                  icon={
+                    <span
+                      className="h-2.5 w-2.5 rounded-full border"
+                      style={{
+                        borderColor: plan.project.color,
+                        backgroundColor: isActive ? plan.project.color : "transparent",
+                      }}
+                    />
+                  }
+                  label={plan.project.name}
+                  onClick={() => onChangeView(`project:${plan.project.id}`)}
+                />
+              );
+            })}
+          </div>
+
+          <div className="mt-6 grid gap-1">
+            <div className="flex items-center justify-between px-2 py-1">
+              <span className="text-xs font-medium uppercase tracking-tight text-[var(--muted-foreground)]">
+                Areas
+              </span>
+              <button
+                type="button"
+                aria-label="Add area"
+                onClick={onOpenNewArea}
+                className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition hover:bg-[var(--button-ghost-hover)] hover:text-[var(--foreground-strong)]"
+              >
+                <Plus className="h-4 w-4" />
+              </button>
+            </div>
+            {areas.map((area) => (
+              <MobileNavButton
+                key={area.id}
+                active={activeView === `area:${area.id}`}
+                icon={<Hash className="h-4 w-4" />}
+                label={area.name}
+                onClick={() => onChangeView(`area:${area.id}`)}
+              />
+            ))}
+          </div>
+        </div>
+
+        <div className="grid gap-2 border-t border-[var(--border)] p-3">
+          <button
+            type="button"
+            onClick={onOpenCreateTask}
+            className="flex w-full items-center justify-center gap-2 rounded-md bg-[var(--button-solid-bg)] px-3 py-2 text-sm font-medium text-[var(--button-solid-fg)] shadow-sm transition-colors hover:bg-[var(--button-solid-hover)]"
+          >
+            <Plus className="h-4 w-4" />
+            Create Task
+          </button>
+          <ThemeSelector />
+          <button
+            type="button"
+            onClick={onOpenSettings}
+            className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-[var(--muted-foreground)] transition-colors hover:bg-[var(--button-ghost-hover)] hover:text-[var(--foreground-strong)]"
+          >
+            <Settings className="h-4 w-4" />
+            <span className="text-sm">Settings</span>
+          </button>
+        </div>
+      </aside>
+    </div>
+  );
+}
+
+function MobileNavButton({
+  active,
+  icon,
+  label,
+  count,
+  onClick,
+}: {
+  active: boolean;
+  icon: ReactNode;
+  label: string;
+  count?: number;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "flex min-h-10 w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm transition-colors",
+        active
+          ? "bg-[var(--accent-soft)] font-medium text-[var(--foreground-strong)]"
+          : "text-[var(--muted-foreground)] hover:bg-[var(--button-ghost-hover)] hover:text-[var(--foreground-strong)]",
+      )}
+    >
+      <span className="flex h-5 w-5 shrink-0 items-center justify-center">{icon}</span>
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+      {count ? (
+        <span className="shrink-0 text-xs font-medium text-[var(--muted-foreground)]">
+          {count}
+        </span>
+      ) : null}
+    </button>
   );
 }
 
@@ -1769,37 +2219,6 @@ function CalendarCreatePrompt({
             Cancel
           </Button>
         </div>
-      </div>
-    </div>
-  );
-}
-
-function MobileActionDock({
-  onToday,
-  onNewTask,
-  onNewEvent,
-  onHelp,
-}: {
-  onToday: () => void;
-  onNewTask: () => void;
-  onNewEvent: () => void;
-  onHelp: () => void;
-}) {
-  return (
-    <div className="fixed inset-x-4 bottom-4 z-20 md:hidden">
-      <div className="grid grid-cols-4 gap-2 rounded-[24px] border border-[var(--border)] bg-[var(--surface)] p-2 shadow-[var(--shadow-soft)]">
-        <Button variant="ghost" size="sm" onClick={onToday}>
-          Today
-        </Button>
-        <Button variant="ghost" size="sm" onClick={onNewTask}>
-          Task
-        </Button>
-        <Button variant="ghost" size="sm" onClick={onNewEvent}>
-          Event
-        </Button>
-        <Button variant="ghost" size="sm" onClick={onHelp}>
-          Shortcuts
-        </Button>
       </div>
     </div>
   );
@@ -2021,6 +2440,9 @@ function TaskEditor({
   const [title, setTitle] = useState(task.title);
   const [notes, setNotes] = useState(task.notes);
   const [status, setStatus] = useState<TaskStatus>(task.status);
+  const [availability, setAvailability] = useState<TaskAvailability>(
+    task.availability ?? "ready",
+  );
   const [priority, setPriority] = useState<Priority>(task.priority);
   const [estimatedMinutes, setEstimatedMinutes] = useState(task.estimatedMinutes);
   const [dueAt, setDueAt] = useState(toDateTimeInput(task.dueAt));
@@ -2072,6 +2494,19 @@ function TaskEditor({
               onClick={() => setStatus(column.id)}
             >
               {column.label}
+            </Button>
+          ))}
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {(["later", "ready"] as TaskAvailability[]).map((item) => (
+            <Button
+              key={item}
+              type="button"
+              variant={availability === item ? "solid" : "outline"}
+              size="sm"
+              onClick={() => setAvailability(item)}
+            >
+              {AVAILABILITY_LABELS[item]}
             </Button>
           ))}
         </div>
@@ -2376,7 +2811,9 @@ function TaskEditor({
         </Button>
         <Button
           size="sm"
-          onClick={() =>
+          onClick={() => {
+            const nextStartsAt = startsAt ? new Date(startsAt).toISOString() : null;
+            const nextEndsAt = endsAt ? new Date(endsAt).toISOString() : null;
             onSave({
               title,
               notes,
@@ -2387,13 +2824,14 @@ function TaskEditor({
               projectId: projectId || null,
               milestoneId: milestoneId || null,
               status,
+              availability: nextStartsAt && nextEndsAt ? "ready" : availability,
               tagIds,
               checklist: checklist.filter((item) => item.label.trim()),
               recurrence,
-              startsAt: startsAt ? new Date(startsAt).toISOString() : null,
-              endsAt: endsAt ? new Date(endsAt).toISOString() : null,
-            })
-          }
+              startsAt: nextStartsAt,
+              endsAt: nextEndsAt,
+            });
+          }}
         >
           Save task
         </Button>
@@ -2741,11 +3179,17 @@ function QuickAddDialog({
   const [taskTitle, setTaskTitle] = useState("");
   const [eventTitle, setEventTitle] = useState("");
   const [notes, setNotes] = useState("");
+  const [addTaskNoteToProjectNotes, setAddTaskNoteToProjectNotes] = useState(false);
   const [location, setLocation] = useState("");
   const [scheduleTaskNow, setScheduleTaskNow] = useState(initialTaskScheduled);
+  const [taskAvailability, setTaskAvailability] = useState<TaskAvailability>(
+    initialTaskScheduled ? "ready" : "later",
+  );
   const [taskProjectId, setTaskProjectId] = useState(defaults.projectId ?? "");
   const [taskMilestoneId, setTaskMilestoneId] = useState(defaults.milestoneId ?? "");
   const [projectName, setProjectName] = useState("");
+  const [projectStatus, setProjectStatus] = useState<ProjectStatus>("active");
+  const [projectDeadline, setProjectDeadline] = useState("");
   const [areaName, setAreaName] = useState("");
   const [tagName, setTagName] = useState("");
   const [taskPriority, setTaskPriority] = useState<Priority>("medium");
@@ -2857,6 +3301,7 @@ function QuickAddDialog({
                 size="sm"
                 onClick={() => {
                   setScheduleTaskNow(true);
+                  setTaskAvailability("ready");
                   if (!startsAt || !endsAt) {
                     hydrateSuggestedSchedule();
                   }
@@ -2874,10 +3319,25 @@ function QuickAddDialog({
                 </Button>
               ) : null}
             </div>
+            {!scheduleTaskNow ? (
+              <div className="flex flex-wrap gap-2">
+                {(["later", "ready"] as TaskAvailability[]).map((item) => (
+                  <Button
+                    key={item}
+                    type="button"
+                    variant={taskAvailability === item ? "solid" : "outline"}
+                    size="sm"
+                    onClick={() => setTaskAvailability(item)}
+                  >
+                    {AVAILABILITY_LABELS[item]}
+                  </Button>
+                ))}
+              </div>
+            ) : null}
             <Field label="Task name">
               <Input value={taskTitle} onChange={(event) => setTaskTitle(event.target.value)} />
             </Field>
-            <Field label="Notes">
+            <Field label="Task notes">
               <Textarea value={notes} onChange={(event) => setNotes(event.target.value)} />
             </Field>
             <div className="grid gap-4 sm:grid-cols-2">
@@ -2887,6 +3347,9 @@ function QuickAddDialog({
                   onChange={(event) => {
                     const nextProjectId = event.target.value;
                     setTaskProjectId(nextProjectId);
+                    if (!nextProjectId) {
+                      setAddTaskNoteToProjectNotes(false);
+                    }
                     if (
                       taskMilestoneId &&
                       !plannerData.milestones.some(
@@ -2935,6 +3398,17 @@ function QuickAddDialog({
                 </Select>
               </Field>
             </div>
+            {taskProjectId ? (
+              <label className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface-elevated)] px-3 py-2 text-sm font-medium text-[var(--foreground-strong)]">
+                <input
+                  type="checkbox"
+                  checked={addTaskNoteToProjectNotes}
+                  onChange={(event) => setAddTaskNoteToProjectNotes(event.target.checked)}
+                  className="h-4 w-4 rounded border-[var(--border-strong)] accent-[var(--accent)]"
+                />
+                Also add to project Notes
+              </label>
+            ) : null}
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Priority">
                 <Select
@@ -3036,22 +3510,58 @@ function QuickAddDialog({
 
         {open === "project" ? (
           <div className="grid gap-4">
-            <Field label="Project name">
-              <Input value={projectName} onChange={(event) => setProjectName(event.target.value)} />
+            <div className="grid gap-4 rounded-[22px] border border-[var(--border)] bg-[var(--surface-muted)] p-4">
+              <Field label="Project name">
+                <Input
+                  value={projectName}
+                  onChange={(event) => setProjectName(event.target.value)}
+                  className="bg-[var(--surface-elevated)]"
+                />
+              </Field>
+              <Field label="Project area">
+                <Select
+                  value={projectAreaId}
+                  onChange={(event) => setProjectAreaId(event.target.value)}
+                  className="bg-[var(--surface-elevated)]"
+                >
+                  <option value="">No area</option>
+                  {plannerData.areas.map((area) => (
+                    <option key={area.id} value={area.id}>
+                      {area.name}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            </div>
+            <Field label="Project description / notes">
+              <Textarea
+                value={notes}
+                onChange={(event) => setNotes(event.target.value)}
+                placeholder="Capture goals, scope, risks, or handoff context..."
+                className="min-h-[132px]"
+              />
             </Field>
-            <Field label="Area">
-              <Select
-                value={projectAreaId}
-                onChange={(event) => setProjectAreaId(event.target.value)}
-              >
-                <option value="">No area</option>
-                {plannerData.areas.map((area) => (
-                  <option key={area.id} value={area.id}>
-                    {area.name}
-                  </option>
-                ))}
-              </Select>
-            </Field>
+            <div className="grid gap-4 rounded-[22px] border border-[var(--border)] bg-[var(--surface-muted)] p-4 sm:grid-cols-2">
+              <Field label="Status">
+                <Select
+                  value={projectStatus}
+                  onChange={(event) => setProjectStatus(event.target.value as ProjectStatus)}
+                  className="bg-[var(--surface-elevated)]"
+                >
+                  <option value="active">Active</option>
+                  <option value="completed">Completed</option>
+                  <option value="archived">Archived</option>
+                </Select>
+              </Field>
+              <Field label="Deadline">
+                <Input
+                  type="date"
+                  value={projectDeadline}
+                  onChange={(event) => setProjectDeadline(event.target.value)}
+                  className="bg-[var(--surface-elevated)]"
+                />
+              </Field>
+            </div>
           </div>
         ) : null}
 
@@ -3082,6 +3592,8 @@ function QuickAddDialog({
                   estimatedMinutes,
                   projectId: taskProjectId || null,
                   milestoneId: taskMilestoneId || null,
+                  addToProjectNotes: addTaskNoteToProjectNotes && Boolean(taskProjectId),
+                  availability: scheduleTaskNow ? "ready" : taskAvailability,
                   startsAt:
                     scheduleTaskNow && startsAt ? new Date(startsAt).toISOString() : null,
                   endsAt:
@@ -3101,6 +3613,11 @@ function QuickAddDialog({
                 onSubmit("project", {
                   name: projectName,
                   areaId: projectAreaId || null,
+                  notes,
+                  status: projectStatus,
+                  deadlineAt: projectDeadline
+                    ? new Date(`${projectDeadline}T12:00:00`).toISOString()
+                    : null,
                 });
               }
               if (open === "area") {

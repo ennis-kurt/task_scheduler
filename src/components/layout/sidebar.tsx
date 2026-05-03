@@ -12,6 +12,7 @@ import { UserButton } from "@clerk/nextjs";
 export type ActiveViewType =
   | "inbox"
   | "planning"
+  | "focus"
   | "capacity"
   | `project:${string}`
   | `area:${string}`;
@@ -29,7 +30,7 @@ export type SidebarProps = {
   inboxCount: number;
 };
 
-function ThemeSelector() {
+export function ThemeSelector() {
   const { theme, resolvedTheme, setTheme } = useTheme();
   const mounted = useSyncExternalStore(
     () => () => {},
@@ -107,7 +108,7 @@ export function Sidebar({
   inboxCount,
 }: SidebarProps) {
   return (
-    <aside className="w-60 h-full border-r border-[var(--border-strong)] bg-[var(--surface-muted)] flex-col hidden md:flex shrink-0 transition-colors">
+    <aside className="hidden h-full w-[clamp(12.9rem,15.8vw,14.9rem)] shrink-0 flex-col border-r border-[var(--border-strong)] bg-[var(--surface-muted)] transition-colors md:flex">
       {/* Brand / User */}
       <div className="h-14 flex items-center justify-between px-4 border-b border-[var(--border)]">
         <div className="flex items-center gap-2 w-full p-1.5 -ml-1.5 rounded-md">
@@ -158,6 +159,18 @@ export function Sidebar({
           >
             <Icon icon="solar:calendar-date-linear" width="18" />
             <span>Planning</span>
+          </button>
+          <button
+            onClick={() => onChangeView("focus")}
+            className={cn(
+              "flex items-center gap-2.5 px-2 py-1.5 rounded-md transition-colors text-sm w-full text-left",
+              activeView === "focus"
+                ? "bg-[var(--accent-soft)] text-[var(--foreground-strong)] font-medium"
+                : "text-[var(--muted-foreground)] hover:bg-[var(--button-ghost-hover)] hover:text-[var(--foreground-strong)]"
+            )}
+          >
+            <Icon icon="solar:target-linear" width="18" />
+            <span>Focus</span>
           </button>
           <button
             onClick={() => onChangeView("capacity")}

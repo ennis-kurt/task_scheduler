@@ -26,6 +26,7 @@ function normalizeSnapshot(snapshot: WorkspaceSnapshot): WorkspaceSnapshot {
     tasks: snapshot.tasks.map((task) => ({
       ...task,
       milestoneId: task.milestoneId ?? null,
+      availability: task.availability ?? "ready",
     })),
   };
 }

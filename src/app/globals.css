@@ -6,6 +6,7 @@
   --surface-elevated: #ffffff;
   --surface-muted: #f5f6f8;
   --surface-glass: rgba(255, 255, 255, 0.9);
+  --mobile-menu-surface: rgba(245, 246, 248, 0.85);
   --card: #ffffff;
   --foreground: #1d2128;
   --foreground-strong: #111318;
@@ -79,6 +80,7 @@
   --surface-elevated: #10141a;
   --surface-muted: #0d1116;
   --surface-glass: rgba(12, 15, 20, 0.9);
+  --mobile-menu-surface: rgba(13, 17, 22, 0.85);
   --card: #10141a;
   --foreground: #d9dee8;
   --foreground-strong: #f5f7fb;
@@ -152,6 +154,7 @@
   --surface-elevated: rgba(255, 255, 255, 0.82);
   --surface-muted: rgba(241, 238, 232, 0.76);
   --surface-glass: rgba(255, 255, 255, 0.68);
+  --mobile-menu-surface: rgba(241, 238, 232, 0.85);
   --card: rgba(255, 255, 255, 0.78);
   --foreground: #2b3037;
   --foreground-strong: #151923;
@@ -226,6 +229,7 @@
   --surface-elevated: #1e293b;
   --surface-muted: #0b1120;
   --surface-glass: rgba(15, 23, 42, 0.85);
+  --mobile-menu-surface: rgba(11, 17, 32, 0.85);
   --card: #1e293b;
   --foreground: #f8fafc;
   --foreground-strong: #ffffff;
@@ -288,6 +292,7 @@
   --surface-elevated: #ffffff;
   --surface-muted: #f5f5f4;
   --surface-glass: rgba(255, 255, 255, 0.8);
+  --mobile-menu-surface: rgba(245, 245, 244, 0.85);
   --card: #ffffff;
   --foreground: #292524;
   --foreground-strong: #0c0a09;
@@ -358,12 +363,22 @@
   --color-accent-foreground: var(--accent-foreground);
 }
 
+html {
+  font-size: 16px;
+}
+
+@media (min-width: 768px) and (max-width: 1512px), (min-width: 768px) and (max-height: 900px) {
+  html {
+    font-size: 14px;
+  }
+}
+
 body {
   min-height: 100vh;
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-geist-sans), sans-serif;
-  font-size: 15px;
+  font-size: 0.9375rem;
   line-height: 1.45;
 }
 
@@ -393,7 +408,11 @@ body {
 }
 
 .fc .fc-timegrid-slot {
-  height: 1.55rem;
+  height: 1.24rem;
+}
+
+.fc .fc-timegrid-slot-label {
+  vertical-align: top;
 }
 
 .fc .fc-timegrid-axis-cushion,
@@ -814,7 +833,16 @@ body {
 }
 
 .fc .fc-timegrid-slot {
-  height: 2.75rem;
+  height: 2.2rem;
+}
+
+.fc .fc-timegrid-slot-label {
+  vertical-align: top;
+}
+
+.fc .fc-timegrid-slot-label-cushion {
+  display: block;
+  transform: translateY(-50%);
 }
 
 .fc .fc-timegrid-slot-minor {
@@ -993,6 +1021,15 @@ body {
   --planning-calendar-chip-border: rgba(255, 255, 255, 0.08);
 }
 
+.neon .planning-schedule-panel {
+  --planning-calendar-grid: rgba(16, 185, 129, 0.18);
+  --planning-calendar-axis: rgba(16, 185, 129, 0.26);
+  --planning-calendar-label: rgba(209, 250, 229, 0.72);
+  --planning-calendar-event-border: rgba(16, 185, 129, 0.22);
+  --planning-calendar-task-border: rgba(16, 185, 129, 0.28);
+  --planning-calendar-chip-border: rgba(16, 185, 129, 0.24);
+}
+
 .planning-schedule-header {
   border-bottom: 1px solid var(--planning-calendar-grid);
   background: var(--planning-calendar-bg);
@@ -1074,8 +1111,17 @@ body {
   text-transform: uppercase;
 }
 
+.planning-calendar-shell .fc .fc-timegrid-slot-label {
+  vertical-align: top;
+}
+
+.planning-calendar-shell .fc .fc-timegrid-slot-label-cushion {
+  display: block;
+  transform: translateY(-50%);
+}
+
 .planning-calendar-shell .fc .fc-timegrid-slot {
-  height: 3rem;
+  height: 2.4rem;
   border: 0;
 }
 
@@ -1094,6 +1140,10 @@ body {
 
 .dark .planning-calendar-shell .fc .fc-timegrid-col {
   border-left-color: rgba(148, 163, 184, 0.055);
+}
+
+.neon .planning-calendar-shell .fc .fc-timegrid-col {
+  border-left-color: rgba(16, 185, 129, 0.12);
 }
 
 .planning-calendar-shell .fc .fc-timegrid-col:first-of-type {
@@ -1455,6 +1505,82 @@ body {
   opacity: 0.55;
 }
 
+@media (max-width: 767px) {
+  [data-planner-root] {
+    height: 100dvh;
+  }
+
+  .planning-workload-pill {
+    height: 2.05rem;
+    gap: 0.42rem;
+    padding-inline: 0.7rem;
+    font-size: 0.78rem;
+  }
+
+  .planning-workload-pill__dot {
+    width: 0.48rem;
+    height: 0.48rem;
+  }
+
+  .planning-kanban-panel.is-fullscreen,
+  .planning-schedule-panel.is-fullscreen {
+    top: 0;
+  }
+
+  .planning-calendar-shell {
+    padding-bottom: calc(1rem + env(safe-area-inset-bottom));
+    padding-right: 0.5rem;
+  }
+
+  .planning-calendar-shell .fc {
+    min-width: 100%;
+    font-size: 0.8rem;
+  }
+
+  .planning-calendar-shell .fc .fc-timeGridWeek-view {
+    min-width: 42rem;
+  }
+
+  .planning-calendar-shell .fc .fc-timegrid-axis {
+    width: 3.55rem !important;
+  }
+
+  .planning-calendar-shell .fc .fc-timegrid-axis-cushion,
+  .planning-calendar-shell .fc .fc-timegrid-slot-label-cushion {
+    padding-right: 0.55rem;
+    font-size: 0.72rem;
+  }
+
+  .planning-calendar-shell .fc .fc-timegrid-slot {
+    height: 2.2rem;
+  }
+
+  .planner-calendar-item {
+    padding-inline: 0.5rem;
+  }
+
+  .planner-calendar-item__status,
+  .planner-calendar-item__kind,
+  .planner-calendar-item__project,
+  .planner-calendar-item__meta {
+    font-size: 0.66rem;
+  }
+
+  .project-notes-editor .tiptap {
+    min-height: 28rem;
+    font-size: 0.95rem;
+    line-height: 1.68;
+  }
+
+  .project-notes-editor .tiptap h1 {
+    font-size: 1.65rem;
+  }
+
+  .project-notes-editor .tiptap h2 {
+    font-size: 1.2rem;
+  }
+}
+
 .project-notes-editor {
   --notes-editor-gap: 0.78rem;
 }
@@ -1646,4 +1772,1387 @@ body {
 .dark .project-notes-editor .tiptap pre,
 .neon .project-notes-editor .tiptap pre {
   background: color-mix(in srgb, var(--surface-muted) 80%, white 4%);
+}
+
+.focus-timer-panel {
+  background:
+    radial-gradient(circle at 50% 38%, rgba(34, 211, 238, 0.12), transparent 34%),
+    linear-gradient(180deg, color-mix(in srgb, var(--surface) 92%, white 4%), var(--surface));
+}
+
+.focus-neon-app {
+  --background: #f4fbfd;
+  --surface: #eff8fb;
+  --surface-elevated: rgba(255, 255, 255, 0.86);
+  --surface-muted: rgba(232, 244, 248, 0.82);
+  --surface-glass: rgba(255, 255, 255, 0.7);
+  --foreground: #314553;
+  --foreground-strong: #0a1820;
+  --muted-foreground: #6d7f8c;
+  --border: rgba(8, 47, 73, 0.12);
+  --border-strong: rgba(8, 47, 73, 0.22);
+  --accent-soft: rgba(8, 145, 178, 0.12);
+  --accent-strong: #0e7490;
+  --shadow-soft: 0 24px 70px -48px rgba(15, 23, 42, 0.42), 0 0 38px rgba(8, 145, 178, 0.08);
+  --shadow-float: 0 24px 64px -42px rgba(15, 23, 42, 0.45), 0 0 30px rgba(8, 145, 178, 0.1);
+  color-scheme: light;
+  background:
+    radial-gradient(circle at 48% 16%, rgba(103, 232, 249, 0.22), transparent 25%),
+    linear-gradient(180deg, #f8fdff 0%, #eef7fa 100%);
+}
+
+.dark .focus-neon-app,
+.neon .focus-neon-app {
+  --background: #090d12;
+  --surface: #0b1016;
+  --surface-elevated: rgba(19, 26, 36, 0.88);
+  --surface-muted: rgba(15, 21, 29, 0.78);
+  --surface-glass: rgba(16, 22, 31, 0.76);
+  --foreground: #c8d2df;
+  --foreground-strong: #f4f8fb;
+  --muted-foreground: #8794a6;
+  --border: rgba(148, 163, 184, 0.16);
+  --border-strong: rgba(148, 163, 184, 0.28);
+  --accent-soft: rgba(34, 211, 238, 0.14);
+  --accent-strong: #22d3ee;
+  --shadow-soft: 0 30px 78px -48px rgba(0, 0, 0, 0.86), 0 0 42px rgba(34, 211, 238, 0.08);
+  --shadow-float: 0 30px 72px -42px rgba(0, 0, 0, 0.86), 0 0 34px rgba(34, 211, 238, 0.1);
+  color-scheme: dark;
+  background:
+    radial-gradient(circle at 50% 20%, rgba(34, 211, 238, 0.08), transparent 28%),
+    linear-gradient(180deg, #0b1016 0%, #080b10 100%);
+}
+
+.focus-main-stage {
+  background:
+    radial-gradient(circle at 50% 38%, rgba(8, 145, 178, 0.12), transparent 25rem),
+    radial-gradient(circle at 78% 8%, rgba(59, 130, 246, 0.08), transparent 23rem),
+    linear-gradient(180deg, #f8fdff 0%, #eef7fa 100%);
+}
+
+.dark .focus-main-stage,
+.neon .focus-main-stage {
+  background:
+    radial-gradient(circle at 50% 38%, rgba(34, 211, 238, 0.1), transparent 25rem),
+    radial-gradient(circle at 78% 8%, rgba(59, 130, 246, 0.08), transparent 23rem),
+    #090d12;
+}
+
+.focus-task-pill,
+.focus-control-deck,
+.focus-task-card-popover {
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+.focus-task-pill {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(236, 248, 251, 0.82));
+  box-shadow:
+    0 18px 50px -38px rgba(15, 23, 42, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.84);
+}
+
+.focus-control-deck {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(230, 244, 248, 0.84));
+  box-shadow:
+    0 22px 58px -40px rgba(15, 23, 42, 0.48),
+    0 0 34px rgba(8, 145, 178, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.78);
+}
+
+.focus-task-card-popover {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(239, 248, 250, 0.98));
+}
+
+.dark .focus-task-pill,
+.neon .focus-task-pill {
+  background:
+    linear-gradient(180deg, rgba(19, 26, 36, 0.82), rgba(12, 17, 24, 0.72));
+  box-shadow:
+    0 18px 50px -34px rgba(0, 0, 0, 0.95),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.dark .focus-control-deck,
+.neon .focus-control-deck {
+  background:
+    linear-gradient(180deg, rgba(19, 26, 36, 0.88), rgba(12, 17, 24, 0.84));
+  box-shadow:
+    0 22px 58px -36px rgba(0, 0, 0, 0.9),
+    0 0 40px rgba(34, 211, 238, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.dark .focus-task-card-popover,
+.neon .focus-task-card-popover {
+  background:
+    linear-gradient(180deg, rgba(22, 31, 43, 0.96), rgba(13, 19, 27, 0.96));
+}
+
+.focus-orbit-wrap {
+  color: var(--accent-strong);
+}
+
+.dark .focus-timer-panel,
+.neon .focus-timer-panel {
+  background:
+    radial-gradient(circle at 50% 40%, rgba(34, 211, 238, 0.16), transparent 36%),
+    linear-gradient(180deg, color-mix(in srgb, var(--surface-elevated) 86%, white 2%), var(--surface));
+}
+
+.focus-orbit-wrap::before {
+  content: "";
+  position: absolute;
+  inset: 14%;
+  border-radius: 9999px;
+  background: color-mix(in srgb, cyan 9%, transparent);
+  filter: blur(42px);
+  opacity: 0.68;
+}
+
+.focus-orbit-progress {
+  filter: drop-shadow(0 0 12px rgba(34, 211, 238, 0.65));
+  transition: stroke-dashoffset 0.45s linear;
+}
+
+.focus-orbit-core {
+  position: relative;
+  z-index: 1;
+}
+
+.focus-orbit-progress-badge {
+  margin-bottom: 0.85rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 9999px;
+  background: var(--surface-glass);
+  padding: 0.32rem 0.72rem;
+  color: var(--accent-strong);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.focus-orbit-session-label {
+  position: absolute;
+  display: grid;
+  min-width: 3.15rem;
+  transform: translate(-50%, -50%);
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 9999px;
+  background: var(--surface-glass);
+  padding: 0.32rem 0.52rem;
+  color: var(--muted-foreground);
+  box-shadow: var(--shadow-soft);
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.11em;
+  line-height: 1.05;
+  text-transform: uppercase;
+}
+
+.focus-orbit-session-label small {
+  margin-top: 0.12rem;
+  color: color-mix(in srgb, var(--muted-foreground) 82%, transparent);
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.focus-orbit-session-label.is-active {
+  border-color: color-mix(in srgb, var(--accent-strong) 58%, transparent);
+  background: color-mix(in srgb, var(--accent-soft) 78%, var(--surface-elevated));
+  color: var(--accent-strong);
+  box-shadow: 0 0 28px color-mix(in srgb, var(--accent-strong) 24%, transparent);
+}
+
+.focus-orbit-session-label.is-complete {
+  border-color: color-mix(in srgb, var(--accent-strong) 34%, var(--border));
+  color: var(--foreground-strong);
+}
+
+.focus-icon-action {
+  display: inline-flex;
+  width: 3rem;
+  height: 3rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 9999px;
+  background: color-mix(in srgb, var(--surface-muted) 76%, transparent);
+  color: var(--foreground);
+  transition:
+    transform 180ms ease,
+    border-color 180ms ease,
+    background-color 180ms ease,
+    color 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.focus-icon-action:hover {
+  transform: translateY(-1px);
+  border-color: var(--border-strong);
+  background: var(--surface-elevated);
+  color: var(--foreground-strong);
+}
+
+.focus-icon-action-primary {
+  width: 4.2rem;
+  height: 4.2rem;
+  border-color: color-mix(in srgb, var(--accent-strong) 38%, transparent);
+  background: var(--accent-strong);
+  color: #061014;
+  box-shadow: 0 0 34px color-mix(in srgb, var(--accent-strong) 32%, transparent);
+}
+
+.focus-icon-action-primary:hover {
+  background: color-mix(in srgb, var(--accent-strong) 88%, white 12%);
+}
+
+.focus-icon-action-primary.is-running {
+  background: var(--surface-elevated);
+  color: var(--accent-strong);
+}
+
+.focus-timeline-playhead {
+  width: 100%;
+  height: 100%;
+  border: 1px solid color-mix(in srgb, #fb7185 54%, transparent);
+  border-radius: 9999px;
+  background: #fb7185;
+  box-shadow:
+    0 0 0 0 rgba(251, 113, 133, 0.28),
+    0 0 16px rgba(251, 113, 133, 0.42);
+  animation: focus-playhead-pulse 2.6s ease-in-out infinite;
+}
+
+@keyframes focus-playhead-pulse {
+  0%,
+  100% {
+    opacity: 0.68;
+    transform: scale(0.9);
+    box-shadow:
+      0 0 0 0 rgba(251, 113, 133, 0.24),
+      0 0 12px rgba(251, 113, 133, 0.34);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.12);
+    box-shadow:
+      0 0 0 8px rgba(251, 113, 133, 0),
+      0 0 18px rgba(251, 113, 133, 0.5);
+  }
+}
+
+.focus-insights-shell {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 1.25rem;
+  background: color-mix(in srgb, var(--surface-elevated) 72%, transparent);
+  box-shadow: var(--shadow-soft);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+.focus-metric-cell {
+  display: grid;
+  min-height: 4.75rem;
+  place-items: center;
+  border-bottom: 1px solid var(--border);
+  padding: 0.8rem 1rem;
+  text-align: center;
+}
+
+.focus-metric-cell:not(:last-child) {
+  border-right: 1px solid var(--border);
+}
+
+.focus-metric-cell span {
+  color: var(--muted-foreground);
+  font-size: 0.58rem;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.focus-metric-cell strong {
+  color: var(--foreground-strong);
+  font-size: clamp(1.35rem, 3vw, 1.85rem);
+  font-weight: 300;
+  letter-spacing: -0.05em;
+}
+
+.focus-rhythm-panel {
+  padding: 1rem 1.15rem 1.2rem;
+}
+
+.focus-rhythm-panel h3 {
+  color: var(--foreground-strong);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.focus-rhythm-panel span {
+  color: var(--muted-foreground);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.focus-rhythm-track {
+  display: flex;
+  height: 4.2rem;
+  align-items: end;
+  gap: 0.34rem;
+  margin-top: 1rem;
+  border-top: 1px solid color-mix(in srgb, var(--border) 66%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 66%, transparent);
+  padding: 0.55rem 0;
+}
+
+.focus-rhythm-day {
+  flex: 1;
+  min-width: 0.34rem;
+  border-radius: 9999px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--foreground) 18%, transparent), color-mix(in srgb, var(--foreground) 9%, transparent));
+  opacity: 0.7;
+  transition:
+    height 220ms ease,
+    opacity 180ms ease,
+    transform 180ms ease,
+    background 180ms ease;
+}
+
+.focus-rhythm-day.has-focus {
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--accent-strong) 92%, white 8%), color-mix(in srgb, var(--accent-strong) 42%, transparent));
+  opacity: 1;
+  box-shadow: 0 0 18px color-mix(in srgb, var(--accent-strong) 22%, transparent);
+}
+
+.focus-rhythm-day:hover {
+  transform: translateY(-0.18rem);
+  opacity: 1;
+}
+
+@media (max-width: 640px) {
+  .focus-metric-cell:not(:last-child) {
+    border-right: 0;
+  }
+
+  .focus-orbit-session-label {
+    min-width: 2.8rem;
+    font-size: 0.58rem;
+  }
+}
+
+.focus-pulse {
+  animation: focus-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes focus-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(34, 211, 238, 0.26);
+  }
+
+  50% {
+    box-shadow: 0 0 0 10px rgba(34, 211, 238, 0);
+  }
+}
+
+.focus-range {
+  width: 100%;
+  accent-color: #22d3ee;
+}
+
+.focus-range::-webkit-slider-runnable-track {
+  height: 0.35rem;
+  border-radius: 9999px;
+  background: color-mix(in srgb, var(--foreground-strong) 22%, transparent);
+}
+
+.focus-range::-webkit-slider-thumb {
+  width: 1.05rem;
+  height: 1.05rem;
+  margin-top: -0.35rem;
+  border-radius: 9999px;
+  background: #22d3ee;
+  box-shadow: 0 0 0 4px rgba(34, 211, 238, 0.16);
+}
+
+.focus-range::-moz-range-track {
+  height: 0.35rem;
+  border-radius: 9999px;
+  background: color-mix(in srgb, var(--foreground-strong) 22%, transparent);
+}
+
+.focus-range::-moz-range-thumb {
+  width: 1.05rem;
+  height: 1.05rem;
+  border: 0;
+  border-radius: 9999px;
+  background: #22d3ee;
+  box-shadow: 0 0 0 4px rgba(34, 211, 238, 0.16);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .focus-pulse {
+    animation: none;
+  }
+
+  .focus-orbit-progress {
+    transition: none;
+  }
+}
+
+.focus-redesign-shell {
+  color-scheme: light;
+  --focus-blue: #1688f3;
+  --focus-purple: #6f45ee;
+  --focus-green: #17c98d;
+  --focus-ink: #0e1726;
+  --focus-muted: #687386;
+  background:
+    radial-gradient(circle at 34% 9%, rgba(114, 87, 246, 0.07), transparent 28rem),
+    radial-gradient(circle at 78% 4%, rgba(22, 136, 243, 0.08), transparent 25rem),
+    #f6f7fb;
+}
+
+.focus-redesign-grid {
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+}
+
+.focus-dashboard-card,
+.focus-tasks-panel {
+  min-width: 0;
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
+}
+
+.focus-dashboard-card {
+  scrollbar-color: rgba(108, 60, 244, 0.22) transparent;
+}
+
+@media (min-width: 768px) and (max-width: 1512px), (min-width: 768px) and (max-height: 900px) {
+  .focus-dashboard-card {
+    zoom: 0.84;
+  }
+}
+
+.focus-tasks-panel {
+  scrollbar-color: rgba(108, 60, 244, 0.24) transparent;
+}
+
+.focus-brand-mark {
+  display: inline-flex;
+  width: 2rem;
+  height: 2rem;
+  align-items: end;
+  justify-content: center;
+  gap: 0.16rem;
+  color: #111827;
+}
+
+.focus-brand-mark span {
+  width: 0.18rem;
+  border-radius: 9999px;
+  background: currentColor;
+}
+
+.focus-brand-mark span:nth-child(1) {
+  height: 0.7rem;
+}
+
+.focus-brand-mark span:nth-child(2) {
+  height: 1.35rem;
+}
+
+.focus-brand-mark span:nth-child(3) {
+  height: 1rem;
+}
+
+.focus-profile-select {
+  font-family: inherit;
+}
+
+.focus-ring-stage {
+  background:
+    radial-gradient(circle at 50% 50%, rgba(22, 136, 243, 0.08), transparent 11rem),
+    radial-gradient(circle at 50% 50%, rgba(111, 69, 238, 0.06), transparent 18rem);
+}
+
+.focus-ring-svg {
+  overflow: visible;
+}
+
+.focus-phase-bubble {
+  position: absolute;
+  z-index: 14;
+  display: grid;
+  min-width: 2.8rem;
+  transform: translate(-50%, -50%);
+  place-items: center;
+  border: 1px solid #dce4f2;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.92);
+  padding: 0.35rem 0.5rem;
+  color: #466077;
+  box-shadow:
+    0 14px 34px -22px rgba(18, 31, 61, 0.38),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1.05;
+}
+
+.focus-phase-bubble small {
+  margin-top: 0.14rem;
+  color: #687386;
+  font-size: 0.64rem;
+  font-weight: 500;
+}
+
+.focus-phase-bubble.is-break {
+  border-color: rgba(111, 69, 238, 0.18);
+}
+
+.focus-phase-bubble.is-long-break {
+  border-color: rgba(23, 201, 141, 0.24);
+}
+
+.focus-phase-bubble.is-active {
+  border-color: rgba(22, 136, 243, 0.54);
+  color: #0b65c7;
+  box-shadow:
+    0 16px 40px -22px rgba(22, 136, 243, 0.5),
+    0 0 0 5px rgba(22, 136, 243, 0.08);
+}
+
+.focus-primary-action,
+.focus-secondary-action,
+.focus-queue-icon,
+.focus-add-button,
+.focus-profile-card,
+.focus-queue-task {
+  transition:
+    transform 180ms ease,
+    border-color 180ms ease,
+    background-color 180ms ease,
+    box-shadow 180ms ease,
+    color 180ms ease;
+}
+
+.focus-primary-action {
+  display: inline-flex;
+  height: 3.8rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.85rem;
+  border-radius: 0.85rem;
+  background:
+    linear-gradient(180deg, rgba(150, 94, 255, 0.96), rgba(65, 31, 208, 1));
+  color: white;
+  box-shadow:
+    0 22px 44px -24px rgba(93, 49, 230, 0.72),
+    inset 0 1px 0 rgba(255, 255, 255, 0.28);
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.focus-primary-action:hover {
+  transform: translateY(-1px);
+  box-shadow:
+    0 28px 50px -24px rgba(93, 49, 230, 0.78),
+    inset 0 1px 0 rgba(255, 255, 255, 0.34);
+}
+
+.focus-secondary-action {
+  display: inline-flex;
+  min-height: 3.15rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.65rem;
+  border: 1px solid #e3e8f2;
+  border-radius: 0.9rem;
+  background: rgba(255, 255, 255, 0.72);
+  color: #5d6678;
+  box-shadow: 0 14px 30px -24px rgba(31, 41, 55, 0.38);
+  font-size: 0.86rem;
+  font-weight: 600;
+}
+
+.focus-secondary-action:hover {
+  transform: translateY(-1px);
+  border-color: #d9dff0;
+  color: #111827;
+}
+
+.focus-session-strip {
+  position: relative;
+  display: flex;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 3.1rem;
+  overflow: hidden;
+  border: 1px solid #dfe6f1;
+  border-radius: 0.72rem;
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.64);
+}
+
+.focus-session-cell {
+  position: relative;
+  display: grid;
+  min-width: 3rem;
+  place-items: center;
+  align-content: center;
+  border-right: 1px solid #e4e8f2;
+  color: var(--focus-blue);
+  text-align: center;
+}
+
+.focus-session-cell:last-child {
+  border-right: 0;
+}
+
+.focus-session-cell.is-break {
+  color: var(--focus-purple);
+}
+
+.focus-session-cell.is-long-break {
+  color: var(--focus-green);
+}
+
+.focus-session-cell strong {
+  font-size: 0.86rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.focus-session-cell span {
+  margin-top: 0.2rem;
+  color: currentColor;
+  font-size: 0.72rem;
+  font-weight: 600;
+  opacity: 0.82;
+}
+
+.focus-session-cell.is-active::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  top: 0;
+  height: 0.18rem;
+  background: currentColor;
+}
+
+.focus-session-playhead {
+  position: absolute;
+  z-index: 3;
+  top: -0.45rem;
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 9999px;
+  background: var(--focus-blue);
+  box-shadow: 0 0 0 4px rgba(22, 136, 243, 0.14);
+  transition: left 0.45s linear;
+}
+
+.focus-stat-card {
+  min-height: 10.4rem;
+  border: 1px solid #e3e8f2;
+  border-radius: 1.05rem;
+  background: rgba(255, 255, 255, 0.84);
+  padding: 1.05rem;
+  box-shadow: 0 18px 42px -36px rgba(31, 41, 55, 0.36);
+}
+
+.focus-stat-card h3 {
+  color: #141a27;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.focus-donut {
+  position: relative;
+  display: grid;
+  width: 5.5rem;
+  height: 5.5rem;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 9999px;
+}
+
+.focus-donut::after {
+  content: "";
+  position: absolute;
+  inset: 0.78rem;
+  border-radius: inherit;
+  background: white;
+  box-shadow: inset 0 0 0 1px rgba(226, 232, 240, 0.74);
+}
+
+.focus-donut span,
+.focus-donut small {
+  position: relative;
+  z-index: 1;
+  color: #111827;
+}
+
+.focus-donut span {
+  font-size: 1.55rem;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.focus-donut small {
+  margin-top: 1.6rem;
+  margin-left: -1.25rem;
+  font-size: 0.68rem;
+}
+
+.focus-stat-card i {
+  display: inline-block;
+  width: 0.55rem;
+  height: 0.55rem;
+  margin-right: 0.5rem;
+  border-radius: 9999px;
+}
+
+.focus-stat-card b {
+  margin-left: 0.45rem;
+  font-weight: 500;
+}
+
+.focus-goal-chip {
+  border-radius: 9999px;
+  background: rgba(22, 136, 243, 0.09);
+  padding: 0.24rem 0.55rem;
+  color: #2184f6;
+  font-size: 0.74rem;
+  font-weight: 600;
+}
+
+.focus-week-chart {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  align-items: end;
+  gap: 0.6rem;
+}
+
+.focus-week-chart span {
+  display: block;
+  width: 1.05rem;
+  border-radius: 0.35rem 0.35rem 0.16rem 0.16rem;
+  background:
+    linear-gradient(180deg, rgba(166, 106, 255, 0.82), rgba(52, 70, 232, 0.98));
+  box-shadow: 0 9px 18px -11px rgba(76, 67, 230, 0.58);
+}
+
+.focus-week-chart small {
+  color: #667085;
+  font-size: 0.7rem;
+  font-weight: 500;
+}
+
+.focus-chain-dot {
+  display: inline-grid;
+  width: 2.2rem;
+  height: 2.2rem;
+  place-items: center;
+  border-radius: 9999px;
+  background: #f3f1ff;
+  color: #8060f7;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.focus-chain-dot.is-complete {
+  background:
+    linear-gradient(180deg, rgba(141, 99, 255, 0.92), rgba(93, 62, 226, 0.98));
+  color: white;
+  box-shadow: 0 12px 25px -16px rgba(111, 69, 238, 0.8);
+}
+
+.focus-profile-card {
+  position: relative;
+  display: flex;
+  min-height: 5.5rem;
+  align-items: center;
+  gap: 1rem;
+  border: 1px solid #e4e8f2;
+  border-radius: 0.9rem;
+  background: white;
+  padding: 1rem 1.1rem;
+  color: #111827;
+  text-align: left;
+}
+
+.focus-profile-card:hover {
+  transform: translateY(-1px);
+  border-color: rgba(111, 69, 238, 0.34);
+  box-shadow: 0 18px 38px -30px rgba(31, 41, 55, 0.4);
+}
+
+.focus-profile-card.is-selected {
+  border-color: rgba(111, 69, 238, 0.64);
+  box-shadow:
+    0 18px 38px -30px rgba(111, 69, 238, 0.62),
+    inset 0 0 0 1px rgba(111, 69, 238, 0.12);
+}
+
+.focus-profile-card.is-custom {
+  border-style: dashed;
+  background: #fbfcff;
+}
+
+.focus-profile-icon {
+  display: grid;
+  width: 3.1rem;
+  height: 3.1rem;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 0.85rem;
+  color: #7048f4;
+}
+
+.focus-profile-card strong {
+  display: block;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.focus-profile-card small {
+  display: block;
+  margin-top: 0.3rem;
+  color: #667085;
+  font-size: 0.75rem;
+  line-height: 1.35;
+}
+
+.focus-selected-dot {
+  position: absolute;
+  right: 0.9rem;
+  bottom: 0.85rem;
+  width: 1.35rem;
+  height: 1.35rem;
+  border: 3px solid white;
+  border-radius: 9999px;
+  background: #7048f4;
+  box-shadow: 0 0 0 2px rgba(111, 69, 238, 0.28);
+}
+
+.focus-queue-icon,
+.focus-add-button {
+  display: inline-grid;
+  place-items: center;
+  border: 0;
+  background: transparent;
+}
+
+.focus-queue-icon {
+  width: 2.2rem;
+  height: 2.2rem;
+  color: #0f172a;
+}
+
+.focus-queue-icon:hover {
+  border-radius: 9999px;
+  background: #f4f6fb;
+}
+
+.focus-add-button {
+  width: 2.7rem;
+  height: 2.7rem;
+  border-radius: 0.65rem;
+  background: linear-gradient(180deg, #8f64ff, #5b2fe2);
+  color: white;
+  box-shadow: 0 12px 22px -12px rgba(91, 47, 226, 0.7);
+}
+
+.focus-task-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border-bottom: 1px solid #edf0f5;
+}
+
+.focus-task-tabs button {
+  position: relative;
+  height: 3.25rem;
+  color: #687386;
+  font-size: 0.88rem;
+  font-weight: 500;
+}
+
+.focus-task-tabs button.is-active {
+  color: #0f172a;
+}
+
+.focus-task-tabs button.is-active::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: 0.18rem;
+  border-radius: 9999px;
+  background: #7048f4;
+}
+
+.focus-queue-task {
+  display: flex;
+  width: 100%;
+  align-items: flex-start;
+  gap: 1rem;
+  border-bottom: 1px solid #edf0f5;
+  padding: 1.25rem 0.9rem;
+  text-align: left;
+}
+
+.focus-queue-task:hover,
+.focus-queue-task.is-selected {
+  border-color: #e1e5ef;
+  border-radius: 0.9rem;
+  background: rgba(249, 250, 253, 0.88);
+  box-shadow: 0 14px 34px -30px rgba(31, 41, 55, 0.34);
+}
+
+.focus-queue-task strong {
+  display: block;
+  color: #161b26;
+  font-size: 0.98rem;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.focus-task-radio {
+  display: inline-grid;
+  width: 1.5rem;
+  height: 1.5rem;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 2px solid #b8c0cf;
+  border-radius: 9999px;
+}
+
+.focus-task-radio span {
+  width: 0.72rem;
+  height: 0.72rem;
+  border-radius: inherit;
+  background: #7048f4;
+}
+
+.focus-task-radio.is-selected {
+  border-color: #7048f4;
+  box-shadow: 0 0 0 5px rgba(112, 72, 244, 0.1);
+}
+
+.focus-task-card-popover {
+  color-scheme: light;
+}
+
+.focus-range {
+  width: 100%;
+  accent-color: #7048f4;
+}
+
+.focus-range::-webkit-slider-runnable-track {
+  height: 0.28rem;
+  border-radius: 9999px;
+  background: #dfe5f0;
+}
+
+.focus-range::-webkit-slider-thumb {
+  width: 1rem;
+  height: 1rem;
+  margin-top: -0.36rem;
+  border-radius: 9999px;
+  background: #7048f4;
+  box-shadow: 0 0 0 4px rgba(112, 72, 244, 0.12);
+}
+
+.focus-range::-moz-range-track {
+  height: 0.28rem;
+  border-radius: 9999px;
+  background: #dfe5f0;
+}
+
+.focus-range::-moz-range-thumb {
+  width: 1rem;
+  height: 1rem;
+  border: 0;
+  border-radius: 9999px;
+  background: #7048f4;
+  box-shadow: 0 0 0 4px rgba(112, 72, 244, 0.12);
+}
+
+.dark .focus-redesign-shell,
+.neon .focus-redesign-shell {
+  color-scheme: dark;
+  --focus-blue: #48a6ff;
+  --focus-purple: #a98bff;
+  --focus-green: #33e6a6;
+  --focus-ink: #f7f9ff;
+  --focus-muted: #9ca8bd;
+  background:
+    radial-gradient(circle at 34% 9%, rgba(123, 92, 255, 0.14), transparent 28rem),
+    radial-gradient(circle at 78% 4%, rgba(34, 197, 94, 0.1), transparent 25rem),
+    #06090f !important;
+  color: #edf3ff !important;
+}
+
+.dark .focus-dashboard-card,
+.neon .focus-dashboard-card,
+.dark .focus-tasks-panel,
+.neon .focus-tasks-panel {
+  border-color: rgba(148, 163, 184, 0.18) !important;
+  background: rgba(13, 17, 24, 0.9) !important;
+  box-shadow:
+    0 24px 80px -50px rgba(0, 0, 0, 0.9),
+    inset 0 1px 0 rgba(255, 255, 255, 0.035) !important;
+}
+
+.neon .focus-dashboard-card,
+.neon .focus-tasks-panel {
+  border-color: rgba(16, 185, 129, 0.2) !important;
+  background: rgba(5, 12, 11, 0.92) !important;
+}
+
+.dark .focus-redesign-shell :is(h2, h3, strong, button, select, p, span, small, div),
+.neon .focus-redesign-shell :is(h2, h3, strong, button, select, p, span, small, div) {
+  border-color: rgba(148, 163, 184, 0.2);
+}
+
+.dark .focus-brand-mark,
+.neon .focus-brand-mark,
+.dark .focus-profile-select,
+.neon .focus-profile-select,
+.dark .focus-redesign-shell .focus-current-task h2,
+.neon .focus-redesign-shell .focus-current-task h2,
+.dark .focus-tasks-panel > div:first-child h2,
+.neon .focus-tasks-panel > div:first-child h2,
+.dark .focus-queue-icon,
+.neon .focus-queue-icon,
+.dark .focus-queue-task strong,
+.neon .focus-queue-task strong,
+.dark .focus-stat-card h3,
+.neon .focus-stat-card h3,
+.dark .focus-redesign-shell .text-\[\#101828\],
+.neon .focus-redesign-shell .text-\[\#101828\],
+.dark .focus-redesign-shell .text-\[\#111827\],
+.neon .focus-redesign-shell .text-\[\#111827\],
+.dark .focus-redesign-shell .text-\[\#0f172a\],
+.neon .focus-redesign-shell .text-\[\#0f172a\],
+.dark .focus-redesign-shell .text-\[\#0d111a\],
+.neon .focus-redesign-shell .text-\[\#0d111a\],
+.dark .focus-redesign-shell .text-\[\#0a1a2d\],
+.neon .focus-redesign-shell .text-\[\#0a1a2d\] {
+  color: #f7f9ff !important;
+}
+
+.dark .focus-redesign-shell :is(.text-\[\#667085\], .text-\[\#687386\], .text-\[\#6d7484\], .text-\[\#5d6678\], .text-\[\#475467\]),
+.neon .focus-redesign-shell :is(.text-\[\#667085\], .text-\[\#687386\], .text-\[\#6d7484\], .text-\[\#5d6678\], .text-\[\#475467\]) {
+  color: #9ca8bd !important;
+}
+
+.dark .focus-ring-stage,
+.neon .focus-ring-stage {
+  background:
+    radial-gradient(circle at 50% 50%, rgba(72, 166, 255, 0.13), transparent 11rem),
+    radial-gradient(circle at 50% 50%, rgba(169, 139, 255, 0.11), transparent 18rem);
+}
+
+.neon .focus-ring-stage {
+  background:
+    radial-gradient(circle at 50% 50%, rgba(52, 211, 153, 0.13), transparent 11rem),
+    radial-gradient(circle at 50% 50%, rgba(72, 166, 255, 0.1), transparent 18rem);
+}
+
+.dark .focus-ring-svg circle[stroke="#edf1f8"],
+.neon .focus-ring-svg circle[stroke="#edf1f8"] {
+  stroke: rgba(148, 163, 184, 0.22);
+}
+
+.dark .focus-ring-svg circle[stroke="rgba(255,255,255,0.8)"],
+.neon .focus-ring-svg circle[stroke="rgba(255,255,255,0.8)"] {
+  stroke: rgba(226, 232, 240, 0.32);
+}
+
+.dark .focus-ring-svg circle[fill="#ffffff"],
+.neon .focus-ring-svg circle[fill="#ffffff"] {
+  fill: #101826;
+  stroke: rgba(169, 139, 255, 0.8);
+}
+
+.neon .focus-ring-svg circle[fill="#ffffff"] {
+  stroke: rgba(52, 211, 153, 0.86);
+}
+
+.dark .focus-phase-bubble,
+.neon .focus-phase-bubble {
+  border-color: rgba(148, 163, 184, 0.26);
+  background: rgba(13, 17, 24, 0.9);
+  color: #dbe7ff;
+  box-shadow:
+    0 14px 34px -22px rgba(0, 0, 0, 0.86),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.dark .focus-phase-bubble small,
+.neon .focus-phase-bubble small {
+  color: #9ca8bd;
+}
+
+.dark .focus-phase-bubble.is-active,
+.neon .focus-phase-bubble.is-active {
+  border-color: rgba(72, 166, 255, 0.62);
+  color: #8fc9ff;
+  box-shadow:
+    0 16px 40px -22px rgba(72, 166, 255, 0.58),
+    0 0 0 5px rgba(72, 166, 255, 0.1);
+}
+
+.neon .focus-phase-bubble.is-active {
+  border-color: rgba(52, 211, 153, 0.66);
+  color: #77f0bd;
+  box-shadow:
+    0 16px 40px -22px rgba(52, 211, 153, 0.5),
+    0 0 0 5px rgba(52, 211, 153, 0.1);
+}
+
+.dark .focus-redesign-shell .bg-\[\#f3efff\],
+.neon .focus-redesign-shell .bg-\[\#f3efff\],
+.dark .focus-redesign-shell .bg-\[\#f7f8fb\],
+.neon .focus-redesign-shell .bg-\[\#f7f8fb\],
+.dark .focus-redesign-shell .bg-\[\#f8fbff\],
+.neon .focus-redesign-shell .bg-\[\#f8fbff\],
+.dark .focus-redesign-shell .bg-\[\#fff4ed\],
+.neon .focus-redesign-shell .bg-\[\#fff4ed\] {
+  background-color: rgba(255, 255, 255, 0.07) !important;
+}
+
+.dark .focus-secondary-action,
+.neon .focus-secondary-action,
+.dark .focus-profile-card,
+.neon .focus-profile-card,
+.dark .focus-stat-card,
+.neon .focus-stat-card,
+.dark .focus-task-card-popover,
+.neon .focus-task-card-popover {
+  border-color: rgba(148, 163, 184, 0.18) !important;
+  background: rgba(17, 23, 34, 0.78) !important;
+  color: #dbe7ff !important;
+  box-shadow:
+    0 18px 42px -36px rgba(0, 0, 0, 0.72),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04) !important;
+}
+
+.neon .focus-secondary-action,
+.neon .focus-profile-card,
+.neon .focus-stat-card,
+.neon .focus-task-card-popover {
+  border-color: rgba(16, 185, 129, 0.2) !important;
+  background: rgba(7, 18, 17, 0.78) !important;
+}
+
+.dark .focus-secondary-action:hover,
+.neon .focus-secondary-action:hover,
+.dark .focus-profile-card:hover,
+.neon .focus-profile-card:hover,
+.dark .focus-queue-icon:hover,
+.neon .focus-queue-icon:hover {
+  background: rgba(255, 255, 255, 0.1) !important;
+  color: #ffffff !important;
+}
+
+.dark .focus-session-strip,
+.neon .focus-session-strip {
+  border-color: rgba(148, 163, 184, 0.2);
+  background: rgba(17, 23, 34, 0.82);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+}
+
+.dark .focus-session-cell,
+.neon .focus-session-cell {
+  border-color: rgba(148, 163, 184, 0.18);
+  background-color: rgba(72, 166, 255, 0.15) !important;
+}
+
+.dark .focus-session-cell.is-break,
+.neon .focus-session-cell.is-break {
+  background-color: rgba(169, 139, 255, 0.15) !important;
+}
+
+.dark .focus-session-cell.is-long-break,
+.neon .focus-session-cell.is-long-break {
+  background-color: rgba(51, 230, 166, 0.15) !important;
+}
+
+.dark .focus-donut::after,
+.neon .focus-donut::after {
+  background: #101826;
+  box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.2);
+}
+
+.dark .focus-donut span,
+.dark .focus-donut small,
+.neon .focus-donut span,
+.neon .focus-donut small {
+  color: #f7f9ff;
+}
+
+.dark .focus-goal-chip,
+.neon .focus-goal-chip,
+.dark .focus-chain-dot,
+.neon .focus-chain-dot {
+  background: rgba(169, 139, 255, 0.14);
+  color: #c5b8ff;
+}
+
+.neon .focus-goal-chip,
+.neon .focus-chain-dot {
+  background: rgba(52, 211, 153, 0.14);
+  color: #8cf5c8;
+}
+
+.dark .focus-profile-card.is-custom,
+.neon .focus-profile-card.is-custom {
+  background: rgba(255, 255, 255, 0.045) !important;
+}
+
+.dark .focus-selected-dot,
+.neon .focus-selected-dot {
+  border-color: #0d1118;
+}
+
+.dark .focus-task-tabs,
+.neon .focus-task-tabs {
+  border-bottom-color: rgba(148, 163, 184, 0.2);
+}
+
+.dark .focus-task-tabs button,
+.neon .focus-task-tabs button {
+  color: #9ca8bd;
+}
+
+.dark .focus-task-tabs button.is-active,
+.neon .focus-task-tabs button.is-active {
+  color: #f7f9ff;
+}
+
+.neon .focus-task-tabs button.is-active::after {
+  background: #33e6a6;
+}
+
+.dark .focus-queue-task,
+.neon .focus-queue-task {
+  border-bottom-color: rgba(148, 163, 184, 0.14);
+}
+
+.dark .focus-queue-task:hover,
+.dark .focus-queue-task.is-selected,
+.neon .focus-queue-task:hover,
+.neon .focus-queue-task.is-selected {
+  border-color: rgba(148, 163, 184, 0.2);
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: 0 14px 34px -30px rgba(0, 0, 0, 0.86);
+}
+
+.dark .focus-task-radio,
+.neon .focus-task-radio {
+  border-color: rgba(148, 163, 184, 0.56);
+}
+
+.dark .focus-task-radio.is-selected,
+.neon .focus-task-radio.is-selected {
+  border-color: #a98bff;
+  box-shadow: 0 0 0 5px rgba(169, 139, 255, 0.1);
+}
+
+.neon .focus-task-radio.is-selected {
+  border-color: #33e6a6;
+  box-shadow: 0 0 0 5px rgba(52, 211, 153, 0.1);
+}
+
+.dark .focus-task-card-popover .bg-white,
+.neon .focus-task-card-popover .bg-white {
+  background: rgba(255, 255, 255, 0.08) !important;
+}
+
+.dark .focus-range::-webkit-slider-runnable-track,
+.neon .focus-range::-webkit-slider-runnable-track {
+  background: rgba(148, 163, 184, 0.24);
+}
+
+.dark .focus-range::-moz-range-track,
+.neon .focus-range::-moz-range-track {
+  background: rgba(148, 163, 184, 0.24);
+}
+
+@media (max-width: 1023px) {
+  .focus-redesign-shell {
+    overflow-y: auto;
+  }
+
+  .focus-redesign-grid {
+    min-height: auto;
+  }
+
+  .focus-dashboard-card,
+  .focus-tasks-panel {
+    border-radius: 1.25rem;
+  }
+
+  .focus-dashboard-card {
+    flex: none;
+    overflow: visible;
+  }
+
+  .focus-tasks-panel {
+    flex: none;
+    max-height: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .focus-redesign-grid {
+    padding: 0.75rem;
+  }
+
+  .focus-dashboard-card {
+    padding: 1.2rem;
+  }
+
+  .focus-ring-stage {
+    min-height: 330px;
+  }
+
+  .focus-phase-bubble {
+    min-width: 2.45rem;
+    font-size: 0.68rem;
+  }
+
+  .focus-phase-bubble small {
+    font-size: 0.56rem;
+  }
+
+  .focus-session-strip {
+    overflow-x: auto;
+  }
+
+  .focus-session-cell {
+    min-width: 4.8rem;
+  }
 }

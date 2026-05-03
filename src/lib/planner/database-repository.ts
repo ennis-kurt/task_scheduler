@@ -35,6 +35,7 @@ import type {
   NewTaxonomyInput,
   ProjectRecord,
   TagRecord,
+  TaskAvailability,
   TaskBlockRecord,
   TaskChecklistItemRecord,
   TaskRecord,
@@ -63,6 +64,14 @@ function iso(value: Date | string | null | undefined) {
 
 function id(prefix: string) {
   return `${prefix}_${crypto.randomUUID().slice(0, 8)}`;
+}
+
+function resolveTaskAvailability(input: {
+  startsAt?: string | null;
+  endsAt?: string | null;
+  availability?: TaskAvailability;
+}) {
+  return input.startsAt && input.endsAt ? "ready" : (input.availability ?? "later");
 }
 
 async function ensureDbUser(userId: string) {
@@ -189,6 +198,7 @@ function mapTask(record: typeof tasks.$inferSelect): TaskRecord {
     preferredWindowStart: record.preferredWindowStart,
     preferredWindowEnd: record.preferredWindowEnd,
     status: record.status as TaskRecord["status"],
+    availability: (record.availability ?? "ready") as TaskRecord["availability"],
     completedAt: iso(record.completedAt),
     areaId: record.areaId,
     projectId: record.projectId,
@@ -409,6 +419,7 @@ export const databaseRepository = {
       preferredWindowStart: input.preferredWindowStart ?? null,
       preferredWindowEnd: input.preferredWindowEnd ?? null,
       status: "todo",
+      availability: resolveTaskAvailability(input),
       completedAt: null,
       areaId: input.areaId ?? null,
       projectId: linkedMilestone?.projectId ?? input.projectId ?? null,
@@ -450,6 +461,10 @@ export const databaseRepository = {
         preferredWindowStart: input.preferredWindowStart,
         preferredWindowEnd: input.preferredWindowEnd,
         status: input.status,
+        availability:
+          input.startsAt && input.endsAt
+            ? "ready"
+            : input.availability,
         completedAt:
           input.status === undefined
             ? undefined
@@ -512,6 +527,7 @@ export const databaseRepository = {
       .update(tasks)
       .set({
         estimatedMinutes: calculateMinutes(input.startsAt, input.endsAt),
+        availability: "ready",
         updatedAt: now(),
       })
       .where(and(eq(tasks.id, input.taskId), eq(tasks.userId, userId)));

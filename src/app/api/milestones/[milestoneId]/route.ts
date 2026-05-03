@@ -1,4 +1,5 @@
 import { requireUserId } from "@/lib/auth";
+import { notePagesRepository } from "@/lib/planner/note-pages";
 import { plannerRepository } from "@/lib/planner/repository";
 import { updateMilestoneSchema } from "@/lib/planner/validators";
 import { handleRouteError, success } from "@/app/api/_helpers";
@@ -15,6 +16,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     const { milestoneId } = await context.params;
     const input = updateMilestoneSchema.parse(await request.json());
     const milestone = await plannerRepository.updateMilestone(userId, milestoneId, input);
+    await notePagesRepository.syncMilestoneNotes(userId, milestone);
     return success(milestone);
   } catch (error) {
     return handleRouteError(error);

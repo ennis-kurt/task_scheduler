@@ -1,5 +1,6 @@
 import React, {
   ReactNode,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -20,12 +21,23 @@ import {
   Minimize2,
   Plus,
   Search,
+  Sparkles,
   Trash2,
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 
 import { cn } from "@/lib/utils";
-import type { PlannerTask, TaskStatus } from "@/lib/planner/types";
+import type {
+  PlannerPayload,
+  PlannerTask,
+  TaskStatus,
+} from "@/lib/planner/types";
+import type {
+  CustomPlanningPreferences,
+  DailyPlanRequest,
+  DailyPlanResponse,
+  PlanningMode,
+} from "@/lib/planner/ai-daily-plan";
 
 type PlanningColumn =
   | {
@@ -48,6 +60,15 @@ type PlanningWorkload = {
   overloaded?: boolean;
 };
 
+type PlanningFocusSession = {
+  taskTitle: string;
+  timerLabel: string;
+  phaseLabel: string;
+  remainingSeconds: number;
+};
+
+type MobilePlanningTab = "task-flow" | "schedule";
+
 export interface PlanningViewProps {
   tasks: PlannerTask[];
   onTaskDrop: (taskId: string, newStatus: TaskStatus) => void;
@@ -60,7 +81,10 @@ export interface PlanningViewProps {
   focusedDate: string;
   onNavigateDate: (direction: "prev" | "today" | "next") => void;
   workload: PlanningWorkload;
+  focusSession?: PlanningFocusSession | null;
   storageKey: string;
+  plannerData: PlannerPayload;
+  onApplyDailyPlan: (plan: DailyPlanResponse) => Promise<void> | void;
   overlayOpen?: boolean;
 }
 
@@ -72,6 +96,28 @@ const MIN_KANBAN_HEIGHT = 260;
 const MAX_KANBAN_HEIGHT = 1100;
 const SCHEDULE_PANEL_HEIGHT = 720;
 const DEFAULT_KANBAN_VIEWPORT_RATIO = 0.5;
+const AI_PLANNING_MODES: Array<{ id: PlanningMode; label: string; description: string }> = [
+  {
+    id: "deep_focus",
+    label: "Deep Focus",
+    description: "Longer blocks, fewer gaps.",
+  },
+  {
+    id: "standard",
+    label: "Standard",
+    description: "Balanced workday.",
+  },
+  {
+    id: "chill",
+    label: "Chill",
+    description: "More breathing room.",
+  },
+  {
+    id: "custom",
+    label: "Custom",
+    description: "Guide the assistant.",
+  },
+];
 
 const DEFAULT_COLUMNS: PlanningColumn[] = [
   {
@@ -302,7 +348,10 @@ export function PlanningView({
   focusedDate,
   onNavigateDate,
   workload,
+  focusSession,
   storageKey,
+  plannerData,
+  onApplyDailyPlan,
   overlayOpen = false,
 }: PlanningViewProps) {
   const [kanbanHeight, setKanbanHeight] = useState(() => defaultKanbanHeightFromViewport());
@@ -318,6 +367,16 @@ export function PlanningView({
   const [editingColumnId, setEditingColumnId] = useState<string | null>(null);
   const [draggingColumnId, setDraggingColumnId] = useState<string | null>(null);
   const [calendarFullscreen, setCalendarFullscreen] = useState(false);
+  const [mobilePlanningTab, setMobilePlanningTab] =
+    useState<MobilePlanningTab>("task-flow");
+  const [dailyPlan, setDailyPlan] = useState<DailyPlanResponse | null>(null);
+  const [activePlanningMode, setActivePlanningMode] = useState<PlanningMode>("standard");
+  const [customPlannerOpen, setCustomPlannerOpen] = useState(false);
+  const [customInstructions, setCustomInstructions] =
+    useState<CustomPlanningPreferences>({});
+  const [planLoading, setPlanLoading] = useState(false);
+  const [planApplyLoading, setPlanApplyLoading] = useState(false);
+  const [planError, setPlanError] = useState<string | null>(null);
   const resizerRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const kanbanHeaderRef = useRef<HTMLDivElement>(null);
@@ -332,8 +391,76 @@ export function PlanningView({
     kanbanFullscreen,
     kanbanCollapsed,
     kanbanHeight,
+    mobilePlanningTab,
     surface,
   ].join(":");
+
+  const buildDailyPlanRequest = useCallback(
+    (
+      planningMode: PlanningMode,
+      custom?: CustomPlanningPreferences,
+    ): DailyPlanRequest => ({
+      planningMode,
+      date: focusedDate,
+      timezone: plannerData.settings.timezone,
+      tasks: plannerData.tasks,
+      projects: plannerData.projects,
+      milestones: plannerData.milestones,
+      projectPlans: plannerData.projectPlans,
+      scheduledItems: plannerData.scheduledItems,
+      capacity: plannerData.capacity,
+      settings: plannerData.settings,
+      customInstructions: custom,
+      dependencies: [],
+    }),
+    [focusedDate, plannerData],
+  );
+
+  const generateDailyPlan = useCallback(
+    async (planningMode: PlanningMode, custom?: CustomPlanningPreferences) => {
+      setActivePlanningMode(planningMode);
+      setPlanLoading(true);
+      setPlanError(null);
+
+      try {
+        const response = await fetch("/api/ai/daily-plan", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(buildDailyPlanRequest(planningMode, custom)),
+        });
+
+        const payload = (await response.json()) as DailyPlanResponse | { error?: string };
+
+        if (!response.ok) {
+          throw new Error("error" in payload && payload.error ? payload.error : "Could not generate plan");
+        }
+
+        setDailyPlan(payload as DailyPlanResponse);
+      } catch (error) {
+        setPlanError(error instanceof Error ? error.message : "Could not generate plan");
+      } finally {
+        setPlanLoading(false);
+      }
+    },
+    [buildDailyPlanRequest],
+  );
+
+  const applyDailyPlan = async () => {
+    if (!dailyPlan) {
+      return;
+    }
+
+    setPlanApplyLoading(true);
+    setPlanError(null);
+
+    try {
+      await onApplyDailyPlan(dailyPlan);
+    } catch (error) {
+      setPlanError(error instanceof Error ? error.message : "Could not apply plan");
+    } finally {
+      setPlanApplyLoading(false);
+    }
+  };
 
   const setColumnListRefs = (node: HTMLDivElement | null) => {
     columnListRef.current = node;
@@ -580,6 +707,18 @@ export function PlanningView({
 
     for (const task of tasks) {
       const mappedColumnId = taskColumnMap[task.id];
+      const mappedColumnVisible = Boolean(
+        mappedColumnId && buckets.has(mappedColumnId),
+      );
+
+      if (
+        task.availability === "later" &&
+        !task.hasBlock &&
+        !mappedColumnVisible
+      ) {
+        continue;
+      }
+
       const targetColumnId =
         mappedColumnId && customColumnIds.has(mappedColumnId)
           ? mappedColumnId
@@ -794,14 +933,25 @@ export function PlanningView({
     ? "3.25rem"
     : `${kanbanHeight}px`;
 
+  const selectMobilePlanningTab = (tab: MobilePlanningTab) => {
+    setMobilePlanningTab(tab);
+
+    if (tab === "task-flow") {
+      setCalendarFullscreen(false);
+      return;
+    }
+
+    setKanbanFullscreen(false);
+  };
+
   return (
     <div className="relative flex h-full flex-1 flex-col bg-[var(--background)]">
-      <header className="flex h-16 shrink-0 items-center justify-between border-b border-[var(--border)] bg-[var(--surface)] px-6">
-        <div className="flex min-w-0 items-center gap-4">
-          <h1 className="shrink-0 text-lg font-semibold text-[var(--foreground-strong)]">
+      <header className="flex shrink-0 flex-col gap-2 border-b border-[var(--border)] bg-[var(--surface)] px-4 py-2 sm:h-16 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:py-0">
+        <div className="flex min-w-0 items-center gap-3 sm:gap-4">
+          <h1 className="shrink-0 text-base font-semibold text-[var(--foreground-strong)] sm:text-lg">
             Planning
           </h1>
-          <div className="h-5 w-px bg-[var(--border)]" aria-hidden />
+          <div className="hidden h-5 w-px bg-[var(--border)] sm:block" aria-hidden />
           <div className="flex items-center rounded-lg border border-[var(--border)] bg-[var(--surface-muted)] p-0.5">
             <button
               onClick={() => onChangeSurface("day")}
@@ -829,7 +979,7 @@ export function PlanningView({
             </button>
           </div>
         </div>
-        <div className="flex min-w-0 items-center gap-3">
+        <div className="flex min-w-0 items-center gap-2 sm:gap-3">
           <div className="hidden items-center gap-1 sm:flex">
             <button
               onClick={() => onNavigateDate("prev")}
@@ -856,6 +1006,24 @@ export function PlanningView({
               Today
             </button>
           </div>
+          {focusSession ? (
+            <div
+              data-testid="global-focus-timer"
+              aria-label={`Focus timer ${focusSession.timerLabel} ${focusSession.phaseLabel}`}
+              title={`${focusSession.phaseLabel}: ${focusSession.taskTitle}`}
+              className="hidden max-w-[220px] items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--surface-muted)] px-3 py-1.5 text-xs font-semibold text-[var(--foreground-strong)] shadow-sm sm:flex"
+            >
+              <span className="relative flex h-2 w-2 shrink-0">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--accent-strong)] opacity-40" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-[var(--accent-strong)]" />
+              </span>
+              <Clock3 className="h-3.5 w-3.5 shrink-0 text-[var(--accent-strong)]" />
+              <span className="tabular-nums">{focusSession.timerLabel}</span>
+              <span className="min-w-0 truncate text-[var(--muted-foreground)]">
+                {focusSession.phaseLabel}
+              </span>
+            </div>
+          ) : null}
           <button
             type="button"
             data-testid="planning-workload"
@@ -868,17 +1036,302 @@ export function PlanningView({
           <button
             type="button"
             aria-label="Search planning"
-            className="flex h-10 w-10 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)] shadow-sm transition-colors hover:bg-[var(--surface-muted)] hover:text-[var(--foreground-strong)]"
+            className="flex h-9 w-9 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)] shadow-sm transition-colors hover:bg-[var(--surface-muted)] hover:text-[var(--foreground-strong)] sm:h-10 sm:w-10"
           >
             <Search className="h-5 w-5" />
           </button>
         </div>
+        <div className="flex items-center justify-between gap-2 sm:hidden">
+          <button
+            onClick={() => onNavigateDate("prev")}
+            aria-label="Go to previous dates"
+            className="flex h-9 w-9 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)]"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </button>
+          <span className="min-w-0 flex-1 truncate text-center text-sm font-medium text-[var(--foreground-strong)]">
+            {formatFocusedDate(focusedDate)}
+          </span>
+          <button
+            onClick={() => onNavigateDate("next")}
+            aria-label="Go to next dates"
+            className="flex h-9 w-9 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)]"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </button>
+          <button
+            onClick={() => onNavigateDate("today")}
+            aria-label="Jump to today"
+            className="h-9 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-medium text-[var(--foreground-strong)]"
+          >
+            Today
+          </button>
+        </div>
       </header>
 
-      <div
-        ref={containerRef}
-        className="relative flex flex-1 flex-col overflow-y-auto overflow-x-hidden"
-      >
+      <div className="relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
+        <section
+          data-testid="ai-daily-planner"
+          className="border-b border-[var(--border)] bg-[var(--surface)] px-4 py-3 sm:px-6"
+        >
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <Sparkles className="h-4 w-4 text-[var(--accent-strong)]" />
+              <h2 className="text-sm font-semibold text-[var(--foreground-strong)]">
+                AI Daily Planner
+              </h2>
+              {dailyPlan ? (
+                <span className="rounded-full bg-[var(--accent-soft)] px-2 py-0.5 text-[10px] font-semibold uppercase text-[var(--accent-strong)]">
+                  Draft
+                </span>
+              ) : null}
+            </div>
+            <p className="mt-1 max-w-2xl text-xs leading-5 text-[var(--muted-foreground)]">
+              Generate a realistic draft day from deadlines, priority, effort, project
+              progress, fixed events, and available capacity. Apply it when it looks right,
+              then fine tune blocks in the calendar.
+            </p>
+          </div>
+
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            {AI_PLANNING_MODES.map((mode) => (
+              <button
+                key={mode.id}
+                type="button"
+                data-testid={`ai-planner-mode-${mode.id}`}
+                onClick={() => {
+                  if (mode.id === "custom") {
+                    setActivePlanningMode("custom");
+                    setCustomPlannerOpen(true);
+                    return;
+                  }
+
+                  setCustomPlannerOpen(false);
+                  void generateDailyPlan(mode.id);
+                }}
+                disabled={planLoading}
+                className={cn(
+                  "rounded-lg border px-3 py-2 text-left transition-colors",
+                  activePlanningMode === mode.id
+                    ? "border-[var(--accent-strong)] bg-[var(--accent-soft)] text-[var(--foreground-strong)]"
+                    : "border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)] hover:bg-[var(--surface-muted)] hover:text-[var(--foreground-strong)]",
+                )}
+              >
+                <span className="block text-xs font-semibold">{mode.label}</span>
+                <span className="hidden text-[10px] sm:block">{mode.description}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {customPlannerOpen ? (
+          <div
+            data-testid="ai-planner-custom-form"
+            className="mt-3 grid gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface-muted)] p-3 md:grid-cols-4"
+          >
+            <label className="grid gap-1 text-[11px] font-semibold uppercase text-[var(--muted-foreground)]">
+              Intensity
+              <input
+                value={customInstructions.intensity ?? ""}
+                onChange={(event) =>
+                  setCustomInstructions((current) => ({
+                    ...current,
+                    intensity: event.target.value,
+                  }))
+                }
+                placeholder="Lighter, intense, balanced..."
+                className="h-9 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-normal normal-case text-[var(--foreground-strong)] outline-none focus:border-[var(--accent-strong)]"
+              />
+            </label>
+            <label className="grid gap-1 text-[11px] font-semibold uppercase text-[var(--muted-foreground)]">
+              Prioritize
+              <input
+                value={customInstructions.priorityFocus ?? ""}
+                onChange={(event) =>
+                  setCustomInstructions((current) => ({
+                    ...current,
+                    priorityFocus: event.target.value,
+                  }))
+                }
+                placeholder="Urgent deadlines, admin, progress..."
+                className="h-9 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-normal normal-case text-[var(--foreground-strong)] outline-none focus:border-[var(--accent-strong)]"
+              />
+            </label>
+            <label className="grid gap-1 text-[11px] font-semibold uppercase text-[var(--muted-foreground)]">
+              Avoid
+              <input
+                value={customInstructions.avoidTasks ?? ""}
+                onChange={(event) =>
+                  setCustomInstructions((current) => ({
+                    ...current,
+                    avoidTasks: event.target.value,
+                  }))
+                }
+                placeholder="Anything to delay today"
+                className="h-9 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-normal normal-case text-[var(--foreground-strong)] outline-none focus:border-[var(--accent-strong)]"
+              />
+            </label>
+            <label className="grid gap-1 text-[11px] font-semibold uppercase text-[var(--muted-foreground)]">
+              Session length
+              <div className="flex gap-2">
+                <input
+                  value={customInstructions.sessionLength ?? ""}
+                  onChange={(event) =>
+                    setCustomInstructions((current) => ({
+                      ...current,
+                      sessionLength: event.target.value,
+                    }))
+                  }
+                  placeholder="45"
+                  className="h-9 min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-normal normal-case text-[var(--foreground-strong)] outline-none focus:border-[var(--accent-strong)]"
+                />
+                <button
+                  type="button"
+                  onClick={() => generateDailyPlan("custom", customInstructions)}
+                  disabled={planLoading}
+                  className="h-9 rounded-lg bg-[var(--foreground-strong)] px-3 text-xs font-semibold text-[var(--surface)] transition-opacity disabled:opacity-50"
+                >
+                  Generate
+                </button>
+              </div>
+            </label>
+          </div>
+        ) : null}
+
+        {planError ? (
+          <div className="mt-3 rounded-lg border border-[var(--danger)]/30 bg-[var(--danger)]/10 px-3 py-2 text-xs text-[var(--danger)]">
+            {planError}
+          </div>
+        ) : null}
+
+        {dailyPlan ? (
+          <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(0,1fr)_18rem]">
+            <div className="min-w-0 rounded-xl border border-[var(--border)] bg-[var(--background)] p-3">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <p className="text-sm font-semibold text-[var(--foreground-strong)]">
+                    {dailyPlan.summary}
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-[var(--muted-foreground)]">
+                    {dailyPlan.explanation_summary}
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => generateDailyPlan(activePlanningMode, customInstructions)}
+                    disabled={planLoading}
+                    className="h-8 rounded-lg border border-[var(--border)] px-3 text-xs font-semibold text-[var(--muted-foreground)] transition-colors hover:bg-[var(--surface-muted)] hover:text-[var(--foreground-strong)] disabled:opacity-50"
+                  >
+                    Regenerate
+                  </button>
+                  <button
+                    type="button"
+                    onClick={applyDailyPlan}
+                    disabled={planApplyLoading || planLoading}
+                    data-testid="ai-planner-apply"
+                    className="h-8 rounded-lg bg-[var(--accent-strong)] px-3 text-xs font-semibold text-[var(--accent-contrast)] transition-opacity disabled:opacity-50"
+                  >
+                    {planApplyLoading ? "Applying..." : "Apply Plan"}
+                  </button>
+                </div>
+              </div>
+              <div
+                data-testid="ai-planner-timeline"
+                className="mt-3 flex gap-2 overflow-x-auto pb-1"
+                style={{ scrollbarWidth: "thin" }}
+              >
+                {dailyPlan.schedule.map((block, index) => (
+                  <article
+                    key={`${block.start_time}-${block.end_time}-${index}`}
+                    className={cn(
+                      "min-w-[180px] rounded-lg border px-3 py-2",
+                      block.type === "break"
+                        ? "border-[var(--border)] bg-[var(--surface-muted)]"
+                        : "border-[var(--accent-soft)] bg-[var(--surface)]",
+                    )}
+                  >
+                    <div className="text-[11px] font-semibold uppercase text-[var(--muted-foreground)]">
+                      {block.start_time} - {block.end_time}
+                    </div>
+                    <h3 className="mt-1 line-clamp-2 text-sm font-medium text-[var(--foreground-strong)]">
+                      {block.task_title}
+                    </h3>
+                    {block.project_name ? (
+                      <p className="mt-1 truncate text-xs text-[var(--muted-foreground)]">
+                        {block.project_name}
+                      </p>
+                    ) : null}
+                  </article>
+                ))}
+              </div>
+            </div>
+            <div className="min-w-0 rounded-xl border border-[var(--border)] bg-[var(--background)] p-3">
+              <h3 className="text-xs font-semibold uppercase text-[var(--muted-foreground)]">
+                Risks
+              </h3>
+              <div className="mt-2 grid gap-2">
+                {dailyPlan.warnings.length ? (
+                  dailyPlan.warnings.map((warning, index) => (
+                    <div
+                      key={`${warning.type}-${index}`}
+                      className="rounded-lg border border-[var(--danger)]/30 bg-[var(--danger)]/10 px-3 py-2 text-xs leading-5 text-[var(--foreground-strong)]"
+                    >
+                      {warning.message}
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-xs leading-5 text-[var(--muted-foreground)]">
+                    No deadline risks detected for this draft.
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        ) : planLoading ? (
+          <div className="mt-3 rounded-xl border border-[var(--border)] bg-[var(--surface-muted)] px-3 py-2 text-xs text-[var(--muted-foreground)]">
+            Generating a draft schedule...
+          </div>
+        ) : null}
+        </section>
+
+        <div
+          className="grid grid-cols-2 gap-1 border-b border-[var(--border)] bg-[var(--surface)] px-4 py-2 md:hidden"
+          data-testid="planning-mobile-tabs"
+        >
+        <button
+          type="button"
+          data-testid="planning-mobile-tab-task-flow"
+          onClick={() => selectMobilePlanningTab("task-flow")}
+          className={cn(
+            "h-9 rounded-lg text-sm font-medium transition-colors",
+            mobilePlanningTab === "task-flow"
+              ? "bg-[var(--foreground-strong)] text-[var(--surface)] shadow-sm"
+              : "text-[var(--muted-foreground)] hover:bg-[var(--surface-muted)] hover:text-[var(--foreground-strong)]",
+          )}
+        >
+          Task Flow
+        </button>
+        <button
+          type="button"
+          data-testid="planning-mobile-tab-schedule"
+          onClick={() => selectMobilePlanningTab("schedule")}
+          className={cn(
+            "h-9 rounded-lg text-sm font-medium transition-colors",
+            mobilePlanningTab === "schedule"
+              ? "bg-[var(--foreground-strong)] text-[var(--surface)] shadow-sm"
+              : "text-[var(--muted-foreground)] hover:bg-[var(--surface-muted)] hover:text-[var(--foreground-strong)]",
+          )}
+        >
+          Schedule
+        </button>
+        </div>
+
+        <div
+          ref={containerRef}
+          className="relative flex min-h-0 flex-col overflow-visible"
+        >
         <section
           data-testid="planning-kanban"
           style={
@@ -891,17 +1344,20 @@ export function PlanningView({
                   height: "100vh",
                   minHeight: "100vh",
                 }
-              : { height: kanbanPanelHeight }
+              : ({ "--planning-kanban-height": kanbanPanelHeight } as React.CSSProperties)
           }
           className={cn(
-            "planning-kanban-panel flex flex-none min-h-[52px] min-w-0 flex-col overflow-hidden bg-[var(--surface)] transition-[height] duration-200",
-            kanbanCollapsed ? "" : "min-h-[240px]",
+            "planning-kanban-panel min-w-0 flex-col overflow-hidden bg-[var(--surface)] transition-[height] duration-200",
+            mobilePlanningTab === "task-flow" ? "flex" : "hidden md:flex",
+            kanbanCollapsed
+              ? "h-[3.25rem] flex-none"
+              : "min-h-0 flex-1 md:h-[var(--planning-kanban-height)] md:min-h-[240px] md:flex-none",
             kanbanFullscreen && "is-fullscreen",
           )}
         >
           <div
             ref={kanbanHeaderRef}
-            className="flex shrink-0 items-center justify-between border-b border-[var(--border)] px-6 py-2.5"
+            className="flex shrink-0 items-center justify-between border-b border-[var(--border)] px-4 py-2.5 sm:px-6"
           >
             <h2 className="text-sm font-medium text-[var(--foreground-strong)]">
               Task Flow
@@ -944,12 +1400,12 @@ export function PlanningView({
           {!kanbanCollapsed ? (
             <div
               ref={kanbanScrollRef}
-              className="min-h-0 flex-1 overflow-auto px-6 py-5"
+              className="min-h-0 flex-1 overflow-auto px-4 py-4 sm:px-6 sm:py-5"
               style={{ scrollbarWidth: "thin" }}
             >
               <div
                 ref={setColumnListRefs}
-                className="flex min-w-max items-start gap-6"
+                className="flex min-w-max items-start gap-4 sm:gap-6"
                 data-testid="planning-column-list"
               >
                 {columns.map((column) => {
@@ -963,7 +1419,7 @@ export function PlanningView({
                       data-testid={`planning-column-${column.id}`}
                       data-planning-column="true"
                       className={cn(
-                        "flex w-[17.6rem] shrink-0 flex-col gap-3 p-0 transition-colors",
+                        "flex w-[14rem] shrink-0 flex-col gap-3 p-0 transition-colors sm:w-[17.6rem]",
                         draggingColumnId === column.id && "opacity-50",
                       )}
                       onDragOver={(e) => handleDragOver(e, column)}
@@ -1143,7 +1599,7 @@ export function PlanningView({
                     </div>
                   );
                 })}
-                <div className="flex w-[17.6rem] shrink-0 flex-col pt-8">
+                <div className="flex w-[14rem] shrink-0 flex-col pt-8 sm:w-[17.6rem]">
                   <button
                     type="button"
                     onClick={addCustomColumn}
@@ -1162,15 +1618,20 @@ export function PlanningView({
         {!kanbanCollapsed && !kanbanFullscreen ? (
           <div
             ref={resizerRef}
-            className="group z-10 flex h-1.5 shrink-0 cursor-row-resize items-center justify-center border-y border-[var(--border)] bg-[var(--surface-muted)] transition-colors hover:bg-[var(--border)]"
+            className="group z-10 hidden h-1.5 shrink-0 cursor-row-resize items-center justify-center border-y border-[var(--border)] bg-[var(--surface-muted)] transition-colors hover:bg-[var(--border)] md:flex"
           >
             <div className="h-1 w-8 rounded-full bg-[var(--border-strong)] transition-colors group-hover:bg-[var(--muted-foreground)]" />
           </div>
         ) : null}
 
         <section
+          data-testid="planning-schedule"
           className={cn(
-            "planning-schedule-panel relative flex flex-none flex-col",
+            "planning-schedule-panel relative min-h-0 flex-col",
+            mobilePlanningTab === "schedule"
+              ? "flex h-[calc(100dvh-13rem)] min-h-[32rem] flex-none"
+              : "hidden md:flex",
+            "md:h-[var(--planning-schedule-height)] md:min-h-[var(--planning-schedule-height)] md:flex-none",
             calendarFullscreen && "is-fullscreen",
           )}
           style={
@@ -1183,19 +1644,18 @@ export function PlanningView({
                   height: "100vh",
                   minHeight: "100vh",
                 }
-              : {
-                  height: `${SCHEDULE_PANEL_HEIGHT}px`,
-                  minHeight: `${SCHEDULE_PANEL_HEIGHT}px`,
-                }
+              : ({
+                  "--planning-schedule-height": `${SCHEDULE_PANEL_HEIGHT}px`,
+                } as React.CSSProperties)
           }
         >
-          <div className="planning-schedule-header flex shrink-0 items-center justify-between gap-3 px-6 py-3">
+          <div className="planning-schedule-header flex shrink-0 items-center justify-between gap-3 px-4 py-3 sm:px-6">
             <div className="flex min-w-0 items-center gap-3">
               <CalendarDays className="h-4 w-4 text-[var(--muted-foreground)]" />
               <h2 className="text-sm font-medium text-[var(--foreground-strong)]">
                 Schedule
               </h2>
-              <p className="text-sm text-[var(--muted-foreground)]">
+              <p className="hidden text-sm text-[var(--muted-foreground)] sm:block">
                 Drag tasks from pipeline to schedule
               </p>
             </div>
@@ -1216,10 +1676,11 @@ export function PlanningView({
               )}
             </button>
           </div>
-          <div className="planning-calendar-shell relative flex-1 overflow-hidden px-2 pb-4 pr-4">
+          <div className="planning-calendar-shell relative flex-1 overflow-auto px-2 pb-4 pr-4">
             {calendarElement}
           </div>
         </section>
+        </div>
       </div>
     </div>
   );

@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, type ReactNode, useEffect, useMemo, useState } from "react";
+import { Fragment, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import {
   addDays,
   differenceInCalendarDays,
@@ -63,8 +63,10 @@ import { Icon } from "@iconify/react";
 
 export type ProjectPlanningSurface = "plan" | "timeline" | "charts" | "notes";
 
-const DAY_WIDTH = 42;
+const MIN_TIMELINE_DAY_WIDTH = 42;
 const LABEL_WIDTH = 240;
+const MIN_TIMELINE_WIDTH = 760;
+const COMPACT_MILESTONE_BAR_WIDTH = 156;
 const CHART_COLORS = {
   accent: "#3b82f6",
   accentSoft: "#93c5fd",
@@ -74,9 +76,6 @@ const CHART_COLORS = {
   muted: "#94a3b8",
 };
 const RESPONSIVE_CHART_INITIAL_DIMENSION = { width: 1, height: 1 };
-const PROJECT_TASK_ROW_GRID = {
-  gridTemplateColumns: "minmax(0, 1fr) 36px 128px 36px 108px",
-};
 
 type ProjectPlanningModuleProps = {
   projectPlans: ProjectPlan[];
@@ -865,7 +864,7 @@ function MilestoneComposer({
               className="h-10 rounded-[16px] bg-[var(--surface-muted)]"
             />
           </Field>
-          <Field label="Description">
+          <Field label="Description / notes">
             <Textarea
               value={form.description}
               onChange={(event) =>
@@ -938,17 +937,22 @@ function MilestoneComposer({
 function MilestoneTaskCard({
   taskTitle,
   meta,
+  availability,
   onClick,
 }: {
   taskTitle: string;
   meta: string;
+  availability?: PlannerTask["availability"];
   onClick: () => void;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className="flex w-full items-start justify-between gap-3 rounded-[16px] border border-[var(--border)] bg-[var(--surface)] px-3 py-3 text-left transition hover:border-[var(--border-strong)] hover:bg-[var(--surface-elevated)]"
+      className={cn(
+        "flex w-full items-start justify-between gap-3 rounded-[16px] border border-[var(--border)] bg-[var(--surface)] px-3 py-3 text-left transition hover:border-[var(--border-strong)] hover:bg-[var(--surface-elevated)]",
+        availability === "later" && "bg-[var(--surface-muted)] opacity-80",
+      )}
     >
       <span className="min-w-0">
         <span className="block truncate text-[13px] font-semibold text-[var(--foreground-strong)]">
@@ -956,8 +960,11 @@ function MilestoneTaskCard({
         </span>
         <span className="mt-1 block text-[12px] text-[var(--muted-foreground)]">{meta}</span>
       </span>
-      <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">
-        Open
+      <span className="flex shrink-0 items-center gap-2">
+        {availability === "later" ? <Badge tone="neutral">Later</Badge> : null}
+        <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">
+          Open
+        </span>
       </span>
     </button>
   );
@@ -1033,7 +1040,7 @@ function MilestoneEditor({
               className="h-10 rounded-[16px] bg-[var(--surface-muted)]"
             />
           </Field>
-          <Field label="Description">
+          <Field label="Description / notes">
             <Textarea
               value={form.description}
               onChange={(event) =>
@@ -1201,6 +1208,34 @@ export function ProjectPlanningModule({
     Record<string, { startDate: string; deadline: string }>
   >({});
   const [dragState, setDragState] = useState<DragState | null>(null);
+  const timelineViewportRef = useRef<HTMLDivElement | null>(null);
+  const [timelineViewportWidth, setTimelineViewportWidth] = useState(0);
+
+  const activeProject = useMemo(
+    () =>
+      projectPlans.find((plan) => plan.project.id === activeProjectId) ??
+      projectPlans[0] ??
+      null,
+    [activeProjectId, projectPlans],
+  );
+
+  const timelineDays = useMemo(() => {
+    if (!activeProject) {
+      return [];
+    }
+
+    return eachDayOfInterval({
+      start: startOfDay(parseISO(activeProject.scheduleRange.start)),
+      end: startOfDay(parseISO(activeProject.scheduleRange.end)),
+    });
+  }, [activeProject]);
+
+  const minimumTimelineWidth = Math.max(timelineDays.length * MIN_TIMELINE_DAY_WIDTH, MIN_TIMELINE_WIDTH);
+  const availableTimelineWidth = Math.max(timelineViewportWidth - LABEL_WIDTH, 0);
+  const timelineWidth = Math.ceil(Math.max(minimumTimelineWidth, availableTimelineWidth));
+  const timelineDayWidth = timelineDays.length
+    ? timelineWidth / timelineDays.length
+    : MIN_TIMELINE_DAY_WIDTH;
 
   useEffect(() => {
     setExpandedMilestoneId(null);
@@ -1208,12 +1243,35 @@ export function ProjectPlanningModule({
   }, [activeProjectId]);
 
   useEffect(() => {
+    const element = timelineViewportRef.current;
+
+    if (!element) {
+      return;
+    }
+
+    const updateWidth = () => setTimelineViewportWidth(element.clientWidth);
+    updateWidth();
+
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", updateWidth);
+      return () => window.removeEventListener("resize", updateWidth);
+    }
+
+    const observer = new ResizeObserver((entries) => {
+      const [entry] = entries;
+      setTimelineViewportWidth(entry?.contentRect.width ?? element.clientWidth);
+    });
+
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [activeProjectId, activeTab, timelineDays.length]);
+
+  useEffect(() => {
     if (!dragState) {
       return;
     }
 
     const currentDrag = dragState;
-    const activeProject = projectPlans.find((plan) => plan.project.id === activeProjectId);
 
     if (!activeProject) {
       return;
@@ -1222,7 +1280,7 @@ export function ProjectPlanningModule({
     const currentProject = activeProject;
 
     function handlePointerMove(event: PointerEvent) {
-      const deltaDays = Math.round((event.clientX - currentDrag.pointerStartX) / DAY_WIDTH);
+      const deltaDays = Math.round((event.clientX - currentDrag.pointerStartX) / timelineDayWidth);
 
       if (deltaDays === 0) {
         return;
@@ -1271,26 +1329,7 @@ export function ProjectPlanningModule({
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", handlePointerUp);
     };
-  }, [activeProjectId, draftMilestones, dragState, onUpdateMilestone, projectPlans]);
-
-  const activeProject = useMemo(
-    () =>
-      projectPlans.find((plan) => plan.project.id === activeProjectId) ??
-      projectPlans[0] ??
-      null,
-    [activeProjectId, projectPlans],
-  );
-
-  const timelineDays = useMemo(() => {
-    if (!activeProject) {
-      return [];
-    }
-
-    return eachDayOfInterval({
-      start: startOfDay(parseISO(activeProject.scheduleRange.start)),
-      end: startOfDay(parseISO(activeProject.scheduleRange.end)),
-    });
-  }, [activeProject]);
+  }, [activeProject, draftMilestones, dragState, onUpdateMilestone, timelineDayWidth]);
 
   if (!projectPlans.length || !activeProject) {
     return (
@@ -1318,7 +1357,6 @@ export function ProjectPlanningModule({
     );
   }
 
-  const timelineWidth = Math.max(timelineDays.length * DAY_WIDTH, 760);
   const overallChartData = [
     { name: "Completed", value: activeProject.completionPercentage, fill: CHART_COLORS.success },
     {
@@ -1379,7 +1417,7 @@ export function ProjectPlanningModule({
       />
 
       <header className="shrink-0 border-b border-[var(--border)] bg-[var(--surface)]">
-        <div className="flex h-14 items-center justify-between gap-4 px-6">
+        <div className="flex min-h-14 flex-col items-stretch gap-3 px-4 py-3 sm:h-14 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:py-0">
           <div className="flex min-w-0 items-center gap-3">
             <span
               className="h-2 w-2 shrink-0 rounded-full border-2"
@@ -1395,20 +1433,22 @@ export function ProjectPlanningModule({
             />
           </div>
 
-          <div className="flex shrink-0 items-center gap-2.5">
+          <div className="flex min-w-0 shrink-0 items-center gap-2 overflow-x-auto pb-0.5 sm:gap-2.5 sm:overflow-visible sm:pb-0">
             <button
               type="button"
-              className="flex h-8 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-xs font-medium text-[var(--muted-foreground)] shadow-sm transition hover:border-[var(--border-strong)] hover:text-[var(--foreground-strong)]"
+              className="flex h-8 shrink-0 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-xs font-medium text-[var(--muted-foreground)] shadow-sm transition hover:border-[var(--border-strong)] hover:text-[var(--foreground-strong)]"
             >
               <Icon icon="solar:tuning-2-linear" width="16" />
               Project Details
             </button>
-            <span className="h-6 w-px bg-[var(--border)]" />
-            <ProjectMemberStack />
+            <span className="hidden h-6 w-px bg-[var(--border)] sm:block" />
+            <div className="shrink-0">
+              <ProjectMemberStack />
+            </div>
             <button
               type="button"
               aria-label="Share project"
-              className="flex h-8 items-center gap-2 rounded-lg bg-[var(--button-solid-bg)] px-3 text-xs font-medium text-[var(--button-solid-fg)] shadow-sm transition hover:bg-[var(--button-solid-hover)]"
+              className="flex h-8 shrink-0 items-center gap-2 rounded-lg bg-[var(--button-solid-bg)] px-3 text-xs font-medium text-[var(--button-solid-fg)] shadow-sm transition hover:bg-[var(--button-solid-hover)]"
             >
               <Icon icon="solar:user-plus-linear" width="16" />
               Share
@@ -1416,8 +1456,8 @@ export function ProjectPlanningModule({
           </div>
         </div>
 
-        <div className="flex h-10 items-end px-6">
-          <nav className="flex h-full items-end gap-8">
+        <div className="flex h-10 items-end overflow-x-auto px-4 sm:px-6">
+          <nav className="flex h-full min-w-max items-end gap-6 sm:gap-8">
             <button
               onClick={() => setActiveTab("plan")}
               className={cn(
@@ -1468,9 +1508,9 @@ export function ProjectPlanningModule({
       </header>
 
       {activeTab === "plan" ? (
-        <div className="flex-1 overflow-y-auto bg-[var(--background)] px-6 py-5" style={{ scrollbarWidth: "thin" }}>
+        <div className="flex-1 overflow-y-auto bg-[var(--background)] px-4 pb-8 pt-4 sm:px-6 sm:py-5" style={{ scrollbarWidth: "thin" }}>
           <div className="mx-auto grid max-w-7xl gap-4">
-            <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center justify-between gap-3">
               <h2 className="text-lg font-semibold tracking-[-0.02em] text-[var(--foreground-strong)]">
                 Milestones & Tasks
               </h2>
@@ -1489,18 +1529,18 @@ export function ProjectPlanningModule({
                 className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)] shadow-[var(--shadow-soft)]"
               >
                 <div
-                  className="group flex items-center justify-between gap-4 border-b border-[var(--border)] bg-[var(--surface-muted)] px-4 py-3"
+                  className="group flex flex-col items-stretch gap-3 border-b border-[var(--border)] bg-[var(--surface-muted)] px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:px-4"
                   onClick={() => openMilestoneEditor(milestone)}
                 >
-                  <div className="flex items-center gap-3">
+                  <div className="flex min-w-0 items-center gap-3">
                     <Icon icon="solar:alt-arrow-down-linear" width="16" className="text-[var(--muted-foreground)] group-hover:text-[var(--foreground-strong)] transition-colors" />
-                    <h2 className="text-sm font-semibold text-[var(--foreground-strong)]">{milestone.name}</h2>
+                    <h2 className="truncate text-sm font-semibold text-[var(--foreground-strong)]">{milestone.name}</h2>
                     <span className="rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-0.5 text-xs font-medium text-[var(--muted-foreground)]">
                       {milestone.tasks.length} tasks
                     </span>
                   </div>
-                  <div className="flex items-center gap-4">
-                    <div className="flex items-center gap-2">
+                  <div className="flex min-w-0 flex-wrap items-center gap-2 sm:gap-4">
+                    <div className="flex min-w-[8rem] flex-1 items-center gap-2 sm:flex-none">
                       <div className="h-1.5 w-28 overflow-hidden rounded-full bg-[var(--border)]">
                         <div
                           className="h-full rounded-full bg-[var(--foreground-strong)]"
@@ -1518,7 +1558,7 @@ export function ProjectPlanningModule({
                       disabled={milestone.synthetic}
                       onChange={(input) => onUpdateMilestone(milestone.id, input)}
                     />
-                    <span className="h-5 w-px bg-[var(--border)]" />
+                    <span className="hidden h-5 w-px bg-[var(--border)] sm:block" />
                     <button
                       type="button"
                       className="flex items-center gap-1.5 text-sm font-medium text-[var(--muted-foreground)] transition hover:text-[var(--foreground-strong)]"
@@ -1552,8 +1592,10 @@ export function ProjectPlanningModule({
 	                    <div
 	                      key={task.id}
 	                      data-testid={`project-task-row-${task.id}`}
-	                      className="group/task grid min-h-12 cursor-pointer items-center gap-3 px-4 py-2.5 transition hover:bg-[var(--surface-muted)]"
-	                      style={PROJECT_TASK_ROW_GRID}
+	                      className={cn(
+                          "group/task grid min-h-12 cursor-pointer grid-cols-[minmax(0,1fr)_36px] items-center gap-2 px-3 py-3 transition hover:bg-[var(--surface-muted)] md:grid-cols-[minmax(0,1fr)_36px_128px_36px_108px] md:gap-3 md:px-4 md:py-2.5",
+                          task.availability === "later" && "bg-[var(--surface-muted)] opacity-80",
+                        )}
 	                      onClick={() => onOpenTask(task.id)}
 	                    >
                       <div className="flex min-w-0 items-center gap-3">
@@ -1569,20 +1611,27 @@ export function ProjectPlanningModule({
                         {task.priority === "high" && (
                           <Icon icon="solar:flag-bold" width="14" className="shrink-0 text-[var(--danger)]" />
                         )}
+                        {task.availability === "later" ? <Badge tone="neutral">Later</Badge> : null}
                       </div>
                       <TaskOwnerAvatar task={task} index={taskIndex} />
-                      <InlineTaskStatusPicker
-                        task={task}
-                        onChange={(status) => onUpdateTask(task.id, { status })}
-                      />
-                      <InlineTaskPriorityPicker
-                        task={task}
-                        onChange={(priority) => onUpdateTask(task.id, { priority })}
-                      />
-                      <InlineTaskDuePicker
-                        task={task}
-                        onChange={(dueAt) => onUpdateTask(task.id, { dueAt })}
-                      />
+                      <div className="col-span-2 md:col-span-1">
+                        <InlineTaskStatusPicker
+                          task={task}
+                          onChange={(status) => onUpdateTask(task.id, { status })}
+                        />
+                      </div>
+                      <div className="justify-self-start md:justify-self-center">
+                        <InlineTaskPriorityPicker
+                          task={task}
+                          onChange={(priority) => onUpdateTask(task.id, { priority })}
+                        />
+                      </div>
+                      <div className="justify-self-end">
+                        <InlineTaskDuePicker
+                          task={task}
+                          onChange={(dueAt) => onUpdateTask(task.id, { dueAt })}
+                        />
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -1610,7 +1659,12 @@ export function ProjectPlanningModule({
       ) : null}
 
       {activeTab === "charts" ? (
-        <>
+        <div
+          data-testid="project-dashboard"
+          className="flex-1 overflow-y-auto bg-[var(--background)] px-4 pb-8 pt-4 sm:px-6 sm:py-5"
+          style={{ scrollbarWidth: "thin" }}
+        >
+          <div className="mx-auto grid max-w-7xl gap-4">
       <div className="grid min-w-0 gap-4 md:grid-cols-2 2xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,1fr)]">
         <ChartCard
           title="Overall Progress"
@@ -1844,11 +1898,17 @@ export function ProjectPlanningModule({
           ))}
         </div>
       </article>
-        </>
+          </div>
+        </div>
       ) : null}
 
       {activeTab === "timeline" ? (
-        <>
+        <div
+          className="flex-1 overflow-y-auto bg-[var(--background)] px-4 pb-8 pt-4 sm:px-6 sm:py-5"
+          data-testid="project-gantt-panel"
+          style={{ scrollbarWidth: "thin" }}
+        >
+          <div className="grid min-w-0 gap-4">
       <article className="min-w-0 rounded-[28px] border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[var(--shadow-soft)] sm:p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
@@ -1875,20 +1935,27 @@ export function ProjectPlanningModule({
           </div>
         </div>
 
-        <div className="mt-5 w-full max-w-full overflow-x-auto rounded-[24px] border border-[var(--border)] bg-[var(--surface-muted)]">
+        <div
+          className="mt-5 w-full max-w-full overflow-x-auto rounded-[24px] border border-[var(--border)] bg-[var(--surface-muted)]"
+          data-testid="project-gantt-scroll"
+          ref={timelineViewportRef}
+        >
           <div style={{ width: LABEL_WIDTH + timelineWidth }} className="min-w-full">
             <div
               className="sticky top-0 z-10 grid border-b border-[var(--border)] bg-[var(--surface)]"
               style={{ gridTemplateColumns: `${LABEL_WIDTH}px ${timelineWidth}px` }}
             >
-              <div className="sticky left-0 border-r border-[var(--border)] bg-[var(--surface)] px-4 py-3">
+              <div
+                className="border-r border-[var(--border)] bg-[var(--surface)] px-4 py-3 md:sticky md:left-0"
+                data-testid="project-gantt-label-header"
+              >
                 <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
                   Milestone
                 </p>
               </div>
               <div
                 className="grid"
-                style={{ gridTemplateColumns: `repeat(${timelineDays.length}, ${DAY_WIDTH}px)` }}
+                style={{ gridTemplateColumns: `repeat(${timelineDays.length}, ${timelineDayWidth}px)` }}
               >
                 {timelineDays.map((day) => (
                   <div
@@ -1930,8 +1997,9 @@ export function ProjectPlanningModule({
                     startOfDay(parseISO(effectiveDates.startDate)),
                   ) + 1,
                 );
-                const left = startOffset * DAY_WIDTH + 4;
-                const width = Math.max(durationDays * DAY_WIDTH - 8, 44);
+                const left = startOffset * timelineDayWidth + 4;
+                const width = Math.max(durationDays * timelineDayWidth - 8, 44);
+                const isCompactBar = width < COMPACT_MILESTONE_BAR_WIDTH;
                 const isExpanded = expandedMilestoneId === milestone.id;
                 const canEditMilestone = !milestone.synthetic;
 
@@ -1941,7 +2009,7 @@ export function ProjectPlanningModule({
                       className="grid border-b border-[var(--border)]"
                       style={{ gridTemplateColumns: `${LABEL_WIDTH}px ${timelineWidth}px` }}
                     >
-                      <div className="sticky left-0 z-[1] border-r border-[var(--border)] bg-[var(--surface)] px-4 py-4 transition duration-150 hover:bg-[var(--surface-muted)]">
+                      <div className="z-[1] border-r border-[var(--border)] bg-[var(--surface)] px-4 py-4 transition duration-150 hover:bg-[var(--surface-muted)] md:sticky md:left-0">
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
                             <p className="truncate text-[14px] font-semibold text-[var(--foreground-strong)]">
@@ -1997,7 +2065,7 @@ export function ProjectPlanningModule({
                       <div className="relative h-[92px] bg-[var(--surface-muted)]">
                         <div
                           className="absolute inset-0 grid"
-                          style={{ gridTemplateColumns: `repeat(${timelineDays.length}, ${DAY_WIDTH}px)` }}
+                          style={{ gridTemplateColumns: `repeat(${timelineDays.length}, ${timelineDayWidth}px)` }}
                         >
                           {timelineDays.map((day) => (
                             <div
@@ -2027,7 +2095,10 @@ export function ProjectPlanningModule({
                               <>
                                 <button
                                   type="button"
-                                  className="absolute left-2 top-1/2 z-[2] flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full border border-[color:rgba(255,255,255,0.12)] bg-[color:rgba(255,255,255,0.08)] text-white/80"
+                                  className={cn(
+                                    "absolute left-2 top-1/2 z-[2] flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full border border-[color:rgba(255,255,255,0.12)] bg-[color:rgba(255,255,255,0.08)] text-white/80",
+                                    isCompactBar && "hidden",
+                                  )}
                                   onPointerDown={(event) => {
                                     event.preventDefault();
                                     setDragState({
@@ -2077,27 +2148,44 @@ export function ProjectPlanningModule({
                             <button
                               type="button"
                               className={cn(
-                                "relative z-[1] flex h-full w-full items-center justify-between gap-3 pr-4 text-left",
-                                canEditMilestone ? "pl-12" : "pl-4",
+                                "relative z-[1] flex h-full w-full items-center gap-3 text-left",
+                                isCompactBar
+                                  ? "justify-center px-3"
+                                  : "justify-between pr-4",
+                                !isCompactBar && (canEditMilestone ? "pl-12" : "pl-4"),
                               )}
                               onClick={() =>
                                 setExpandedMilestoneId((current) =>
                                   current === milestone.id ? null : milestone.id,
                                 )
                               }
+                              title={`${milestone.name}: ${format(parseISO(effectiveDates.startDate), "MMM d")} to ${format(parseISO(effectiveDates.deadline), "MMM d")} (${formatPercent(milestone.completionPercentage)})`}
                             >
-                              <span className="min-w-0">
-                                <span className="block truncate text-[13px] font-semibold text-white">
-                                  {milestone.name}
-                                </span>
-                                <span className="block text-[11px] text-white/65">
-                                  {format(parseISO(effectiveDates.startDate), "MMM d")} to{" "}
-                                  {format(parseISO(effectiveDates.deadline), "MMM d")}
-                                </span>
-                              </span>
-                              <span className="shrink-0 text-[12px] font-semibold text-white/90">
-                                {formatPercent(milestone.completionPercentage)}
-                              </span>
+                              {isCompactBar ? (
+                                <>
+                                  <span className="sr-only">
+                                    {milestone.name}, {format(parseISO(effectiveDates.startDate), "MMM d")} to{" "}
+                                    {format(parseISO(effectiveDates.deadline), "MMM d")},{" "}
+                                    {formatPercent(milestone.completionPercentage)}
+                                  </span>
+                                  <span className="h-1.5 w-1.5 rounded-full bg-white/80" aria-hidden />
+                                </>
+                              ) : (
+                                <>
+                                  <span className="min-w-0">
+                                    <span className="block truncate text-[13px] font-semibold text-white">
+                                      {milestone.name}
+                                    </span>
+                                    <span className="block text-[11px] text-white/65">
+                                      {format(parseISO(effectiveDates.startDate), "MMM d")} to{" "}
+                                      {format(parseISO(effectiveDates.deadline), "MMM d")}
+                                    </span>
+                                  </span>
+                                  <span className="shrink-0 text-[12px] font-semibold text-white/90">
+                                    {formatPercent(milestone.completionPercentage)}
+                                  </span>
+                                </>
+                              )}
                             </button>
                           </div>
                         </div>
@@ -2109,7 +2197,7 @@ export function ProjectPlanningModule({
                         className="grid border-b border-[var(--border)]"
                         style={{ gridTemplateColumns: `${LABEL_WIDTH}px ${timelineWidth}px` }}
                       >
-                      <div className="sticky left-0 border-r border-[var(--border)] bg-[var(--surface)] px-4 py-4">
+                      <div className="border-r border-[var(--border)] bg-[var(--surface)] px-4 py-4 md:sticky md:left-0">
                         <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
                           Task drill-down
                         </p>
@@ -2162,6 +2250,7 @@ export function ProjectPlanningModule({
                   key={task.id}
                   taskTitle={task.title}
                   meta={`${task.status.replace("_", " ")} • ${formatHours(task.estimatedMinutes)}${task.dueAt ? ` • due ${format(parseISO(task.dueAt), "MMM d")}` : ""}`}
+                  availability={task.availability}
                   onClick={() => onOpenTask(task.id)}
                 />
               ))}
@@ -2219,7 +2308,8 @@ export function ProjectPlanningModule({
           </div>
         </article>
       </div>
-        </>
+          </div>
+        </div>
       ) : null}
 
       {activeTab === "notes" ? (

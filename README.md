@@ -77,6 +77,29 @@ The schema lives in `src/db/schema.ts`.
 - Fixed meetings and appointments share the same planner grid as task blocks.
 - Capacity cards compare scheduled load against per-weekday work hours.
 
+## Future feature projects
+
+### Stylus and handwriting support for Notes
+
+Add an embedded ink canvas block to project notes so users can write or sketch with a stylus, pen, touch, or mouse. The first practical version should work as a custom rich-text editor node instead of turning the whole Notes page into a drawing surface.
+
+Recommended first scope:
+
+- Add a Tiptap `inkCanvas` node that can be inserted between normal note content.
+- Capture pointer input for mouse, touch, and stylus through Pointer Events.
+- Store strokes as structured JSON, with optional PNG preview data for fast rendering.
+- Support pen color, stroke width, eraser, undo, and clear canvas.
+- Keep drawing gestures from fighting page scroll on mobile and tablet.
+
+Later OneNote-style extensions:
+
+- Pressure-sensitive stroke smoothing.
+- Lasso select, move, resize, and delete.
+- Image and PDF annotation.
+- Stroke-level erase.
+- Better Apple Pencil and Safari/iPad behavior.
+- Export and print fidelity for mixed text, images, and ink.
+
 ## Deployment
 
 The app is set up for Vercel deployment. Configure Clerk and Neon environment variables in the target environment before deploying.
