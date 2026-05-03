@@ -182,6 +182,25 @@ export type ProjectNotePageRecord = {
   updatedAt: string;
 };
 
+export type ApiAccessTokenRecord = {
+  id: string;
+  userId: string;
+  name: string;
+  tokenPrefix: string;
+  tokenHash: string;
+  lastUsedAt: string | null;
+  revokedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ApiAccessTokenPublicRecord = Omit<ApiAccessTokenRecord, "tokenHash">;
+
+export type CreatedApiAccessToken = {
+  token: string;
+  record: ApiAccessTokenPublicRecord;
+};
+
 export type WorkspaceSnapshot = {
   user: AppUserRecord;
   settings: UserSettingsRecord;
@@ -194,6 +213,7 @@ export type WorkspaceSnapshot = {
   events: EventRecord[];
   checklistItems: TaskChecklistItemRecord[];
   taskTags: TaskTagRecord[];
+  apiAccessTokens: ApiAccessTokenRecord[];
 };
 
 export type PlannerTask = TaskRecord & {

@@ -77,6 +77,50 @@ The schema lives in `src/db/schema.ts`.
 - Fixed meetings and appointments share the same planner grid as task blocks.
 - Capacity cards compare scheduled load against per-weekday work hours.
 
+## Remote agent access
+
+Inflara exposes a bearer-token REST API and Streamable HTTP MCP endpoint for tools such as Codex, Claude Code, Antigravity, and other automation agents.
+
+Create a token in Settings under **Remote agent access**. Tokens are shown once, stored only as hashes, and can be revoked from Settings. V1 remote-agent tokens can read, create, and update projects, milestones, and tasks. They cannot delete records.
+
+REST endpoints live under `/api/v1` and return `{ "data": ... }`; errors return `{ "error": { "code": "...", "message": "..." } }`.
+
+```bash
+curl https://inflara.io/api/v1/projects \
+  -H "Authorization: Bearer <token>"
+```
+
+The MCP endpoint is:
+
+```text
+https://inflara.io/mcp
+```
+
+Claude Code setup:
+
+```bash
+claude mcp add --transport http inflara https://inflara.io/mcp \
+  --header "Authorization: Bearer <token>"
+```
+
+Generic MCP JSON config:
+
+```json
+{
+  "mcpServers": {
+    "inflara": {
+      "type": "http",
+      "url": "https://inflara.io/mcp",
+      "headers": {
+        "Authorization": "Bearer <token>"
+      }
+    }
+  }
+}
+```
+
+Available MCP tools include `inflara_list_projects`, `inflara_get_project`, `inflara_create_project`, `inflara_update_project`, `inflara_list_milestones`, `inflara_create_milestone`, `inflara_update_milestone`, `inflara_list_tasks`, `inflara_create_task`, `inflara_update_task`, and `inflara_next_tasks`.
+
 ## Future feature projects
 
 ### Stylus and handwriting support for Notes

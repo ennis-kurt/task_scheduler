@@ -23,6 +23,9 @@ function normalizeSnapshot(snapshot: WorkspaceSnapshot): WorkspaceSnapshot {
       status: project.status ?? "active",
     })),
     milestones: Array.isArray(snapshot.milestones) ? snapshot.milestones : [],
+    apiAccessTokens: Array.isArray(snapshot.apiAccessTokens)
+      ? snapshot.apiAccessTokens
+      : [],
     tasks: snapshot.tasks.map((task) => ({
       ...task,
       milestoneId: task.milestoneId ?? null,

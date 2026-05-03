@@ -16,12 +16,15 @@ import type {
 import {
   CalendarClock,
   CalendarDays,
+  Copy,
   Hash,
   Inbox,
+  KeyRound,
   Layers3,
   Menu,
   Plus,
   Settings,
+  ShieldCheck,
   Target,
   Trash2,
   X,
@@ -87,6 +90,7 @@ import type {
   TaskStatus,
   UpdateSettingsInput,
   UpdateTaskInput,
+  ApiAccessTokenPublicRecord,
 } from "@/lib/planner/types";
 import type { DailyPlanResponse } from "@/lib/planner/ai-daily-plan";
 import {
@@ -2976,6 +2980,103 @@ function SettingsEditor({
   const [weekStart, setWeekStart] = useState(settings.weekStart);
   const [slotMinutes, setSlotMinutes] = useState(settings.slotMinutes);
   const [workHours, setWorkHours] = useState(settings.workHours);
+  const [tokenName, setTokenName] = useState("Development agent");
+  const [tokens, setTokens] = useState<ApiAccessTokenPublicRecord[]>([]);
+  const [newToken, setNewToken] = useState<string | null>(null);
+  const [copiedToken, setCopiedToken] = useState(false);
+  const [tokensLoading, setTokensLoading] = useState(true);
+  const [tokenBusy, setTokenBusy] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadTokens() {
+      try {
+        setTokensLoading(true);
+        const response = await requestJson<{ tokens: ApiAccessTokenPublicRecord[] }>(
+          "/api/access-tokens",
+        );
+
+        if (!cancelled) {
+          setTokens(response.tokens);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          toast.error(error instanceof Error ? error.message : "Could not load API tokens");
+        }
+      } finally {
+        if (!cancelled) {
+          setTokensLoading(false);
+        }
+      }
+    }
+
+    loadTokens();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function createToken() {
+    const name = tokenName.trim();
+
+    if (!name) {
+      toast.error("Name the token first");
+      return;
+    }
+
+    setTokenBusy(true);
+    setCopiedToken(false);
+    try {
+      const response = await requestJson<{
+        token: string;
+        record: ApiAccessTokenPublicRecord;
+      }>("/api/access-tokens", {
+        method: "POST",
+        body: JSON.stringify({ name }),
+      });
+      setNewToken(response.token);
+      setTokens((current) => [response.record, ...current]);
+      toast.success("API token created");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not create API token");
+    } finally {
+      setTokenBusy(false);
+    }
+  }
+
+  async function copyNewToken() {
+    if (!newToken) return;
+
+    try {
+      await navigator.clipboard.writeText(newToken);
+      setCopiedToken(true);
+      toast.success("Token copied");
+    } catch {
+      toast.error("Could not copy token");
+    }
+  }
+
+  async function revokeToken(tokenId: string) {
+    setTokenBusy(true);
+    try {
+      const response = await requestJson<{ token: ApiAccessTokenPublicRecord }>(
+        `/api/access-tokens/${tokenId}/revoke`,
+        {
+          method: "POST",
+          body: JSON.stringify({}),
+        },
+      );
+      setTokens((current) =>
+        current.map((token) => (token.id === tokenId ? response.token : token)),
+      );
+      toast.success("API token revoked");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not revoke API token");
+    } finally {
+      setTokenBusy(false);
+    }
+  }
 
   return (
     <div className="grid gap-4">
@@ -3063,8 +3164,138 @@ function SettingsEditor({
       <Button onClick={() => onSave({ timezone, weekStart, slotMinutes, workHours })}>
         Save settings
       </Button>
+
+      <section className="grid gap-3 rounded-[22px] border border-[var(--border)] bg-[var(--surface-elevated)] p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <KeyRound className="h-4 w-4 text-[var(--accent)]" />
+              <h3 className="text-base font-semibold text-[var(--foreground-strong)]">
+                Remote agent access
+              </h3>
+            </div>
+            <p className="mt-1 max-w-[560px] text-sm leading-6 text-[var(--muted-foreground)]">
+              Create bearer tokens for Codex, Claude Code, Antigravity, or any MCP client that should read and update your Inflara planning data.
+            </p>
+          </div>
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border)] px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">
+            <ShieldCheck className="h-3.5 w-3.5" />
+            No delete access
+          </span>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
+          <Field label="Token name">
+            <Input
+              value={tokenName}
+              maxLength={80}
+              onChange={(event) => setTokenName(event.target.value)}
+              placeholder="Development agent"
+            />
+          </Field>
+          <Button className="self-end" onClick={createToken} disabled={tokenBusy}>
+            Create token
+          </Button>
+        </div>
+
+        {newToken ? (
+          <div className="grid gap-2 rounded-[18px] border border-[var(--accent)]/30 bg-[var(--accent-soft)] p-3">
+            <p className="text-sm font-semibold text-[var(--foreground-strong)]">
+              Copy this token now. It will only be shown once.
+            </p>
+            <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+              <Input
+                aria-label="New API token"
+                value={newToken}
+                readOnly
+                className="font-mono text-xs"
+              />
+              <Button variant="outline" onClick={copyNewToken}>
+                <Copy className="mr-2 h-4 w-4" />
+                {copiedToken ? "Copied" : "Copy token"}
+              </Button>
+            </div>
+          </div>
+        ) : null}
+
+        <div className="grid gap-2">
+          <div className="flex items-center justify-between">
+            <h4 className="text-sm font-semibold text-[var(--foreground-strong)]">
+              Active tokens
+            </h4>
+            {tokensLoading ? (
+              <span className="text-xs text-[var(--muted-foreground)]">Loading...</span>
+            ) : null}
+          </div>
+
+          {tokens.length ? (
+            <div className="grid gap-2">
+              {tokens.map((token) => {
+                const revoked = Boolean(token.revokedAt);
+                return (
+                  <div
+                    key={token.id}
+                    className="grid gap-3 rounded-[16px] border border-[var(--border)] bg-[var(--surface)] p-3 sm:grid-cols-[minmax(0,1fr)_auto]"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="font-medium text-[var(--foreground-strong)]">
+                          {token.name}
+                        </p>
+                        <span className="rounded-full bg-[var(--surface-muted)] px-2 py-0.5 font-mono text-[11px] text-[var(--muted-foreground)]">
+                          {token.tokenPrefix}
+                        </span>
+                        {revoked ? (
+                          <span className="rounded-full bg-red-500/10 px-2 py-0.5 text-[11px] font-semibold text-red-500">
+                            Revoked
+                          </span>
+                        ) : null}
+                      </div>
+                      <p className="mt-1 text-xs text-[var(--muted-foreground)]">
+                        Created {formatRemoteTokenDate(token.createdAt)} · Last used{" "}
+                        {formatRemoteTokenDate(token.lastUsedAt)}
+                      </p>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={revoked || tokenBusy}
+                      onClick={() => revokeToken(token.id)}
+                      aria-label={`Revoke token ${token.name}`}
+                    >
+                      Revoke
+                    </Button>
+                  </div>
+                );
+              })}
+            </div>
+          ) : !tokensLoading ? (
+            <p className="rounded-[16px] border border-dashed border-[var(--border)] p-3 text-sm text-[var(--muted-foreground)]">
+              No remote-agent tokens yet.
+            </p>
+          ) : null}
+        </div>
+
+        <div className="rounded-[16px] border border-dashed border-[var(--border)] p-3 text-xs leading-5 text-[var(--muted-foreground)]">
+          MCP endpoint: <span className="font-mono text-[var(--foreground)]">https://inflara.io/mcp</span>
+          <br />
+          Claude Code: <span className="font-mono text-[var(--foreground)]">claude mcp add --transport http inflara https://inflara.io/mcp --header &quot;Authorization: Bearer &lt;token&gt;&quot;</span>
+        </div>
+      </section>
     </div>
   );
+}
+
+function formatRemoteTokenDate(value: string | null) {
+  if (!value) {
+    return "never";
+  }
+
+  try {
+    return format(parseISO(value), "MMM d, yyyy h:mm a");
+  } catch {
+    return value;
+  }
 }
 
 function RecurrenceFields({

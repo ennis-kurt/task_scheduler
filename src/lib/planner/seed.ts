@@ -398,5 +398,6 @@ export function createSeedSnapshot(userId = "demo-user"): WorkspaceSnapshot {
     events,
     checklistItems,
     taskTags,
+    apiAccessTokens: [],
   };
 }

@@ -4,6 +4,7 @@ import { and, eq, inArray } from "drizzle-orm";
 
 import { getDb } from "@/db";
 import {
+  apiAccessTokens,
   areas,
   events,
   milestones,
@@ -25,6 +26,7 @@ import {
 } from "@/lib/planner/date";
 import type {
   AppUserRecord,
+  ApiAccessTokenRecord,
   AreaRecord,
   EventRecord,
   MilestoneRecord,
@@ -257,6 +259,20 @@ function mapTaskTag(record: typeof taskTags.$inferSelect): TaskTagRecord {
   };
 }
 
+function mapApiAccessToken(record: typeof apiAccessTokens.$inferSelect): ApiAccessTokenRecord {
+  return {
+    id: record.id,
+    userId: record.userId,
+    name: record.name,
+    tokenPrefix: record.tokenPrefix,
+    tokenHash: record.tokenHash,
+    lastUsedAt: iso(record.lastUsedAt),
+    revokedAt: iso(record.revokedAt),
+    createdAt: iso(record.createdAt) ?? new Date().toISOString(),
+    updatedAt: iso(record.updatedAt) ?? new Date().toISOString(),
+  };
+}
+
 async function replaceTaskRelations(
   taskId: string,
   input: Pick<NewTaskInput | UpdateTaskInput, "checklist" | "tagIds">,
@@ -360,7 +376,7 @@ export const databaseRepository = {
       .from(userSettings)
       .where(eq(userSettings.userId, userId))
       .limit(1);
-    const [areaRows, projectRows, milestoneRows, tagRows, taskRows, blockRows, eventRows] =
+    const [areaRows, projectRows, milestoneRows, tagRows, taskRows, blockRows, eventRows, tokenRows] =
       await Promise.all([
         db.select().from(areas).where(eq(areas.userId, userId)),
         db.select().from(projects).where(eq(projects.userId, userId)),
@@ -369,6 +385,7 @@ export const databaseRepository = {
         db.select().from(tasks).where(eq(tasks.userId, userId)),
         db.select().from(taskBlocks).where(eq(taskBlocks.userId, userId)),
         db.select().from(events).where(eq(events.userId, userId)),
+        db.select().from(apiAccessTokens).where(eq(apiAccessTokens.userId, userId)),
       ]);
     const taskIds = taskRows.map((task) => task.id);
     const [checklistRows, taskTagRows] = taskIds.length
@@ -393,6 +410,7 @@ export const databaseRepository = {
       events: eventRows.map(mapEvent),
       checklistItems: checklistRows.map(mapChecklistItem),
       taskTags: taskTagRows.map(mapTaskTag),
+      apiAccessTokens: tokenRows.map(mapApiAccessToken),
     };
   },
 

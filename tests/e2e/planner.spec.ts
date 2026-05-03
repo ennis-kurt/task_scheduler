@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type APIRequestContext, type APIResponse } from "@playwright/test";
 import { readFile, rm } from "node:fs/promises";
 import path from "node:path";
 
@@ -44,6 +44,32 @@ type DemoSnapshot = {
   }>;
 };
 
+type AgentTokenResponse = {
+  token: string;
+  record: {
+    id: string;
+    name: string;
+    tokenPrefix: string;
+    revokedAt: string | null;
+  };
+};
+
+type ApiEnvelope<T> = {
+  data: T;
+};
+
+type McpResponse = {
+  id?: number | string;
+  result?: {
+    content?: Array<{
+      type: string;
+      text?: string;
+    }>;
+    [key: string]: unknown;
+  };
+  error?: unknown;
+};
+
 async function resetDemoStore() {
   await rm(demoStorePath, { force: true });
   await rm(demoNotePagesPath, { force: true });
@@ -55,6 +81,81 @@ async function readSnapshot() {
 
 async function readNotePagesStore() {
   return JSON.parse(await readFile(demoNotePagesPath, "utf8")) as Record<string, Record<string, Array<{ title: string; comments: Array<{ body: string }> }>>>;
+}
+
+async function expectJson<T>(response: APIResponse, status: number) {
+  const body = await response.text();
+  expect(response.status(), body).toBe(status);
+  return JSON.parse(body) as T;
+}
+
+async function createAgentToken(
+  request: APIRequestContext,
+  name = "E2E remote agent",
+) {
+  const response = await request.post("/api/access-tokens", {
+    data: { name },
+  });
+  return expectJson<AgentTokenResponse>(response, 201);
+}
+
+function bearerHeaders(token: string) {
+  return {
+    Authorization: `Bearer ${token}`,
+  };
+}
+
+async function parseMcpResponse(response: APIResponse) {
+  const body = await response.text();
+  expect(response.ok(), body).toBeTruthy();
+  const trimmed = body.trim();
+
+  if (trimmed.startsWith("event:") || trimmed.includes("\ndata:")) {
+    const data = trimmed
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice("data:".length).trim())
+      .filter(Boolean)
+      .join("\n");
+    expect(data, trimmed).not.toBe("");
+    return JSON.parse(data) as McpResponse;
+  }
+
+  return JSON.parse(trimmed) as McpResponse;
+}
+
+let mcpRequestId = 0;
+
+async function mcpCall(
+  request: APIRequestContext,
+  token: string,
+  method: string,
+  params: Record<string, unknown> = {},
+) {
+  const id = ++mcpRequestId;
+  const response = await request.post("/mcp", {
+    headers: {
+      ...bearerHeaders(token),
+      Accept: "application/json, text/event-stream",
+      "MCP-Protocol-Version": "2025-03-26",
+    },
+    data: {
+      jsonrpc: "2.0",
+      id,
+      method,
+      params,
+    },
+  });
+  const payload = await parseMcpResponse(response);
+  expect(payload.id).toBe(id);
+  expect(payload.error).toBeUndefined();
+  return payload.result;
+}
+
+function parseMcpToolJson<T>(result: McpResponse["result"]) {
+  const text = result?.content?.[0]?.text;
+  expect(text).toBeTruthy();
+  return JSON.parse(text!) as T;
 }
 
 async function waitForTask(title: string) {
@@ -706,6 +807,327 @@ test("project notes cleanup flattens legacy generated milestone and task nodes",
       ].includes(page.systemKey ?? ""),
     ),
   ).toBe(false);
+});
+
+test("remote API enforces bearer tokens and rejects revoked tokens", async ({
+  request,
+}) => {
+  let response = await request.get("/api/v1/projects");
+  let body = await expectJson<{ error: { code: string } }>(response, 401);
+  expect(body.error.code).toBe("UNAUTHORIZED");
+
+  response = await request.get("/api/v1/projects", {
+    headers: bearerHeaders("ifl_invalid"),
+  });
+  body = await expectJson<{ error: { code: string } }>(response, 401);
+  expect(body.error.code).toBe("UNAUTHORIZED");
+
+  const { token, record } = await createAgentToken(request, "Revoked API agent");
+  response = await request.get("/api/v1/projects", {
+    headers: bearerHeaders(token),
+  });
+  const validBody = await expectJson<ApiEnvelope<{ projects: Array<{ id: string }> }>>(
+    response,
+    200,
+  );
+  expect(validBody.data.projects.length).toBeGreaterThan(0);
+
+  response = await request.post(`/api/access-tokens/${record.id}/revoke`, {
+    data: {},
+  });
+  await expectJson<{ token: { revokedAt: string } }>(response, 200);
+
+  response = await request.get("/api/v1/projects", {
+    headers: bearerHeaders(token),
+  });
+  body = await expectJson<{ error: { code: string } }>(response, 401);
+  expect(body.error.code).toBe("UNAUTHORIZED");
+});
+
+test("remote API creates and updates projects, milestones, and tasks without delete access", async ({
+  request,
+}) => {
+  const { token } = await createAgentToken(request, "Planner API agent");
+  const headers = bearerHeaders(token);
+
+  let response = await request.post("/api/v1/projects", {
+    headers,
+    data: {
+      name: "Remote API Project",
+      notes: "Seeded from a remote agent.",
+      status: "active",
+    },
+  });
+  const projectBody = await expectJson<ApiEnvelope<{ project: { id: string; name: string } }>>(
+    response,
+    201,
+  );
+  expect(projectBody.data.project.name).toBe("Remote API Project");
+
+  response = await request.patch(`/api/v1/projects/${projectBody.data.project.id}`, {
+    headers,
+    data: {
+      name: "Remote API Project Updated",
+    },
+  });
+  const updatedProjectBody = await expectJson<
+    ApiEnvelope<{ project: { id: string; name: string } }>
+  >(response, 200);
+  expect(updatedProjectBody.data.project.name).toBe("Remote API Project Updated");
+
+  response = await request.post(
+    `/api/v1/projects/${projectBody.data.project.id}/milestones`,
+    {
+      headers,
+      data: {
+        name: "Remote API Milestone",
+        description: "Milestone notes from the API.",
+        startDate: "2026-05-05T13:00:00.000Z",
+        deadline: "2026-05-15T21:00:00.000Z",
+      },
+    },
+  );
+  const milestoneBody = await expectJson<
+    ApiEnvelope<{ milestone: { id: string; name: string; description: string } }>
+  >(response, 201);
+  expect(milestoneBody.data.milestone.description).toBe("Milestone notes from the API.");
+
+  response = await request.patch(`/api/v1/milestones/${milestoneBody.data.milestone.id}`, {
+    headers,
+    data: {
+      description: "Updated milestone notes from the API.",
+    },
+  });
+  const updatedMilestoneBody = await expectJson<
+    ApiEnvelope<{ milestone: { id: string; description: string } }>
+  >(response, 200);
+  expect(updatedMilestoneBody.data.milestone.description).toBe(
+    "Updated milestone notes from the API.",
+  );
+
+  response = await request.post("/api/v1/tasks", {
+    headers,
+    data: {
+      title: "Remote API Task",
+      notes: "Task notes stay task-only by default.",
+      projectId: projectBody.data.project.id,
+      milestoneId: milestoneBody.data.milestone.id,
+      estimatedMinutes: 45,
+      priority: "high",
+    },
+  });
+  const taskBody = await expectJson<ApiEnvelope<{ task: { id: string; status: string } }>>(
+    response,
+    201,
+  );
+  expect(taskBody.data.task.status).toBe("todo");
+
+  response = await request.patch(`/api/v1/tasks/${taskBody.data.task.id}`, {
+    headers,
+    data: {
+      status: "in_progress",
+      notes: "Updated through the remote API.",
+    },
+  });
+  const updatedTaskBody = await expectJson<
+    ApiEnvelope<{ task: { id: string; status: string; notes: string } }>
+  >(response, 200);
+  expect(updatedTaskBody.data.task).toMatchObject({
+    status: "in_progress",
+    notes: "Updated through the remote API.",
+  });
+
+  response = await request.get(
+    `/api/v1/tasks?projectId=${projectBody.data.project.id}&status=in_progress`,
+    { headers },
+  );
+  const tasksBody = await expectJson<ApiEnvelope<{ tasks: Array<{ id: string }> }>>(
+    response,
+    200,
+  );
+  expect(tasksBody.data.tasks.some((task) => task.id === taskBody.data.task.id)).toBe(true);
+
+  response = await request.delete(`/api/v1/tasks/${taskBody.data.task.id}`, {
+    headers,
+  });
+  expect(response.status()).toBe(405);
+});
+
+test("remote API task notes stay task-only unless project note opt-in is set", async ({
+  request,
+}) => {
+  const { token } = await createAgentToken(request, "Task note API agent");
+  const headers = bearerHeaders(token);
+
+  let response = await request.post("/api/v1/tasks", {
+    headers,
+    data: {
+      title: "Remote task-only note",
+      notes: "Do not mirror this task note.",
+      projectId: "project-launch",
+      milestoneId: "milestone-discovery",
+      estimatedMinutes: 30,
+    },
+  });
+  const defaultTaskBody = await expectJson<ApiEnvelope<{ task: { id: string } }>>(
+    response,
+    201,
+  );
+
+  response = await request.get("/api/projects/project-launch/notes");
+  const initialPages = (await expectJson<
+    Array<{ title: string; systemKey: string | null }>
+  >(response, 200));
+  expect(
+    initialPages.some(
+      (page) =>
+        page.title === "Remote task-only note" ||
+        page.systemKey === `task:${defaultTaskBody.data.task.id}:project-note`,
+    ),
+  ).toBe(false);
+
+  response = await request.post("/api/v1/tasks", {
+    headers,
+    data: {
+      title: "Remote task mirrored note",
+      notes: "Mirror this explicit opt-in task note.",
+      projectId: "project-launch",
+      milestoneId: "milestone-discovery",
+      estimatedMinutes: 30,
+      addToProjectNotes: true,
+    },
+  });
+  const optedInTaskBody = await expectJson<ApiEnvelope<{ task: { id: string } }>>(
+    response,
+    201,
+  );
+
+  response = await request.get("/api/projects/project-launch/notes");
+  const pages = await expectJson<Array<{
+    id: string;
+    title: string;
+    markdown: string;
+    sectionId: string | null;
+    systemKey: string | null;
+  }>>(response, 200);
+  const milestonesSection = pages.find(
+    (page) => page.systemKey === "project:milestones",
+  );
+  const taskNote = pages.find(
+    (page) => page.systemKey === `task:${optedInTaskBody.data.task.id}:project-note`,
+  );
+  expect(taskNote).toMatchObject({
+    title: "Remote task mirrored note",
+    markdown: "Mirror this explicit opt-in task note.",
+    sectionId: milestonesSection?.id,
+  });
+});
+
+test("MCP endpoint initializes, lists tools, and creates and updates tasks", async ({
+  request,
+}) => {
+  const { token } = await createAgentToken(request, "MCP agent");
+
+  const initializeResult = await mcpCall(request, token, "initialize", {
+    protocolVersion: "2025-03-26",
+    capabilities: {},
+    clientInfo: {
+      name: "inflara-e2e",
+      version: "1.0.0",
+    },
+  });
+  expect(initializeResult?.serverInfo).toMatchObject({ name: "inflara" });
+
+  const toolsResult = await mcpCall(request, token, "tools/list");
+  expect(
+    (toolsResult?.tools as Array<{ name: string }>).map((tool) => tool.name),
+  ).toEqual(
+    expect.arrayContaining([
+      "inflara_list_projects",
+      "inflara_create_task",
+      "inflara_update_task",
+    ]),
+  );
+
+  const listProjectsResult = await mcpCall(request, token, "tools/call", {
+    name: "inflara_list_projects",
+    arguments: {},
+  });
+  const listProjectsBody = parseMcpToolJson<{
+    projects: Array<{ id: string; name: string }>;
+  }>(listProjectsResult);
+  expect(listProjectsBody.projects.some((project) => project.id === "project-launch")).toBe(true);
+
+  const createTaskResult = await mcpCall(request, token, "tools/call", {
+    name: "inflara_create_task",
+    arguments: {
+      title: "MCP created task",
+      notes: "Created through MCP.",
+      projectId: "project-launch",
+      milestoneId: "milestone-discovery",
+      estimatedMinutes: 30,
+      priority: "high",
+    },
+  });
+  const createdTaskBody = parseMcpToolJson<{ task: { id: string; title: string } }>(
+    createTaskResult,
+  );
+  expect(createdTaskBody.task.title).toBe("MCP created task");
+
+  const updateTaskResult = await mcpCall(request, token, "tools/call", {
+    name: "inflara_update_task",
+    arguments: {
+      taskId: createdTaskBody.task.id,
+      status: "done",
+      notes: "Updated through MCP.",
+    },
+  });
+  const updatedTaskBody = parseMcpToolJson<{
+    task: { id: string; status: string; notes: string };
+  }>(updateTaskResult);
+  expect(updatedTaskBody.task).toMatchObject({
+    id: createdTaskBody.task.id,
+    status: "done",
+    notes: "Updated through MCP.",
+  });
+});
+
+test("settings remote agent tokens are copy-once and revocation blocks API access", async ({
+  page,
+  request,
+}) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Settings" }).click();
+  const dialog = page.getByRole("dialog", { name: "Planning settings" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText("Remote agent access")).toBeVisible();
+
+  await dialog.getByLabel("Token name").fill("UI E2E agent");
+  await dialog.getByRole("button", { name: "Create token" }).click();
+  await expect(dialog.getByText("Copy this token now. It will only be shown once.")).toBeVisible();
+  const tokenInput = dialog.getByLabel("New API token");
+  await expect(tokenInput).toHaveValue(/^ifl_/);
+  const generatedToken = await tokenInput.inputValue();
+
+  let response = await request.get("/api/v1/projects", {
+    headers: bearerHeaders(generatedToken),
+  });
+  await expectJson<ApiEnvelope<{ projects: Array<{ id: string }> }>>(response, 200);
+
+  await dialog.getByRole("button", { name: "Close details" }).click();
+  await expect(dialog).toHaveCount(0);
+  await page.getByRole("button", { name: "Settings" }).click();
+  const reopenedDialog = page.getByRole("dialog", { name: "Planning settings" });
+  await expect(reopenedDialog.getByText("UI E2E agent")).toBeVisible();
+  await expect(reopenedDialog.getByLabel("New API token")).toHaveCount(0);
+
+  await reopenedDialog.getByRole("button", { name: "Revoke token UI E2E agent" }).click();
+  await expect(reopenedDialog.getByText("Revoked")).toBeVisible();
+
+  response = await request.get("/api/v1/projects", {
+    headers: bearerHeaders(generatedToken),
+  });
+  await expectJson<{ error: { code: string } }>(response, 401);
 });
 
 test("project design inline date, status, and priority controls persist without full editors", async ({
