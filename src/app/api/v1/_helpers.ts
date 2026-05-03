@@ -10,20 +10,25 @@ export async function requireApiUserId(request: Request) {
   return (await authenticateApiTokenRequest(request)).userId;
 }
 
+export async function requireApiAuth(request: Request) {
+  return authenticateApiTokenRequest(request);
+}
+
 export function apiSuccess(data: unknown, status = 200) {
   return NextResponse.json({ data }, { status });
 }
 
 export function handleApiError(error: unknown) {
   if (error instanceof ApiTokenAuthError) {
+    const status = error.code === "FORBIDDEN_PROJECT" ? 403 : 401;
     return NextResponse.json(
       {
         error: {
-          code: "UNAUTHORIZED",
+          code: status === 403 ? "FORBIDDEN" : "UNAUTHORIZED",
           message: error.message,
         },
       },
-      { status: 401 },
+      { status },
     );
   }
 

@@ -182,12 +182,16 @@ export type ProjectNotePageRecord = {
   updatedAt: string;
 };
 
+export type ApiAccessTokenScopeType = "all_projects" | "selected_projects";
+
 export type ApiAccessTokenRecord = {
   id: string;
   userId: string;
   name: string;
   tokenPrefix: string;
   tokenHash: string;
+  scopeType: ApiAccessTokenScopeType;
+  projectIds: string[];
   lastUsedAt: string | null;
   revokedAt: string | null;
   createdAt: string;

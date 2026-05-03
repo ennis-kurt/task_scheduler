@@ -21,6 +21,13 @@ export function handleRouteError(error: unknown) {
     return NextResponse.json({ error: "NOT_FOUND" }, { status: 404 });
   }
 
+  if (
+    error instanceof Error &&
+    ["PROJECT_SCOPE_REQUIRED", "INVALID_PROJECT_SCOPE"].includes(error.message)
+  ) {
+    return NextResponse.json({ error: error.message }, { status: 400 });
+  }
+
   console.error(error);
   return NextResponse.json({ error: "INTERNAL_SERVER_ERROR" }, { status: 500 });
 }

@@ -193,6 +193,8 @@ export const apiAccessTokens = pgTable(
     name: text("name").notNull(),
     tokenPrefix: text("token_prefix").notNull(),
     tokenHash: text("token_hash").notNull(),
+    scopeType: text("scope_type").notNull().default("all_projects"),
+    projectIds: jsonb("project_ids").$type<string[]>().notNull().default([]),
     lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),

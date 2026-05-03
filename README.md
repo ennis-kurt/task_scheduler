@@ -83,6 +83,8 @@ Inflara exposes a bearer-token REST API and Streamable HTTP MCP endpoint for too
 
 Create a token in Settings under **Remote agent access**. Tokens are shown once, stored only as hashes, and can be revoked from Settings. V1 remote-agent tokens can read, create, and update projects, milestones, and tasks. They cannot delete records.
 
+Tokens can be scoped to **All projects** or **Selected projects**. Selected-project tokens only list and mutate the projects chosen at creation time. Creating new projects requires an all-projects token.
+
 REST endpoints live under `/api/v1` and return `{ "data": ... }`; errors return `{ "error": { "code": "...", "message": "..." } }`.
 
 ```bash
@@ -103,14 +105,23 @@ claude mcp add --transport http inflara https://inflara.io/mcp \
   --header "Authorization: Bearer <token>"
 ```
 
-Generic MCP JSON config:
+Codex CLI setup:
+
+```bash
+export INFLARA_API_TOKEN="<token>"
+codex mcp add inflara --url https://inflara.io/mcp \
+  --bearer-token-env-var INFLARA_API_TOKEN
+```
+
+Antigravity setup:
+
+Open the Agent Panel, choose **Manage MCP Servers**, select **View raw config**, and merge this entry into `mcp_config.json`:
 
 ```json
 {
   "mcpServers": {
     "inflara": {
-      "type": "http",
-      "url": "https://inflara.io/mcp",
+      "serverUrl": "https://inflara.io/mcp",
       "headers": {
         "Authorization": "Bearer <token>"
       }
@@ -118,6 +129,8 @@ Generic MCP JSON config:
   }
 }
 ```
+
+Generic MCP clients that support HTTP servers with headers can use the same endpoint and `Authorization: Bearer <token>` header.
 
 Available MCP tools include `inflara_list_projects`, `inflara_get_project`, `inflara_create_project`, `inflara_update_project`, `inflara_list_milestones`, `inflara_create_milestone`, `inflara_update_milestone`, `inflara_list_tasks`, `inflara_create_task`, `inflara_update_task`, and `inflara_next_tasks`.
 

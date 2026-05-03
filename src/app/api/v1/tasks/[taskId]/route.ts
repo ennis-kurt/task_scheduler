@@ -1,4 +1,4 @@
-import { apiSuccess, handleApiError, requireApiUserId } from "@/app/api/v1/_helpers";
+import { apiSuccess, handleApiError, requireApiAuth } from "@/app/api/v1/_helpers";
 import { updateRemoteTask } from "@/lib/remote-agent-planner";
 import { updateTaskSchema } from "@/lib/planner/validators";
 
@@ -10,10 +10,10 @@ type RouteContext = {
 
 export async function PATCH(request: Request, context: RouteContext) {
   try {
-    const userId = await requireApiUserId(request);
+    const auth = await requireApiAuth(request);
     const { taskId } = await context.params;
     const input = updateTaskSchema.parse(await request.json());
-    return apiSuccess({ task: await updateRemoteTask(userId, taskId, input) });
+    return apiSuccess({ task: await updateRemoteTask(auth, taskId, input) });
   } catch (error) {
     return handleApiError(error);
   }

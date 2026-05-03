@@ -141,6 +141,22 @@ type PendingRecurringEdit = {
 
 const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
+const INFLARA_MCP_ENDPOINT = "https://inflara.io/mcp";
+const CLAUDE_CODE_MCP_COMMAND =
+  'claude mcp add --transport http inflara https://inflara.io/mcp --header "Authorization: Bearer <token>"';
+const CODEX_MCP_COMMAND =
+  'export INFLARA_API_TOKEN="<token>"\ncodex mcp add inflara --url https://inflara.io/mcp --bearer-token-env-var INFLARA_API_TOKEN';
+const ANTIGRAVITY_MCP_CONFIG = `{
+  "mcpServers": {
+    "inflara": {
+      "serverUrl": "https://inflara.io/mcp",
+      "headers": {
+        "Authorization": "Bearer <token>"
+      }
+    }
+  }
+}`;
+
 const PRIORITY_LABELS: Record<Priority, string> = {
   low: "Low",
   medium: "Medium",
@@ -2365,6 +2381,7 @@ function EditorModal({
             <SettingsEditor
               key={plannerData.settings.updatedAt}
               settings={plannerData.settings}
+              projects={plannerData.projects}
               onSave={onSaveSettings}
             />
           ) : null}
@@ -2971,9 +2988,11 @@ function EventEditor({
 
 function SettingsEditor({
   settings,
+  projects,
   onSave,
 }: {
   settings: PlannerPayload["settings"];
+  projects: PlannerPayload["projects"];
   onSave: (input: UpdateSettingsInput) => void;
 }) {
   const [timezone, setTimezone] = useState(settings.timezone);
@@ -2981,6 +3000,9 @@ function SettingsEditor({
   const [slotMinutes, setSlotMinutes] = useState(settings.slotMinutes);
   const [workHours, setWorkHours] = useState(settings.workHours);
   const [tokenName, setTokenName] = useState("Development agent");
+  const [tokenScopeType, setTokenScopeType] =
+    useState<ApiAccessTokenPublicRecord["scopeType"]>("all_projects");
+  const [selectedTokenProjectIds, setSelectedTokenProjectIds] = useState<string[]>([]);
   const [tokens, setTokens] = useState<ApiAccessTokenPublicRecord[]>([]);
   const [newToken, setNewToken] = useState<string | null>(null);
   const [copiedToken, setCopiedToken] = useState(false);
@@ -3025,6 +3047,11 @@ function SettingsEditor({
       return;
     }
 
+    if (tokenScopeType === "selected_projects" && selectedTokenProjectIds.length === 0) {
+      toast.error("Select at least one project for this token");
+      return;
+    }
+
     setTokenBusy(true);
     setCopiedToken(false);
     try {
@@ -3033,7 +3060,12 @@ function SettingsEditor({
         record: ApiAccessTokenPublicRecord;
       }>("/api/access-tokens", {
         method: "POST",
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({
+          name,
+          scopeType: tokenScopeType,
+          projectIds:
+            tokenScopeType === "selected_projects" ? selectedTokenProjectIds : [],
+        }),
       });
       setNewToken(response.token);
       setTokens((current) => [response.record, ...current]);
@@ -3198,6 +3230,70 @@ function SettingsEditor({
           </Button>
         </div>
 
+        <div className="grid gap-3 rounded-[16px] border border-[var(--border)] bg-[var(--surface)] p-3">
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant={tokenScopeType === "all_projects" ? "solid" : "outline"}
+              size="sm"
+              onClick={() => setTokenScopeType("all_projects")}
+            >
+              All projects
+            </Button>
+            <Button
+              type="button"
+              variant={tokenScopeType === "selected_projects" ? "solid" : "outline"}
+              size="sm"
+              onClick={() => setTokenScopeType("selected_projects")}
+            >
+              Selected projects
+            </Button>
+          </div>
+
+          {tokenScopeType === "selected_projects" ? (
+            <div className="grid gap-2">
+              <p className="text-xs text-[var(--muted-foreground)]">
+                This token can only read and update the projects selected below.
+              </p>
+              <div className="grid max-h-44 gap-2 overflow-y-auto rounded-[14px] border border-[var(--border)] bg-[var(--surface-elevated)] p-2">
+                {projects.length ? (
+                  projects.map((project) => {
+                    const checked = selectedTokenProjectIds.includes(project.id);
+                    return (
+                      <label
+                        key={project.id}
+                        className="flex items-center gap-2 rounded-[10px] px-2 py-1.5 text-sm text-[var(--foreground-strong)]"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(event) =>
+                            setSelectedTokenProjectIds((current) =>
+                              event.target.checked
+                                ? Array.from(new Set([...current, project.id]))
+                                : current.filter((projectId) => projectId !== project.id),
+                            )
+                          }
+                          className="h-4 w-4 rounded border-[var(--border-strong)] accent-[var(--accent)]"
+                        />
+                        {project.name}
+                      </label>
+                    );
+                  })
+                ) : (
+                  <p className="px-2 py-1.5 text-sm text-[var(--muted-foreground)]">
+                    Create a project before making a project-level token.
+                  </p>
+                )}
+              </div>
+            </div>
+          ) : (
+            <p className="text-xs text-[var(--muted-foreground)]">
+              This token can read and update every current and future project.
+            </p>
+          )}
+        </div>
+
         {newToken ? (
           <div className="grid gap-2 rounded-[18px] border border-[var(--accent)]/30 bg-[var(--accent-soft)] p-3">
             <p className="text-sm font-semibold text-[var(--foreground-strong)]">
@@ -3255,6 +3351,9 @@ function SettingsEditor({
                         Created {formatRemoteTokenDate(token.createdAt)} · Last used{" "}
                         {formatRemoteTokenDate(token.lastUsedAt)}
                       </p>
+                      <p className="mt-1 text-xs text-[var(--muted-foreground)]">
+                        Scope: {formatRemoteTokenScope(token, projects)}
+                      </p>
                     </div>
                     <Button
                       variant="outline"
@@ -3276,12 +3375,53 @@ function SettingsEditor({
           ) : null}
         </div>
 
-        <div className="rounded-[16px] border border-dashed border-[var(--border)] p-3 text-xs leading-5 text-[var(--muted-foreground)]">
-          MCP endpoint: <span className="font-mono text-[var(--foreground)]">https://inflara.io/mcp</span>
-          <br />
-          Claude Code: <span className="font-mono text-[var(--foreground)]">claude mcp add --transport http inflara https://inflara.io/mcp --header &quot;Authorization: Bearer &lt;token&gt;&quot;</span>
+        <div className="grid gap-3 rounded-[16px] border border-dashed border-[var(--border)] p-3 text-xs leading-5 text-[var(--muted-foreground)]">
+          <p>
+            MCP endpoint:{" "}
+            <span className="font-mono text-[var(--foreground)]">
+              {INFLARA_MCP_ENDPOINT}
+            </span>
+          </p>
+          <RemoteAgentSetupSnippet
+            title="Claude Code"
+            body={CLAUDE_CODE_MCP_COMMAND}
+          />
+          <RemoteAgentSetupSnippet title="Codex CLI" body={CODEX_MCP_COMMAND} />
+          <RemoteAgentSetupSnippet
+            title="Antigravity"
+            description="Open Agent Panel, Manage MCP Servers, View raw config, then merge this entry into mcp_config.json."
+            body={ANTIGRAVITY_MCP_CONFIG}
+          />
         </div>
       </section>
+    </div>
+  );
+}
+
+function RemoteAgentSetupSnippet({
+  title,
+  description,
+  body,
+}: {
+  title: string;
+  description?: string;
+  body: string;
+}) {
+  return (
+    <div className="grid gap-1.5 rounded-[14px] border border-[var(--border)] bg-[var(--surface)] p-2.5">
+      <div>
+        <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--foreground-strong)]">
+          {title}
+        </p>
+        {description ? (
+          <p className="mt-1 text-[11px] leading-5 text-[var(--muted-foreground)]">
+            {description}
+          </p>
+        ) : null}
+      </div>
+      <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-[10px] bg-[var(--surface-muted)] p-2 font-mono text-[11px] leading-5 text-[var(--foreground)]">
+        {body}
+      </pre>
     </div>
   );
 }
@@ -3296,6 +3436,21 @@ function formatRemoteTokenDate(value: string | null) {
   } catch {
     return value;
   }
+}
+
+function formatRemoteTokenScope(
+  token: ApiAccessTokenPublicRecord,
+  projects: PlannerPayload["projects"],
+) {
+  if (token.scopeType !== "selected_projects") {
+    return "All projects";
+  }
+
+  const projectNames = token.projectIds
+    .map((projectId) => projects.find((project) => project.id === projectId)?.name)
+    .filter(Boolean);
+
+  return projectNames.length ? projectNames.join(", ") : "Selected projects";
 }
 
 function RecurrenceFields({

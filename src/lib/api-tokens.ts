@@ -10,20 +10,33 @@ import { plannerRepository } from "@/lib/planner/repository";
 import type {
   ApiAccessTokenPublicRecord,
   ApiAccessTokenRecord,
+  ApiAccessTokenScopeType,
   CreatedApiAccessToken,
 } from "@/lib/planner/types";
+
+export type CreateApiAccessTokenInput = {
+  name: string;
+  scopeType?: ApiAccessTokenScopeType;
+  projectIds?: string[];
+};
 
 export type ApiTokenAuthContext = {
   token: string;
   tokenId: string;
   tokenPrefix: string;
   userId: string;
+  scopeType: ApiAccessTokenScopeType;
+  projectIds: string[];
   scopes: string[];
 };
 
 export class ApiTokenAuthError extends Error {
   constructor(
-    public code: "MISSING_TOKEN" | "INVALID_TOKEN" | "REVOKED_TOKEN",
+    public code:
+      | "MISSING_TOKEN"
+      | "INVALID_TOKEN"
+      | "REVOKED_TOKEN"
+      | "FORBIDDEN_PROJECT",
     message: string,
   ) {
     super(message);
@@ -71,6 +84,8 @@ function mapDbToken(record: typeof apiAccessTokens.$inferSelect): ApiAccessToken
     name: record.name,
     tokenPrefix: record.tokenPrefix,
     tokenHash: record.tokenHash,
+    scopeType: normalizeScopeType(record.scopeType),
+    projectIds: normalizeProjectIds(record.projectIds),
     lastUsedAt: record.lastUsedAt?.toISOString() ?? null,
     revokedAt: record.revokedAt?.toISOString() ?? null,
     createdAt: record.createdAt.toISOString(),
@@ -82,6 +97,53 @@ function bearerTokenFromRequest(request: Request) {
   const header = request.headers.get("authorization");
   const match = header?.match(/^Bearer\s+(.+)$/i);
   return match?.[1]?.trim() ?? null;
+}
+
+function normalizeScopeType(value: unknown): ApiAccessTokenScopeType {
+  return value === "selected_projects" ? "selected_projects" : "all_projects";
+}
+
+function normalizeProjectIds(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return Array.from(
+    new Set(
+      value.filter((item): item is string => typeof item === "string" && item.length > 0),
+    ),
+  );
+}
+
+function normalizeCreateInput(input: CreateApiAccessTokenInput) {
+  const scopeType = normalizeScopeType(input.scopeType);
+  const projectIds =
+    scopeType === "selected_projects" ? normalizeProjectIds(input.projectIds) : [];
+
+  if (scopeType === "selected_projects" && projectIds.length === 0) {
+    throw new Error("PROJECT_SCOPE_REQUIRED");
+  }
+
+  return {
+    name: input.name,
+    scopeType,
+    projectIds,
+  };
+}
+
+function validateProjectScope(availableProjectIds: string[], record: ApiAccessTokenRecord) {
+  if (record.scopeType !== "selected_projects") {
+    return;
+  }
+
+  const allowedProjectIds = new Set(availableProjectIds);
+  const invalidProjectIds = record.projectIds.filter(
+    (projectId) => !allowedProjectIds.has(projectId),
+  );
+
+  if (invalidProjectIds.length) {
+    throw new Error("INVALID_PROJECT_SCOPE");
+  }
 }
 
 let ensureApiAccessTokensTablePromise: Promise<void> | null = null;
@@ -100,11 +162,21 @@ async function ensureApiAccessTokensTable() {
         "name" text NOT NULL,
         "token_prefix" text NOT NULL,
         "token_hash" text NOT NULL,
+        "scope_type" text DEFAULT 'all_projects' NOT NULL,
+        "project_ids" jsonb DEFAULT '[]'::jsonb NOT NULL,
         "last_used_at" timestamp with time zone,
         "revoked_at" timestamp with time zone,
         "created_at" timestamp with time zone DEFAULT now() NOT NULL,
         "updated_at" timestamp with time zone DEFAULT now() NOT NULL
       )
+    `);
+    await db.execute(sql`
+      ALTER TABLE "api_access_tokens"
+      ADD COLUMN IF NOT EXISTS "scope_type" text DEFAULT 'all_projects' NOT NULL
+    `);
+    await db.execute(sql`
+      ALTER TABLE "api_access_tokens"
+      ADD COLUMN IF NOT EXISTS "project_ids" jsonb DEFAULT '[]'::jsonb NOT NULL
     `);
     await db.execute(sql`
       CREATE UNIQUE INDEX IF NOT EXISTS "api_access_tokens_token_hash_idx"
@@ -143,16 +215,19 @@ export async function listApiAccessTokens(userId: string) {
 
 export async function createApiAccessToken(
   userId: string,
-  name: string,
+  input: CreateApiAccessTokenInput,
 ): Promise<CreatedApiAccessToken> {
+  const normalizedInput = normalizeCreateInput(input);
   const timestamp = nowIso();
   const { token, tokenPrefix } = createRawToken();
   const record: ApiAccessTokenRecord = {
     id: id("token"),
     userId,
-    name,
+    name: normalizedInput.name,
     tokenPrefix,
     tokenHash: hashToken(token),
+    scopeType: normalizedInput.scopeType,
+    projectIds: normalizedInput.projectIds,
     lastUsedAt: null,
     revokedAt: null,
     createdAt: timestamp,
@@ -160,15 +235,18 @@ export async function createApiAccessToken(
   };
 
   if (isDatabaseConfigured()) {
-    await plannerRepository.getWorkspace(userId);
+    const workspace = await plannerRepository.getWorkspace(userId);
+    validateProjectScope(workspace.projects.map((project) => project.id), record);
     await ensureApiAccessTokensTable();
     const db = getDb();
     await db.insert(apiAccessTokens).values({
       id: record.id,
       userId,
-      name,
+      name: record.name,
       tokenPrefix,
       tokenHash: record.tokenHash,
+      scopeType: record.scopeType,
+      projectIds: record.projectIds,
       lastUsedAt: null,
       revokedAt: null,
       createdAt: nowDate(),
@@ -176,6 +254,7 @@ export async function createApiAccessToken(
     });
   } else {
     const snapshot = await readDemoSnapshot(userId);
+    validateProjectScope(snapshot.projects.map((project) => project.id), record);
     snapshot.apiAccessTokens.unshift(record);
     await writeDemoSnapshot(snapshot);
   }
@@ -265,6 +344,8 @@ export async function authenticateApiToken(token: string | null) {
       tokenId: record.id,
       tokenPrefix: record.tokenPrefix,
       userId: record.userId,
+      scopeType: normalizeScopeType(record.scopeType),
+      projectIds: normalizeProjectIds(record.projectIds),
       scopes: ["planner:read", "planner:write"],
     } satisfies ApiTokenAuthContext;
   }
@@ -291,10 +372,44 @@ export async function authenticateApiToken(token: string | null) {
     tokenId: record.id,
     tokenPrefix: record.tokenPrefix,
     userId: record.userId,
+    scopeType: normalizeScopeType(record.scopeType),
+    projectIds: normalizeProjectIds(record.projectIds),
     scopes: ["planner:read", "planner:write"],
   } satisfies ApiTokenAuthContext;
 }
 
 export async function authenticateApiTokenRequest(request: Request) {
   return authenticateApiToken(bearerTokenFromRequest(request));
+}
+
+export function canAccessProject(
+  auth: ApiTokenAuthContext,
+  projectId: string | null | undefined,
+) {
+  if (auth.scopeType === "all_projects") {
+    return true;
+  }
+
+  return Boolean(projectId && auth.projectIds.includes(projectId));
+}
+
+export function assertApiTokenProjectAccess(
+  auth: ApiTokenAuthContext,
+  projectId: string | null | undefined,
+) {
+  if (!canAccessProject(auth, projectId)) {
+    throw new ApiTokenAuthError(
+      "FORBIDDEN_PROJECT",
+      "This token does not have access to the requested project.",
+    );
+  }
+}
+
+export function assertApiTokenAccountAccess(auth: ApiTokenAuthContext) {
+  if (auth.scopeType === "selected_projects") {
+    throw new ApiTokenAuthError(
+      "FORBIDDEN_PROJECT",
+      "This action requires an all-projects token.",
+    );
+  }
 }

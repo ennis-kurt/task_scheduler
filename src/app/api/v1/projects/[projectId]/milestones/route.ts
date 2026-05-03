@@ -1,4 +1,4 @@
-import { apiSuccess, handleApiError, requireApiUserId } from "@/app/api/v1/_helpers";
+import { apiSuccess, handleApiError, requireApiAuth } from "@/app/api/v1/_helpers";
 import {
   createRemoteMilestone,
   listRemoteMilestones,
@@ -13,9 +13,9 @@ type RouteContext = {
 
 export async function GET(request: Request, context: RouteContext) {
   try {
-    const userId = await requireApiUserId(request);
+    const auth = await requireApiAuth(request);
     const { projectId } = await context.params;
-    return apiSuccess({ milestones: await listRemoteMilestones(userId, projectId) });
+    return apiSuccess({ milestones: await listRemoteMilestones(auth, projectId) });
   } catch (error) {
     return handleApiError(error);
   }
@@ -23,14 +23,14 @@ export async function GET(request: Request, context: RouteContext) {
 
 export async function POST(request: Request, context: RouteContext) {
   try {
-    const userId = await requireApiUserId(request);
+    const auth = await requireApiAuth(request);
     const { projectId } = await context.params;
     const input = milestoneSchema.parse({
       ...(await request.json()),
       projectId,
     });
     return apiSuccess(
-      { milestone: await createRemoteMilestone(userId, input) },
+      { milestone: await createRemoteMilestone(auth, input) },
       201,
     );
   } catch (error) {

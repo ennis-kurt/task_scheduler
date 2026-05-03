@@ -24,7 +24,11 @@ function normalizeSnapshot(snapshot: WorkspaceSnapshot): WorkspaceSnapshot {
     })),
     milestones: Array.isArray(snapshot.milestones) ? snapshot.milestones : [],
     apiAccessTokens: Array.isArray(snapshot.apiAccessTokens)
-      ? snapshot.apiAccessTokens
+      ? snapshot.apiAccessTokens.map((token) => ({
+          ...token,
+          scopeType: token.scopeType ?? "all_projects",
+          projectIds: Array.isArray(token.projectIds) ? token.projectIds : [],
+        }))
       : [],
     tasks: snapshot.tasks.map((task) => ({
       ...task,

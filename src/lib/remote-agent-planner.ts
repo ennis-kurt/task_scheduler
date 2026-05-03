@@ -1,3 +1,9 @@
+import {
+  assertApiTokenAccountAccess,
+  assertApiTokenProjectAccess,
+  canAccessProject,
+  type ApiTokenAuthContext,
+} from "@/lib/api-tokens";
 import { notePagesRepository } from "@/lib/planner/note-pages";
 import { plannerRepository } from "@/lib/planner/repository";
 import type {
@@ -19,6 +25,8 @@ type TaskFilters = {
   milestoneId?: string | null;
   status?: TaskStatus | null;
 };
+
+type RemoteAccess = ApiTokenAuthContext;
 
 function priorityRank(priority: TaskRecord["priority"]) {
   return { critical: 0, high: 1, medium: 2, low: 3 }[priority];
@@ -52,6 +60,36 @@ function findTask(workspace: WorkspaceSnapshot, taskId: string) {
   }
 
   return task;
+}
+
+function filterProjectsForAccess(access: RemoteAccess, projects: ProjectRecord[]) {
+  return projects.filter((project) => canAccessProject(access, project.id));
+}
+
+function filterMilestonesForAccess(access: RemoteAccess, milestones: MilestoneRecord[]) {
+  return milestones.filter((milestone) => canAccessProject(access, milestone.projectId));
+}
+
+function filterTasksForAccess(access: RemoteAccess, tasks: TaskRecord[]) {
+  return tasks.filter((task) => canAccessProject(access, task.projectId));
+}
+
+function resolveTaskProjectId(
+  workspace: WorkspaceSnapshot,
+  input: Pick<NewTaskInput | UpdateTaskInput, "projectId" | "milestoneId">,
+  currentTask?: TaskRecord,
+) {
+  const nextMilestoneId =
+    input.milestoneId === undefined ? currentTask?.milestoneId : input.milestoneId;
+  const milestone = nextMilestoneId
+    ? workspace.milestones.find((candidate) => candidate.id === nextMilestoneId)
+    : null;
+
+  if (milestone) {
+    return milestone.projectId;
+  }
+
+  return input.projectId === undefined ? currentTask?.projectId : input.projectId;
 }
 
 export function serializeProject(workspace: WorkspaceSnapshot, project: ProjectRecord) {
@@ -102,27 +140,31 @@ export function serializeTask(workspace: WorkspaceSnapshot, task: TaskRecord) {
   };
 }
 
-export async function getRemoteWorkspace(userId: string) {
-  const workspace = await plannerRepository.getWorkspace(userId);
+export async function getRemoteWorkspace(access: RemoteAccess) {
+  const workspace = await plannerRepository.getWorkspace(access.userId);
+  const projects = filterProjectsForAccess(access, workspace.projects);
+  const milestones = filterMilestonesForAccess(access, workspace.milestones);
+  const tasks = filterTasksForAccess(access, workspace.tasks);
   return {
     user: workspace.user,
     settings: workspace.settings,
     areas: workspace.areas,
-    projects: workspace.projects.map((project) => serializeProject(workspace, project)),
-    milestones: workspace.milestones.map((milestone) =>
-      serializeMilestone(workspace, milestone),
-    ),
-    tasks: workspace.tasks.map((task) => serializeTask(workspace, task)),
+    projects: projects.map((project) => serializeProject(workspace, project)),
+    milestones: milestones.map((milestone) => serializeMilestone(workspace, milestone)),
+    tasks: tasks.map((task) => serializeTask(workspace, task)),
   };
 }
 
-export async function listRemoteProjects(userId: string) {
-  const workspace = await plannerRepository.getWorkspace(userId);
-  return workspace.projects.map((project) => serializeProject(workspace, project));
+export async function listRemoteProjects(access: RemoteAccess) {
+  const workspace = await plannerRepository.getWorkspace(access.userId);
+  return filterProjectsForAccess(access, workspace.projects).map((project) =>
+    serializeProject(workspace, project),
+  );
 }
 
-export async function getRemoteProject(userId: string, projectId: string) {
-  const workspace = await plannerRepository.getWorkspace(userId);
+export async function getRemoteProject(access: RemoteAccess, projectId: string) {
+  assertApiTokenProjectAccess(access, projectId);
+  const workspace = await plannerRepository.getWorkspace(access.userId);
   const project = findProject(workspace, projectId);
 
   return {
@@ -136,25 +178,28 @@ export async function getRemoteProject(userId: string, projectId: string) {
   };
 }
 
-export async function createRemoteProject(userId: string, input: NewTaxonomyInput) {
-  const project = await plannerRepository.createProject(userId, input);
-  await notePagesRepository.syncProjectDescription(userId, project.id, input.notes);
-  const workspace = await plannerRepository.getWorkspace(userId);
+export async function createRemoteProject(access: RemoteAccess, input: NewTaxonomyInput) {
+  assertApiTokenAccountAccess(access);
+  const project = await plannerRepository.createProject(access.userId, input);
+  await notePagesRepository.syncProjectDescription(access.userId, project.id, input.notes);
+  const workspace = await plannerRepository.getWorkspace(access.userId);
   return serializeProject(workspace, project);
 }
 
 export async function updateRemoteProject(
-  userId: string,
+  access: RemoteAccess,
   projectId: string,
   input: UpdateProjectInput,
 ) {
-  const project = await plannerRepository.updateProject(userId, projectId, input);
-  const workspace = await plannerRepository.getWorkspace(userId);
+  assertApiTokenProjectAccess(access, projectId);
+  const project = await plannerRepository.updateProject(access.userId, projectId, input);
+  const workspace = await plannerRepository.getWorkspace(access.userId);
   return serializeProject(workspace, project);
 }
 
-export async function listRemoteMilestones(userId: string, projectId: string) {
-  const workspace = await plannerRepository.getWorkspace(userId);
+export async function listRemoteMilestones(access: RemoteAccess, projectId: string) {
+  assertApiTokenProjectAccess(access, projectId);
+  const workspace = await plannerRepository.getWorkspace(access.userId);
   findProject(workspace, projectId);
   return workspace.milestones
     .filter((milestone) => milestone.projectId === projectId)
@@ -162,29 +207,37 @@ export async function listRemoteMilestones(userId: string, projectId: string) {
 }
 
 export async function createRemoteMilestone(
-  userId: string,
+  access: RemoteAccess,
   input: NewMilestoneInput,
 ) {
-  const milestone = await plannerRepository.createMilestone(userId, input);
-  await notePagesRepository.syncMilestoneNotes(userId, milestone);
-  const workspace = await plannerRepository.getWorkspace(userId);
+  assertApiTokenProjectAccess(access, input.projectId);
+  const milestone = await plannerRepository.createMilestone(access.userId, input);
+  await notePagesRepository.syncMilestoneNotes(access.userId, milestone);
+  const workspace = await plannerRepository.getWorkspace(access.userId);
   return serializeMilestone(workspace, milestone);
 }
 
 export async function updateRemoteMilestone(
-  userId: string,
+  access: RemoteAccess,
   milestoneId: string,
   input: UpdateMilestoneInput,
 ) {
-  const milestone = await plannerRepository.updateMilestone(userId, milestoneId, input);
-  await notePagesRepository.syncMilestoneNotes(userId, milestone);
-  const workspace = await plannerRepository.getWorkspace(userId);
+  const workspaceBeforeUpdate = await plannerRepository.getWorkspace(access.userId);
+  const existingMilestone = findMilestone(workspaceBeforeUpdate, milestoneId);
+  assertApiTokenProjectAccess(access, input.projectId ?? existingMilestone.projectId);
+  const milestone = await plannerRepository.updateMilestone(access.userId, milestoneId, input);
+  await notePagesRepository.syncMilestoneNotes(access.userId, milestone);
+  const workspace = await plannerRepository.getWorkspace(access.userId);
   return serializeMilestone(workspace, milestone);
 }
 
-export async function listRemoteTasks(userId: string, filters: TaskFilters = {}) {
-  const workspace = await plannerRepository.getWorkspace(userId);
-  return workspace.tasks
+export async function listRemoteTasks(access: RemoteAccess, filters: TaskFilters = {}) {
+  if (filters.projectId) {
+    assertApiTokenProjectAccess(access, filters.projectId);
+  }
+
+  const workspace = await plannerRepository.getWorkspace(access.userId);
+  return filterTasksForAccess(access, workspace.tasks)
     .filter((task) =>
       filters.projectId ? task.projectId === filters.projectId : true,
     )
@@ -195,15 +248,17 @@ export async function listRemoteTasks(userId: string, filters: TaskFilters = {})
     .map((task) => serializeTask(workspace, task));
 }
 
-export async function createRemoteTask(userId: string, input: NewTaskInput) {
-  const task = await plannerRepository.createTask(userId, input);
-  const workspace = await plannerRepository.getWorkspace(userId);
+export async function createRemoteTask(access: RemoteAccess, input: NewTaskInput) {
+  const workspaceBeforeCreate = await plannerRepository.getWorkspace(access.userId);
+  assertApiTokenProjectAccess(access, resolveTaskProjectId(workspaceBeforeCreate, input));
+  const task = await plannerRepository.createTask(access.userId, input);
+  const workspace = await plannerRepository.getWorkspace(access.userId);
   const milestone = task.milestoneId
     ? workspace.milestones.find((candidate) => candidate.id === task.milestoneId) ?? null
     : null;
 
   if (input.addToProjectNotes) {
-    await notePagesRepository.syncTaskNote(userId, task, milestone, {
+    await notePagesRepository.syncTaskNote(access.userId, task, milestone, {
       createIfMissing: true,
     });
   }
@@ -212,31 +267,41 @@ export async function createRemoteTask(userId: string, input: NewTaskInput) {
 }
 
 export async function updateRemoteTask(
-  userId: string,
+  access: RemoteAccess,
   taskId: string,
   input: UpdateTaskInput,
 ) {
-  const previousWorkspace = await plannerRepository.getWorkspace(userId);
+  const previousWorkspace = await plannerRepository.getWorkspace(access.userId);
   const previousTask = previousWorkspace.tasks.find(
     (candidate) => candidate.id === taskId,
   );
-  const task = await plannerRepository.updateTask(userId, taskId, input);
-  const workspace = await plannerRepository.getWorkspace(userId);
+  if (!previousTask) {
+    throw new Error("NOT_FOUND");
+  }
+
+  assertApiTokenProjectAccess(access, previousTask.projectId);
+  assertApiTokenProjectAccess(
+    access,
+    resolveTaskProjectId(previousWorkspace, input, previousTask),
+  );
+
+  const task = await plannerRepository.updateTask(access.userId, taskId, input);
+  const workspace = await plannerRepository.getWorkspace(access.userId);
   const milestone = task.milestoneId
     ? workspace.milestones.find((candidate) => candidate.id === task.milestoneId) ?? null
     : null;
 
   if (previousTask?.projectId && previousTask.projectId !== task.projectId) {
-    await notePagesRepository.deleteTaskNote(userId, previousTask);
+    await notePagesRepository.deleteTaskNote(access.userId, previousTask);
   }
 
-  await notePagesRepository.syncTaskNote(userId, task, milestone);
+  await notePagesRepository.syncTaskNote(access.userId, task, milestone);
   return serializeTask(workspace, task);
 }
 
-export async function listRemoteNextTasks(userId: string, limit = 10) {
-  const workspace = await plannerRepository.getWorkspace(userId);
-  return workspace.tasks
+export async function listRemoteNextTasks(access: RemoteAccess, limit = 10) {
+  const workspace = await plannerRepository.getWorkspace(access.userId);
+  return filterTasksForAccess(access, workspace.tasks)
     .filter((task) => task.status !== "done")
     .sort((left, right) => {
       if (left.dueAt && right.dueAt && left.dueAt !== right.dueAt) {
@@ -252,10 +317,11 @@ export async function listRemoteNextTasks(userId: string, limit = 10) {
     .map((task) => serializeTask(workspace, task));
 }
 
-export async function readRemoteProjectResource(userId: string, projectId: string) {
-  const workspace = await plannerRepository.getWorkspace(userId);
+export async function readRemoteProjectResource(access: RemoteAccess, projectId: string) {
+  assertApiTokenProjectAccess(access, projectId);
+  const workspace = await plannerRepository.getWorkspace(access.userId);
   findProject(workspace, projectId);
-  return getRemoteProject(userId, projectId);
+  return getRemoteProject(access, projectId);
 }
 
 export function assertRemoteMilestoneBelongsToProject(

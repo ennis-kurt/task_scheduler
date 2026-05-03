@@ -9,6 +9,8 @@ import {
 
 const createTokenSchema = z.object({
   name: z.string().min(1).max(80),
+  scopeType: z.enum(["all_projects", "selected_projects"]).optional(),
+  projectIds: z.array(z.string()).optional(),
 });
 
 export async function GET() {
@@ -24,7 +26,7 @@ export async function POST(request: Request) {
   try {
     const userId = await requireUserId();
     const input = createTokenSchema.parse(await request.json());
-    const token = await createApiAccessToken(userId, input.name);
+    const token = await createApiAccessToken(userId, input);
     return success(token, 201);
   } catch (error) {
     return handleRouteError(error);

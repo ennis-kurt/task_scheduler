@@ -6,6 +6,7 @@ import { z } from "zod";
 import {
   authenticateApiToken,
   ApiTokenAuthError,
+  type ApiTokenAuthContext,
 } from "@/lib/api-tokens";
 import {
   createRemoteMilestone,
@@ -45,17 +46,36 @@ function toolResult(data: unknown) {
   };
 }
 
-function userIdFromAuth(authInfo: AuthInfo | undefined) {
+function authFromAuthInfo(authInfo: AuthInfo | undefined): ApiTokenAuthContext {
   const userId =
     typeof authInfo?.extra?.userId === "string"
       ? authInfo.extra.userId
       : authInfo?.clientId;
 
-  if (!userId) {
+  if (!authInfo || !userId) {
     throw new Error("UNAUTHORIZED");
   }
 
-  return userId;
+  return {
+    token: authInfo.token,
+    tokenId:
+      typeof authInfo.extra?.tokenId === "string" ? authInfo.extra.tokenId : "",
+    tokenPrefix:
+      typeof authInfo.extra?.tokenPrefix === "string"
+        ? authInfo.extra.tokenPrefix
+        : "",
+    userId,
+    scopeType:
+      authInfo.extra?.scopeType === "selected_projects"
+        ? "selected_projects"
+        : "all_projects",
+    projectIds: Array.isArray(authInfo.extra?.projectIds)
+      ? authInfo.extra.projectIds.filter(
+          (projectId): projectId is string => typeof projectId === "string",
+        )
+      : [],
+    scopes: authInfo.scopes,
+  };
 }
 
 function projectIdFromVariable(value: string | string[] | undefined) {
@@ -79,7 +99,7 @@ const handler = createMcpHandler(
               uri: "inflara://workspace",
               mimeType: "application/json",
               text: JSON.stringify(
-                await getRemoteWorkspace(userIdFromAuth(extra.authInfo)),
+                await getRemoteWorkspace(authFromAuthInfo(extra.authInfo)),
                 null,
                 2,
               ),
@@ -92,7 +112,7 @@ const handler = createMcpHandler(
       "inflara_project",
       new ResourceTemplate("inflara://projects/{projectId}", {
         list: async (extra) => {
-          const projects = await listRemoteProjects(userIdFromAuth(extra.authInfo));
+          const projects = await listRemoteProjects(authFromAuthInfo(extra.authInfo));
           return {
             resources: projects.map((project) => ({
               uri: `inflara://projects/${project.id}`,
@@ -123,7 +143,7 @@ const handler = createMcpHandler(
               mimeType: "application/json",
               text: JSON.stringify(
                 await readRemoteProjectResource(
-                  userIdFromAuth(extra.authInfo),
+                  authFromAuthInfo(extra.authInfo),
                   projectId,
                 ),
                 null,
@@ -144,7 +164,7 @@ const handler = createMcpHandler(
       },
       async (_args, extra) =>
         toolResult({
-          projects: await listRemoteProjects(userIdFromAuth(extra.authInfo)),
+          projects: await listRemoteProjects(authFromAuthInfo(extra.authInfo)),
         }),
     );
 
@@ -158,7 +178,7 @@ const handler = createMcpHandler(
         },
       },
       async ({ projectId }, extra) =>
-        toolResult(await getRemoteProject(userIdFromAuth(extra.authInfo), projectId)),
+        toolResult(await getRemoteProject(authFromAuthInfo(extra.authInfo), projectId)),
     );
 
     server.registerTool(
@@ -178,7 +198,7 @@ const handler = createMcpHandler(
       async (args, extra) =>
         toolResult({
           project: await createRemoteProject(
-            userIdFromAuth(extra.authInfo),
+            authFromAuthInfo(extra.authInfo),
             taxonomySchema.parse(args),
           ),
         }),
@@ -202,7 +222,7 @@ const handler = createMcpHandler(
       async ({ projectId, ...input }, extra) =>
         toolResult({
           project: await updateRemoteProject(
-            userIdFromAuth(extra.authInfo),
+            authFromAuthInfo(extra.authInfo),
             projectId,
             updateProjectSchema.parse(input),
           ),
@@ -221,7 +241,7 @@ const handler = createMcpHandler(
       async ({ projectId }, extra) =>
         toolResult({
           milestones: await listRemoteMilestones(
-            userIdFromAuth(extra.authInfo),
+            authFromAuthInfo(extra.authInfo),
             projectId,
           ),
         }),
@@ -243,7 +263,7 @@ const handler = createMcpHandler(
       async (args, extra) =>
         toolResult({
           milestone: await createRemoteMilestone(
-            userIdFromAuth(extra.authInfo),
+            authFromAuthInfo(extra.authInfo),
             milestoneSchema.parse(args),
           ),
         }),
@@ -266,7 +286,7 @@ const handler = createMcpHandler(
       async ({ milestoneId, ...input }, extra) =>
         toolResult({
           milestone: await updateRemoteMilestone(
-            userIdFromAuth(extra.authInfo),
+            authFromAuthInfo(extra.authInfo),
             milestoneId,
             updateMilestoneSchema.parse(input),
           ),
@@ -286,7 +306,7 @@ const handler = createMcpHandler(
       },
       async (args, extra) =>
         toolResult({
-          tasks: await listRemoteTasks(userIdFromAuth(extra.authInfo), {
+          tasks: await listRemoteTasks(authFromAuthInfo(extra.authInfo), {
             projectId: args.projectId,
             milestoneId: args.milestoneId,
             status: args.status as TaskStatus | null | undefined,
@@ -320,7 +340,7 @@ const handler = createMcpHandler(
       async (args, extra) =>
         toolResult({
           task: await createRemoteTask(
-            userIdFromAuth(extra.authInfo),
+            authFromAuthInfo(extra.authInfo),
             taskSchema.parse(args),
           ),
         }),
@@ -354,7 +374,7 @@ const handler = createMcpHandler(
       async ({ taskId, ...input }, extra) =>
         toolResult({
           task: await updateRemoteTask(
-            userIdFromAuth(extra.authInfo),
+            authFromAuthInfo(extra.authInfo),
             taskId,
             updateTaskSchema.parse(input),
           ),
@@ -372,7 +392,7 @@ const handler = createMcpHandler(
       },
       async ({ limit }, extra) =>
         toolResult({
-          tasks: await listRemoteNextTasks(userIdFromAuth(extra.authInfo), limit),
+          tasks: await listRemoteNextTasks(authFromAuthInfo(extra.authInfo), limit),
         }),
     );
   },
@@ -402,6 +422,8 @@ const authenticatedHandler = withMcpAuth(
           tokenId: auth.tokenId,
           userId: auth.userId,
           tokenPrefix: auth.tokenPrefix,
+          scopeType: auth.scopeType,
+          projectIds: auth.projectIds,
         },
       };
     } catch (error) {

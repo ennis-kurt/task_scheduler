@@ -50,6 +50,8 @@ type AgentTokenResponse = {
     id: string;
     name: string;
     tokenPrefix: string;
+    scopeType: "all_projects" | "selected_projects";
+    projectIds: string[];
     revokedAt: string | null;
   };
 };
@@ -92,9 +94,13 @@ async function expectJson<T>(response: APIResponse, status: number) {
 async function createAgentToken(
   request: APIRequestContext,
   name = "E2E remote agent",
+  options: {
+    scopeType?: "all_projects" | "selected_projects";
+    projectIds?: string[];
+  } = {},
 ) {
   const response = await request.post("/api/access-tokens", {
-    data: { name },
+    data: { name, ...options },
   });
   return expectJson<AgentTokenResponse>(response, 201);
 }
@@ -953,6 +959,83 @@ test("remote API creates and updates projects, milestones, and tasks without del
   expect(response.status()).toBe(405);
 });
 
+test("project-scoped remote API tokens only access selected projects", async ({
+  request,
+}) => {
+  const { token, record } = await createAgentToken(request, "Project scoped agent", {
+    scopeType: "selected_projects",
+    projectIds: ["project-launch"],
+  });
+  const headers = bearerHeaders(token);
+  expect(record).toMatchObject({
+    scopeType: "selected_projects",
+    projectIds: ["project-launch"],
+  });
+
+  let response = await request.get("/api/v1/me", { headers });
+  const meBody = await expectJson<
+    ApiEnvelope<{ token: { scopeType: string; projectIds: string[] } }>
+  >(response, 200);
+  expect(meBody.data.token).toEqual({
+    scopeType: "selected_projects",
+    projectIds: ["project-launch"],
+  });
+
+  response = await request.get("/api/v1/projects", { headers });
+  const projectsBody = await expectJson<
+    ApiEnvelope<{ projects: Array<{ id: string }> }>
+  >(response, 200);
+  expect(projectsBody.data.projects.map((project) => project.id)).toEqual([
+    "project-launch",
+  ]);
+
+  response = await request.get("/api/v1/projects/project-wellness", { headers });
+  await expectJson<{ error: { code: string } }>(response, 403);
+
+  response = await request.get("/api/v1/tasks", { headers });
+  const tasksBody = await expectJson<
+    ApiEnvelope<{ tasks: Array<{ projectId: string | null }> }>
+  >(response, 200);
+  expect(tasksBody.data.tasks.length).toBeGreaterThan(0);
+  expect(
+    tasksBody.data.tasks.every((task) => task.projectId === "project-launch"),
+  ).toBe(true);
+
+  response = await request.post("/api/v1/projects", {
+    headers,
+    data: {
+      name: "Blocked scoped project",
+    },
+  });
+  await expectJson<{ error: { code: string } }>(response, 403);
+
+  response = await request.post("/api/v1/tasks", {
+    headers,
+    data: {
+      title: "Blocked wellness task",
+      projectId: "project-wellness",
+      milestoneId: "milestone-foundation",
+      estimatedMinutes: 30,
+    },
+  });
+  await expectJson<{ error: { code: string } }>(response, 403);
+
+  response = await request.post("/api/v1/tasks", {
+    headers,
+    data: {
+      title: "Allowed project scoped task",
+      projectId: "project-launch",
+      milestoneId: "milestone-discovery",
+      estimatedMinutes: 30,
+    },
+  });
+  const createdTask = await expectJson<ApiEnvelope<{ task: { projectId: string } }>>(
+    response,
+    201,
+  );
+  expect(createdTask.data.task.projectId).toBe("project-launch");
+});
+
 test("remote API task notes stay task-only unless project note opt-in is set", async ({
   request,
 }) => {
@@ -1101,8 +1184,12 @@ test("settings remote agent tokens are copy-once and revocation blocks API acces
   const dialog = page.getByRole("dialog", { name: "Planning settings" });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText("Remote agent access")).toBeVisible();
+  await expect(dialog.getByText("Codex CLI")).toBeVisible();
+  await expect(dialog.getByText("Antigravity", { exact: true })).toBeVisible();
 
   await dialog.getByLabel("Token name").fill("UI E2E agent");
+  await dialog.getByRole("button", { name: "Selected projects" }).click();
+  await dialog.getByLabel("Planner MVP").check();
   await dialog.getByRole("button", { name: "Create token" }).click();
   await expect(dialog.getByText("Copy this token now. It will only be shown once.")).toBeVisible();
   const tokenInput = dialog.getByLabel("New API token");
@@ -1112,13 +1199,19 @@ test("settings remote agent tokens are copy-once and revocation blocks API acces
   let response = await request.get("/api/v1/projects", {
     headers: bearerHeaders(generatedToken),
   });
-  await expectJson<ApiEnvelope<{ projects: Array<{ id: string }> }>>(response, 200);
+  const scopedProjects = await expectJson<
+    ApiEnvelope<{ projects: Array<{ id: string }> }>
+  >(response, 200);
+  expect(scopedProjects.data.projects.map((project) => project.id)).toEqual([
+    "project-launch",
+  ]);
 
   await dialog.getByRole("button", { name: "Close details" }).click();
   await expect(dialog).toHaveCount(0);
   await page.getByRole("button", { name: "Settings" }).click();
   const reopenedDialog = page.getByRole("dialog", { name: "Planning settings" });
   await expect(reopenedDialog.getByText("UI E2E agent")).toBeVisible();
+  await expect(reopenedDialog.getByText("Scope: Planner MVP")).toBeVisible();
   await expect(reopenedDialog.getByLabel("New API token")).toHaveCount(0);
 
   await reopenedDialog.getByRole("button", { name: "Revoke token UI E2E agent" }).click();

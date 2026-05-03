@@ -43,6 +43,13 @@
       "when": 1777784400000,
       "tag": "0005_api_access_tokens",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1777787400000,
+      "tag": "0006_api_access_token_project_scope",
+      "breakpoints": true
     }
   ]
 }

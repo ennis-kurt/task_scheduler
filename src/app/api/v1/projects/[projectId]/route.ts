@@ -1,4 +1,4 @@
-import { apiSuccess, handleApiError, requireApiUserId } from "@/app/api/v1/_helpers";
+import { apiSuccess, handleApiError, requireApiAuth } from "@/app/api/v1/_helpers";
 import {
   getRemoteProject,
   updateRemoteProject,
@@ -13,9 +13,9 @@ type RouteContext = {
 
 export async function GET(request: Request, context: RouteContext) {
   try {
-    const userId = await requireApiUserId(request);
+    const auth = await requireApiAuth(request);
     const { projectId } = await context.params;
-    return apiSuccess(await getRemoteProject(userId, projectId));
+    return apiSuccess(await getRemoteProject(auth, projectId));
   } catch (error) {
     return handleApiError(error);
   }
@@ -23,10 +23,10 @@ export async function GET(request: Request, context: RouteContext) {
 
 export async function PATCH(request: Request, context: RouteContext) {
   try {
-    const userId = await requireApiUserId(request);
+    const auth = await requireApiAuth(request);
     const { projectId } = await context.params;
     const input = updateProjectSchema.parse(await request.json());
-    return apiSuccess({ project: await updateRemoteProject(userId, projectId, input) });
+    return apiSuccess({ project: await updateRemoteProject(auth, projectId, input) });
   } catch (error) {
     return handleApiError(error);
   }
