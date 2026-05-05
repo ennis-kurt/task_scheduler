@@ -31,7 +31,7 @@ type DemoSnapshot = {
     title: string;
     priority: "low" | "medium" | "high" | "critical";
     dueAt: string | null;
-    status: "todo" | "in_progress" | "done";
+    status: "todo" | "in_progress" | "review" | "qa" | "done";
     availability: "ready" | "later";
     areaId: string | null;
     projectId: string | null;
@@ -54,6 +54,47 @@ type AgentTokenResponse = {
     projectIds: string[];
     revokedAt: string | null;
   };
+};
+
+type AgentRunnerResponse = {
+  token: string;
+  runner: {
+    id: string;
+    name: string;
+    tokenPrefix: string;
+    revokedAt: string | null;
+  };
+};
+
+type AgentRunResponse = {
+  run: {
+    id: string;
+    taskId: string | null;
+    runnerId: string | null;
+    status: string;
+    branchName: string | null;
+    changedFiles: string[];
+    events: Array<{
+      type: string;
+      message: string;
+    }>;
+  };
+};
+
+type RunnerJobsResponse = {
+  jobs: Array<{
+    id: string;
+    status: string;
+    agentType: string;
+    task: { id: string; title: string } | null;
+    projectAgentLink: { repoUrl: string; defaultBranch: string } | null;
+  }>;
+};
+
+type OAuthTokenResponse = {
+  access_token: string;
+  token_type: "Bearer";
+  scope: string;
 };
 
 type ApiEnvelope<T> = {
@@ -89,6 +130,31 @@ async function expectJson<T>(response: APIResponse, status: number) {
   const body = await response.text();
   expect(response.status(), body).toBe(status);
   return JSON.parse(body) as T;
+}
+
+function timeToMinutes(value: string) {
+  const [hours, minutes] = value.split(":").map((part) => Number.parseInt(part, 10));
+  return hours * 60 + minutes;
+}
+
+function todayInTimezone(timeZone: string) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+
+  return {
+    date: `${values.year}-${values.month}-${values.day}`,
+    minutes:
+      Number.parseInt(values.hour ?? "0", 10) * 60 +
+      Number.parseInt(values.minute ?? "0", 10),
+  };
 }
 
 async function createAgentToken(
@@ -300,6 +366,7 @@ test("focus view selects a task, marks it in progress, and starts a sprint", asy
 test("project notes support markdown blocks, comments, and cloud persistence", async ({
   browser,
   page,
+  request,
 }) => {
   await page.goto("/");
   await page.evaluate(() => {
@@ -314,6 +381,35 @@ test("project notes support markdown blocks, comments, and cloud persistence", a
   await page.getByRole("button", { name: "Notes" }).click();
 
   await expect(page.getByTestId("project-notes")).toBeVisible();
+  await expect(page.getByTestId("project-note-folder-structure")).toBeVisible();
+  await page.getByTestId("project-note-folder-search").fill("General");
+  await expect(page.getByRole("button", { name: "General Notes", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Clear folder search" }).click();
+  await expect(page.getByLabel("Block style")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Copy Markdown" })).toBeVisible();
+  const folderPanelBoxBefore = await page.getByTestId("project-note-folder-structure").boundingBox();
+  const resizeHandleBox = await page.getByTestId("project-notes-sidebar-resize-handle").boundingBox();
+  expect(folderPanelBoxBefore).not.toBeNull();
+  expect(resizeHandleBox).not.toBeNull();
+  if (folderPanelBoxBefore && resizeHandleBox) {
+    await page.mouse.move(
+      resizeHandleBox.x + resizeHandleBox.width / 2,
+      resizeHandleBox.y + resizeHandleBox.height / 2,
+    );
+    await page.mouse.down();
+    await page.mouse.move(resizeHandleBox.x - 72, resizeHandleBox.y + resizeHandleBox.height / 2);
+    await page.mouse.up();
+    const folderPanelBoxAfter = await page.getByTestId("project-note-folder-structure").boundingBox();
+    expect(folderPanelBoxAfter?.width ?? 0).toBeGreaterThan(folderPanelBoxBefore.width + 40);
+  }
+  await page.getByRole("button", { name: "Show writing tools" }).click();
+  await expect(page.getByTestId("project-note-writing-tools")).toBeVisible();
+  const boldWritingTool = page.getByTestId("project-note-writing-tool-bold");
+  await expect(boldWritingTool).toBeVisible();
+  await expect(boldWritingTool).toBeEnabled();
+  await expect(page.getByTestId("project-note-writing-tool-tooltip-bold")).toBeHidden();
+  await boldWritingTool.hover();
+  await expect(page.getByTestId("project-note-writing-tool-tooltip-bold")).toBeVisible();
   await page.getByTestId("project-note-title").fill("Architecture Notes");
 
   const editor = page.getByTestId("project-note-rich-surface");
@@ -399,6 +495,23 @@ test("project notes support markdown blocks, comments, and cloud persistence", a
       page.evaluate(() => window.localStorage.getItem("inflara:project-notes:project-launch:v2")),
     )
     .toContain("Add rollout risks to this note.");
+  await expect
+    .poll(async () => {
+      const response = await request.get("/api/projects/project-launch/notes");
+      const pages = (await response.json()) as Array<{
+        title: string;
+        markdown: string;
+        comments: Array<{ body: string }>;
+      }>;
+
+      return pages.some(
+        (notePage) =>
+          notePage.title === "Architecture Notes" &&
+          notePage.markdown.includes("Launch Readiness") &&
+          notePage.comments.some((comment) => comment.body === "Add rollout risks to this note."),
+      );
+    })
+    .toBe(true);
 
   await page.reload();
   await page.locator("aside").getByRole("button", { name: "Planner MVP", exact: true }).click();
@@ -448,6 +561,18 @@ test("project notes support manual sections, subsections, notes, and drag moves"
   page,
   request,
 }) => {
+  type ProjectNotePageSummary = {
+    id: string;
+    kind: string;
+    title: string;
+    sectionId: string | null;
+    parentSectionId: string | null;
+  };
+  const readProjectNotePages = async () => {
+    const response = await request.get("/api/projects/project-launch/notes");
+    return (await response.json()) as ProjectNotePageSummary[];
+  };
+
   await page.goto("/");
   await page.locator("aside").getByRole("button", { name: "Planner MVP", exact: true }).click();
   await page.getByRole("button", { name: "Notes" }).click();
@@ -461,27 +586,78 @@ test("project notes support manual sections, subsections, notes, and drag moves"
   page.once("dialog", (dialog) => dialog.accept("Manual Research"));
   await page.getByRole("button", { name: "Create section", exact: true }).click();
   await expect(page.getByRole("button", { name: "Manual Research", exact: true })).toBeVisible();
+  await expect
+    .poll(async () =>
+      (await readProjectNotePages()).some(
+        (notePage) => notePage.kind === "section" && notePage.title === "Manual Research",
+      ),
+    )
+    .toBe(true);
 
   page.once("dialog", (dialog) => dialog.accept("Evidence"));
   await page.getByRole("button", { name: "Create subsection in Manual Research" }).click();
   await expect(page.getByRole("button", { name: "Evidence", exact: true })).toBeVisible();
+  await expect
+    .poll(async () => {
+      const pages = await readProjectNotePages();
+      const manualSection = pages.find(
+        (notePage) => notePage.kind === "section" && notePage.title === "Manual Research",
+      );
+
+      return pages.some(
+        (notePage) =>
+          notePage.kind === "section" &&
+          notePage.title === "Evidence" &&
+          notePage.parentSectionId === manualSection?.id,
+      );
+    })
+    .toBe(true);
 
   await page.getByRole("button", { name: "Create note in Manual Research" }).click();
+  await expect(page.getByTestId("project-note-title")).toHaveValue("Untitled page");
   await page.getByTestId("project-note-title").fill("Research Note");
+  await expect(page.getByTestId("project-note-title")).toHaveValue("Research Note");
   await page.getByTestId("project-note-rich-surface").click();
   await page.keyboard.press("ControlOrMeta+A");
   await page.keyboard.press("Backspace");
   await page.keyboard.type("Research content inside a manual section.");
   await expect(page.getByRole("button", { name: "Research Note", exact: true })).toBeVisible();
+  await expect
+    .poll(async () => {
+      const pages = await readProjectNotePages();
+      const manualSection = pages.find(
+        (notePage) => notePage.kind === "section" && notePage.title === "Manual Research",
+      );
+
+      return pages.some(
+        (notePage) =>
+          notePage.kind === "note" &&
+          notePage.title === "Research Note" &&
+          notePage.sectionId === manualSection?.id,
+      );
+    })
+    .toBe(true);
 
   await page.getByRole("button", { name: "Create note page", exact: true }).click();
+  await expect(page.getByTestId("project-note-title")).toHaveValue("Untitled page");
   await page.getByTestId("project-note-title").fill("Drag Me Note");
+  await expect(page.getByTestId("project-note-title")).toHaveValue("Drag Me Note");
   await page.getByTestId("project-note-rich-surface").click();
   await page.keyboard.press("ControlOrMeta+A");
   await page.keyboard.press("Backspace");
   await page.keyboard.type("This note will be moved into Manual Research.");
   const dragMeNote = page.locator('[data-note-kind="note"][data-note-title="Drag Me Note"]');
   await expect(dragMeNote).toBeAttached();
+  await expect
+    .poll(async () =>
+      (await readProjectNotePages()).some(
+        (notePage) =>
+          notePage.kind === "note" &&
+          notePage.title === "Drag Me Note" &&
+          notePage.sectionId === null,
+      ),
+    )
+    .toBe(true);
   await dragMeNote.scrollIntoViewIfNeeded();
 
   await dragMeNote.dragTo(
@@ -490,14 +666,7 @@ test("project notes support manual sections, subsections, notes, and drag moves"
 
   await expect
     .poll(async () => {
-      const response = await request.get("/api/projects/project-launch/notes");
-      const pages = (await response.json()) as Array<{
-        id: string;
-        kind: string;
-        title: string;
-        sectionId: string | null;
-        parentSectionId: string | null;
-      }>;
+      const pages = await readProjectNotePages();
       const manualSection = pages.find(
         (page) => page.kind === "section" && page.title === "Manual Research",
       );
@@ -643,7 +812,11 @@ test("task notes stay on tasks unless explicitly added to project notes", async 
   let notesResponse = await request.get("/api/projects/project-launch/notes");
   expect(notesResponse.ok()).toBeTruthy();
   let pages = (await notesResponse.json()) as Array<{
+    id: string;
+    kind: string;
     title: string;
+    markdown: string;
+    sectionId: string | null;
     systemKey: string | null;
   }>;
   expect(
@@ -1106,6 +1279,119 @@ test("remote API task notes stay task-only unless project note opt-in is set", a
   });
 });
 
+test("agent runner dispatch API claims, logs, finishes, and routes task to review", async ({
+  request,
+}) => {
+  let response = await request.post("/api/agent-runners", {
+    data: {
+      name: "E2E Mac runner",
+      platform: "macos",
+      appVersion: "0.1.0",
+      capabilities: {
+        supportsWorktrees: true,
+        agents: [{ type: "codex", available: true }],
+      },
+    },
+  });
+  const runnerBody = await expectJson<AgentRunnerResponse>(response, 201);
+  const runnerHeaders = bearerHeaders(runnerBody.token);
+
+  response = await request.post("/api/project-agent-links", {
+    data: {
+      projectId: "project-launch",
+      repoUrl: "https://github.com/example/inflara-demo",
+      defaultBranch: "main",
+    },
+  });
+  await expectJson<{ link: { projectId: string } }>(response, 200);
+
+  response = await request.post("/api/agent-runs", {
+    data: {
+      taskId: "task-outline",
+      runnerId: runnerBody.runner.id,
+      agentType: "codex",
+      modelName: "gpt-5.2",
+      extraPrompt: "E2E runner lifecycle verification.",
+    },
+  });
+  const createdRun = await expectJson<AgentRunResponse>(response, 201);
+  expect(createdRun.run.status).toBe("queued");
+
+  response = await request.get("/api/runner/jobs", {
+    headers: runnerHeaders,
+  });
+  const jobsBody = await expectJson<RunnerJobsResponse>(response, 200);
+  const job = jobsBody.jobs.find((candidate) => candidate.id === createdRun.run.id);
+  expect(job).toMatchObject({
+    status: "queued",
+    agentType: "codex",
+    task: { id: "task-outline" },
+    projectAgentLink: {
+      repoUrl: "https://github.com/example/inflara-demo",
+      defaultBranch: "main",
+    },
+  });
+
+  response = await request.post(`/api/runner/jobs/${createdRun.run.id}/claim`, {
+    headers: runnerHeaders,
+    data: {},
+  });
+  const claimedRun = await expectJson<AgentRunResponse>(response, 200);
+  expect(claimedRun.run.status).toBe("awaiting_local_confirmation");
+
+  response = await request.post(`/api/runner/jobs/${createdRun.run.id}/start`, {
+    headers: runnerHeaders,
+    data: {
+      branchName: "inflara/outline-onboarding-run",
+      modelName: "gpt-5.2",
+    },
+  });
+  const startedRun = await expectJson<AgentRunResponse>(response, 200);
+  expect(startedRun.run.status).toBe("running");
+
+  response = await request.post(`/api/runner/jobs/${createdRun.run.id}/events`, {
+    headers: runnerHeaders,
+    data: {
+      events: [
+        {
+          type: "log",
+          message: "Fake Codex output from e2e",
+          data: { stream: "stdout" },
+        },
+      ],
+    },
+  });
+  await expectJson<{ events: Array<{ type: string }> }>(response, 200);
+
+  response = await request.post(`/api/runner/jobs/${createdRun.run.id}/finish`, {
+    headers: runnerHeaders,
+    data: {
+      summary: "Updated onboarding outline.",
+      changedFiles: ["src/onboarding.ts"],
+      verification: { command: "pnpm test", result: "mocked" },
+      confidence: 88,
+      riskyAreas: ["onboarding-copy"],
+      branchName: "inflara/outline-onboarding-run",
+    },
+  });
+  const finishedRun = await expectJson<AgentRunResponse>(response, 200);
+  expect(finishedRun.run.status).toBe("succeeded");
+
+  const snapshot = await readSnapshot();
+  expect(snapshot.tasks.find((task) => task.id === "task-outline")?.status).toBe("review");
+
+  response = await request.get(`/api/agent-runs?taskId=task-outline`);
+  const runsBody = await expectJson<{ runs: AgentRunResponse["run"][] }>(response, 200);
+  const run = runsBody.runs.find((candidate) => candidate.id === createdRun.run.id);
+  expect(run).toMatchObject({
+    branchName: "inflara/outline-onboarding-run",
+    changedFiles: ["src/onboarding.ts"],
+  });
+  expect(run?.events.map((event) => event.type)).toEqual(
+    expect.arrayContaining(["created", "claimed", "started", "log", "finished"]),
+  );
+});
+
 test("MCP endpoint initializes, lists tools, and creates and updates tasks", async ({
   request,
 }) => {
@@ -1223,6 +1509,102 @@ test("settings remote agent tokens are copy-once and revocation blocks API acces
   await expectJson<{ error: { code: string } }>(response, 401);
 });
 
+test("OAuth MCP authorization code flow issues scoped bearer tokens", async ({
+  page,
+  request,
+}) => {
+  const metadataResponse = await request.get("/.well-known/oauth-authorization-server");
+  const metadata = await expectJson<{
+    authorization_endpoint: string;
+    token_endpoint: string;
+    registration_endpoint: string;
+    code_challenge_methods_supported: string[];
+  }>(metadataResponse, 200);
+  expect(metadata.authorization_endpoint).toContain("/oauth/authorize");
+  expect(metadata.token_endpoint).toContain("/oauth/token");
+  expect(metadata.registration_endpoint).toContain("/oauth/register");
+  expect(metadata.code_challenge_methods_supported).toContain("S256");
+
+  const registrationResponse = await request.post("/oauth/register", {
+    data: {
+      client_name: "E2E OAuth client",
+      redirect_uris: ["http://127.0.0.1/oauth-test-callback"],
+    },
+  });
+  const registration = await expectJson<{ client_id: string }>(registrationResponse, 201);
+  expect(registration.client_id).toContain("inflara_oauth_");
+
+  await page.goto("/");
+  const redirectUri = `${new URL(page.url()).origin}/oauth-test-callback`;
+  const verifier = "plain-e2e-verifier";
+  const authorizeUrl = new URL("/oauth/authorize", page.url());
+  authorizeUrl.searchParams.set("response_type", "code");
+  authorizeUrl.searchParams.set("client_id", registration.client_id);
+  authorizeUrl.searchParams.set("redirect_uri", redirectUri);
+  authorizeUrl.searchParams.set("state", "oauth-e2e-state");
+  authorizeUrl.searchParams.set("scope", "planner:read planner:write");
+  authorizeUrl.searchParams.set("code_challenge", verifier);
+  authorizeUrl.searchParams.set("code_challenge_method", "plain");
+
+  await page.goto(authorizeUrl.toString());
+  await expect(
+    page.getByRole("heading", { name: "Authorize Inflara MCP access" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Authorize access" }).click();
+  await page.waitForURL(/oauth-test-callback/);
+
+  const callbackUrl = new URL(page.url());
+  expect(callbackUrl.searchParams.get("state")).toBe("oauth-e2e-state");
+  const code = callbackUrl.searchParams.get("code");
+  expect(code).toBeTruthy();
+  if (!code) {
+    throw new Error("OAuth callback did not include an authorization code");
+  }
+
+  const tokenResponse = await request.post("/oauth/token", {
+    form: {
+      grant_type: "authorization_code",
+      code,
+      client_id: registration.client_id,
+      redirect_uri: redirectUri,
+      code_verifier: verifier,
+    },
+  });
+  const token = await expectJson<OAuthTokenResponse>(tokenResponse, 200);
+  expect(token.token_type).toBe("Bearer");
+  expect(token.scope).toContain("planner:read");
+
+  const meResponse = await request.get("/api/v1/me", {
+    headers: bearerHeaders(token.access_token),
+  });
+  const me = await expectJson<ApiEnvelope<{ user: { id: string } }>>(meResponse, 200);
+  expect(me.data.user.id).toBe("demo-user");
+});
+
+test("GitHub issue creation endpoint reports missing server configuration", async ({
+  request,
+}) => {
+  test.skip(
+    Boolean(process.env.GITHUB_ISSUES_TOKEN || process.env.GITHUB_TOKEN),
+    "GitHub issue creation is configured in this environment.",
+  );
+
+  const response = await request.post("/api/github/issues", {
+    data: {
+      repoUrl: "https://github.com/openai/codex",
+      task: {
+        title: "Browser-created task issue",
+        notes: "This request should not create an issue without a token.",
+        priority: "Medium",
+        estimatedMinutes: 30,
+        dueAt: null,
+      },
+    },
+  });
+  const body = await expectJson<{ error: string }>(response, 501);
+  expect(body.error).toBe("GITHUB_NOT_CONFIGURED");
+});
+
 test("project design inline date, status, and priority controls persist without full editors", async ({
   page,
 }) => {
@@ -1230,6 +1612,20 @@ test("project design inline date, status, and priority controls persist without 
   await page.locator("aside").getByRole("button", { name: "Planner MVP", exact: true }).click();
   await expect(page.getByRole("button", { name: "Project Design" })).toBeVisible();
   await expect(page.getByTestId("project-task-row-task-kickoff")).toBeVisible();
+  await page.getByRole("button", { name: "Project Details" }).click();
+  await page.getByLabel("GitHub repository").fill("openai/codex");
+  await page.getByRole("button", { name: "Save project" }).click();
+  await expect
+    .poll(async () =>
+      page.evaluate(() => {
+        const raw = window.localStorage.getItem("inflara:github-repo-links:v1");
+        return raw ? JSON.parse(raw)["project-launch"] : null;
+      }),
+    )
+    .toBe("https://github.com/openai/codex");
+  await page.getByTestId("project-task-row-task-kickoff").click();
+  await expect(page.getByRole("button", { name: "Create GitHub issue" })).toBeVisible();
+  await page.keyboard.press("Escape");
   await expect
     .poll(async () =>
       page.getByTestId("project-task-row-task-kickoff").evaluate((row) => {
@@ -1333,6 +1729,16 @@ test("planning kanban supports custom columns, local task columns, and collapse"
   await expect(page.getByTestId("planning-card-task-plan")).toHaveCount(1);
   await expect(page.getByTestId("planning-card-task-outline")).toHaveCount(1);
   await expect(page.getByTestId("planning-card-task-kickoff")).toHaveCount(1);
+  const taskFlowProjectFilter = page.getByLabel("Filter Task Flow by project");
+  await expect(taskFlowProjectFilter).toHaveValue("__all_projects");
+  await taskFlowProjectFilter.selectOption("project-wellness");
+  await expect(page.getByTestId("planning-card-task-gym")).toHaveCount(1);
+  await expect(page.getByTestId("planning-card-task-plan")).toHaveCount(0);
+  await taskFlowProjectFilter.selectOption("project-launch");
+  await expect(page.getByTestId("planning-card-task-plan")).toHaveCount(1);
+  await expect(page.getByTestId("planning-card-task-gym")).toHaveCount(0);
+  await taskFlowProjectFilter.selectOption("__all_projects");
+  await expect(page.getByTestId("planning-card-task-plan")).toHaveCount(1);
   await page.getByTestId("surface-day").click();
   const shortCalendarItem = page
     .locator(".planner-calendar-item", { hasText: "Daily planning reset" })
@@ -1519,10 +1925,12 @@ test("planning kanban supports custom columns, local task columns, and collapse"
       .getByTestId(`planning-card-${createdTask.id}`),
   ).toBeVisible();
 
-  const snapshotAfterReviewDrop = await readSnapshot();
-  expect(
-    snapshotAfterReviewDrop.tasks.find((task) => task.id === createdTask.id)?.status,
-  ).toBe("todo");
+  await expect
+    .poll(async () => {
+      const snapshotAfterReviewDrop = await readSnapshot();
+      return snapshotAfterReviewDrop.tasks.find((task) => task.id === createdTask.id)?.status;
+    })
+    .toBe("review");
 
   await page.reload();
   await page.getByRole("button", { name: "Planning", exact: true }).click();
@@ -1576,6 +1984,263 @@ test("AI daily planner generates draft schedules and applies them to the calenda
     .getByRole("button", { name: "Generate" })
     .click();
   await expect(page.getByTestId("ai-planner-timeline")).toBeVisible();
+});
+
+test("AI daily planner fallback starts today after now and applies profile spacing", async ({
+  request,
+}) => {
+  const timezone = "UTC";
+  const now = todayInTimezone(timezone);
+  const workHours = Object.fromEntries(
+    Array.from({ length: 7 }, (_, day) => [day, { start: "00:00", end: "23:59" }]),
+  );
+  const baseRequest = {
+    date: now.date,
+    timezone,
+    projects: [],
+    milestones: [],
+    projectPlans: [],
+    scheduledItems: [],
+    capacity: [],
+    settings: {
+      workHours,
+      timezone,
+      slotMinutes: 30,
+      weekStart: 1,
+      theme: "system",
+    },
+    dependencies: [],
+    tasks: [
+      {
+        id: "task-current-one",
+        title: "Current day task one",
+        priority: "high",
+        estimatedMinutes: 25,
+        dueAt: null,
+        status: "todo",
+        availability: "ready",
+        areaId: null,
+        projectId: null,
+      },
+      {
+        id: "task-current-two",
+        title: "Current day task two",
+        priority: "medium",
+        estimatedMinutes: 25,
+        dueAt: null,
+        status: "todo",
+        availability: "ready",
+        areaId: null,
+        projectId: null,
+      },
+    ],
+  };
+
+  const standardResponse = await request.post("/api/ai/daily-plan", {
+    data: {
+      ...baseRequest,
+      planningMode: "standard",
+    },
+  });
+  const standard = await expectJson<{
+    schedule: Array<{ start_time: string; end_time: string; type: string }>;
+  }>(standardResponse, 200);
+  const firstFocusBlock = standard.schedule.find((block) => block.type === "focus_block");
+  expect(firstFocusBlock).toBeTruthy();
+  expect(timeToMinutes(firstFocusBlock!.start_time)).toBeGreaterThanOrEqual(
+    Math.ceil(now.minutes / 5) * 5,
+  );
+
+  const tomorrow = new Date();
+  tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+  const futureDate = tomorrow.toISOString().slice(0, 10);
+  const chillResponse = await request.post("/api/ai/daily-plan", {
+    data: {
+      ...baseRequest,
+      date: futureDate,
+      planningMode: "chill",
+    },
+  });
+  const chill = await expectJson<{
+    schedule: Array<{ start_time: string; end_time: string; type: string }>;
+  }>(chillResponse, 200);
+  const firstBreak = chill.schedule.find((block) => block.type === "break");
+  expect(firstBreak).toBeTruthy();
+  expect(
+    timeToMinutes(firstBreak!.end_time) - timeToMinutes(firstBreak!.start_time),
+  ).toBeGreaterThanOrEqual(20);
+});
+
+test("AI daily planner fallback avoids overlapping calendar events", async ({
+  request,
+}) => {
+  const timezone = "UTC";
+  const date = "2026-01-15";
+  const response = await request.post("/api/ai/daily-plan", {
+    data: {
+      planningMode: "standard",
+      date,
+      timezone,
+      projects: [],
+      milestones: [],
+      projectPlans: [],
+      capacity: [],
+      settings: {
+        workHours: {
+          0: { start: "14:00", end: "17:00" },
+          1: { start: "14:00", end: "17:00" },
+          2: { start: "14:00", end: "17:00" },
+          3: { start: "14:00", end: "17:00" },
+          4: { start: "14:00", end: "17:00" },
+          5: { start: "14:00", end: "17:00" },
+          6: { start: "14:00", end: "17:00" },
+        },
+        timezone,
+        slotMinutes: 30,
+        weekStart: 1,
+        theme: "system",
+      },
+      dependencies: [],
+      scheduledItems: [
+        {
+          id: "event-block",
+          sourceId: "event-block",
+          instanceId: "event-block",
+          source: "event",
+          title: "Calendar event",
+          start: "2026-01-15T14:50:00.000Z",
+          end: "2026-01-15T15:45:00.000Z",
+          notes: "",
+        },
+      ],
+      tasks: [
+        {
+          id: "task-event-one",
+          title: "Task before meeting",
+          priority: "high",
+          estimatedMinutes: 30,
+          dueAt: null,
+          status: "todo",
+          availability: "ready",
+          areaId: null,
+          projectId: null,
+        },
+        {
+          id: "task-event-two",
+          title: "Task after meeting",
+          priority: "high",
+          estimatedMinutes: 30,
+          dueAt: null,
+          status: "todo",
+          availability: "ready",
+          areaId: null,
+          projectId: null,
+        },
+        {
+          id: "task-event-three",
+          title: "Another task after meeting",
+          priority: "medium",
+          estimatedMinutes: 30,
+          dueAt: null,
+          status: "todo",
+          availability: "ready",
+          areaId: null,
+          projectId: null,
+        },
+      ],
+    },
+  });
+  const payload = await expectJson<{
+    schedule: Array<{ start_time: string; end_time: string; type: string }>;
+  }>(response, 200);
+  const blockedStart = timeToMinutes("14:50");
+  const blockedEnd = timeToMinutes("15:45");
+
+  for (const block of payload.schedule.filter((entry) => entry.type === "focus_block")) {
+    expect(
+      timeToMinutes(block.end_time) <= blockedStart ||
+        timeToMinutes(block.start_time) >= blockedEnd,
+    ).toBeTruthy();
+  }
+});
+
+test("AI daily planner fallback respects events that spill into the selected day", async ({
+  request,
+}) => {
+  const timezone = "UTC";
+  const date = "2026-01-15";
+  const response = await request.post("/api/ai/daily-plan", {
+    data: {
+      planningMode: "standard",
+      date,
+      timezone,
+      projects: [],
+      milestones: [],
+      projectPlans: [],
+      capacity: [],
+      settings: {
+        workHours: {
+          0: { start: "00:00", end: "02:00" },
+          1: { start: "00:00", end: "02:00" },
+          2: { start: "00:00", end: "02:00" },
+          3: { start: "00:00", end: "02:00" },
+          4: { start: "00:00", end: "02:00" },
+          5: { start: "00:00", end: "02:00" },
+          6: { start: "00:00", end: "02:00" },
+        },
+        timezone,
+        slotMinutes: 30,
+        weekStart: 1,
+        theme: "system",
+      },
+      dependencies: [],
+      scheduledItems: [
+        {
+          id: "event-overnight",
+          sourceId: "event-overnight",
+          instanceId: "event-overnight",
+          source: "event",
+          title: "Overnight event",
+          start: "2026-01-14T23:50:00.000Z",
+          end: "2026-01-15T00:45:00.000Z",
+          notes: "",
+        },
+      ],
+      tasks: [
+        {
+          id: "task-after-overnight-one",
+          title: "Task after overnight event",
+          priority: "high",
+          estimatedMinutes: 30,
+          dueAt: null,
+          status: "todo",
+          availability: "ready",
+          areaId: null,
+          projectId: null,
+        },
+        {
+          id: "task-after-overnight-two",
+          title: "Second task after overnight event",
+          priority: "medium",
+          estimatedMinutes: 30,
+          dueAt: null,
+          status: "todo",
+          availability: "ready",
+          areaId: null,
+          projectId: null,
+        },
+      ],
+    },
+  });
+  const payload = await expectJson<{
+    schedule: Array<{ start_time: string; end_time: string; type: string }>;
+  }>(response, 200);
+  const firstFocusBlock = payload.schedule.find((block) => block.type === "focus_block");
+
+  expect(firstFocusBlock).toBeTruthy();
+  expect(timeToMinutes(firstFocusBlock!.start_time)).toBeGreaterThanOrEqual(
+    timeToMinutes("00:45"),
+  );
 });
 
 test("quick add creates unscheduled tasks and pipeline status edits persist", async ({

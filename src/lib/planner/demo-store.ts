@@ -30,6 +30,12 @@ function normalizeSnapshot(snapshot: WorkspaceSnapshot): WorkspaceSnapshot {
           projectIds: Array.isArray(token.projectIds) ? token.projectIds : [],
         }))
       : [],
+    agentRunners: Array.isArray(snapshot.agentRunners) ? snapshot.agentRunners : [],
+    projectAgentLinks: Array.isArray(snapshot.projectAgentLinks)
+      ? snapshot.projectAgentLinks
+      : [],
+    agentRuns: Array.isArray(snapshot.agentRuns) ? snapshot.agentRuns : [],
+    agentRunEvents: Array.isArray(snapshot.agentRunEvents) ? snapshot.agentRunEvents : [],
     tasks: snapshot.tasks.map((task) => ({
       ...task,
       milestoneId: task.milestoneId ?? null,

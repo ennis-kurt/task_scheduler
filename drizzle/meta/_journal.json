@@ -50,6 +50,13 @@
       "when": 1777787400000,
       "tag": "0006_api_access_token_project_scope",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1777939200000,
+      "tag": "0007_agent_runner_dispatch",
+      "breakpoints": true
     }
   ]
 }

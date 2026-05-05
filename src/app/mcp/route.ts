@@ -31,9 +31,9 @@ import {
   updateTaskSchema,
   taxonomySchema,
 } from "@/lib/planner/validators";
-import type { TaskStatus } from "@/lib/planner/types";
+import { TASK_STATUSES, type TaskStatus } from "@/lib/planner/types";
 
-const taskStatusSchema = z.enum(["todo", "in_progress", "done"]);
+const taskStatusSchema = z.enum(TASK_STATUSES);
 
 function toolResult(data: unknown) {
   return {

@@ -27,6 +27,7 @@ import {
 import { format, parseISO } from "date-fns";
 
 import { cn } from "@/lib/utils";
+import { TASK_STATUS_LABELS } from "@/lib/planner/types";
 import type {
   PlannerPayload,
   PlannerTask,
@@ -91,11 +92,13 @@ export interface PlanningViewProps {
 const TASK_DRAG_TYPE = "application/x-inflara-planning-task";
 const COLUMN_DRAG_TYPE = "application/x-inflara-planning-column";
 const REVIEW_COLUMN_ID = "review";
+const QA_COLUMN_ID = "qa";
 const DEFAULT_KANBAN_HEIGHT = 360;
 const MIN_KANBAN_HEIGHT = 260;
 const MAX_KANBAN_HEIGHT = 1100;
 const SCHEDULE_PANEL_HEIGHT = 720;
 const DEFAULT_KANBAN_VIEWPORT_RATIO = 0.5;
+const KANBAN_ALL_PROJECTS = "__all_projects";
 const AI_PLANNING_MODES: Array<{ id: PlanningMode; label: string; description: string }> = [
   {
     id: "deep_focus",
@@ -136,8 +139,16 @@ const DEFAULT_COLUMNS: PlanningColumn[] = [
   },
   {
     id: REVIEW_COLUMN_ID,
-    kind: "custom",
+    kind: "status",
     label: "Review",
+    status: "review",
+    locked: true,
+  },
+  {
+    id: QA_COLUMN_ID,
+    kind: "status",
+    label: "QA",
+    status: "qa",
     locked: true,
   },
   {
@@ -154,7 +165,13 @@ function cloneDefaultColumns() {
 }
 
 function isTaskStatus(value: unknown): value is TaskStatus {
-  return value === "todo" || value === "in_progress" || value === "done";
+  return (
+    value === "todo" ||
+    value === "in_progress" ||
+    value === "review" ||
+    value === "qa" ||
+    value === "done"
+  );
 }
 
 function normalizeColumns(value: unknown): PlanningColumn[] {
@@ -182,7 +199,7 @@ function normalizeColumns(value: unknown): PlanningColumn[] {
       const fallback = DEFAULT_COLUMNS.find((column) => column.id === id);
 
       if (fallback?.kind === "status") {
-        columns.push({ ...fallback, label: label || fallback.label });
+        columns.push({ ...fallback, label: label || TASK_STATUS_LABELS[id] });
         seen.add(id);
       }
 
@@ -270,6 +287,14 @@ function getColumnTone(column: PlanningColumn) {
     };
   }
 
+  if (column.id === QA_COLUMN_ID) {
+    return {
+      label: "text-[color:#0284c7]",
+      count: "bg-[rgba(14,165,233,0.12)] text-[color:#0284c7]",
+      drop: "planning-drop-active-blue",
+    };
+  }
+
   return {
     label: "text-[var(--foreground)]",
     count: "bg-[var(--surface-muted)] text-[var(--muted-foreground)]",
@@ -284,6 +309,10 @@ function getTaskAccent(task: PlannerTask, column: PlanningColumn) {
 
   if (column.id === REVIEW_COLUMN_ID) {
     return "border-l-[#8b5cf6]";
+  }
+
+  if (column.id === QA_COLUMN_ID) {
+    return "border-l-[#0ea5e9]";
   }
 
   if (task.priority === "critical" || task.priority === "high") {
@@ -361,6 +390,8 @@ export function PlanningView({
   const [useViewportDefaultHeight, setUseViewportDefaultHeight] = useState(true);
   const [kanbanFullscreen, setKanbanFullscreen] = useState(false);
   const [kanbanCollapsed, setKanbanCollapsed] = useState(false);
+  const [kanbanProjectFilter, setKanbanProjectFilter] =
+    useState(KANBAN_ALL_PROJECTS);
   const [columns, setColumns] = useState<PlanningColumn[]>(() => cloneDefaultColumns());
   const [taskColumnMap, setTaskColumnMap] = useState<Record<string, string>>({});
   const [storageReady, setStorageReady] = useState(false);
@@ -699,13 +730,43 @@ export function PlanningView({
     [columns],
   );
 
+  const kanbanProjectOptions = useMemo(
+    () =>
+      plannerData.projects
+        .slice()
+        .sort((left, right) => left.name.localeCompare(right.name)),
+    [plannerData.projects],
+  );
+
+  useEffect(() => {
+    if (kanbanProjectFilter === KANBAN_ALL_PROJECTS) {
+      return;
+    }
+
+    if (!kanbanProjectOptions.some((project) => project.id === kanbanProjectFilter)) {
+      setKanbanProjectFilter(KANBAN_ALL_PROJECTS);
+    }
+  }, [kanbanProjectFilter, kanbanProjectOptions]);
+
+  const filteredKanbanTasks = useMemo(() => {
+    if (kanbanProjectFilter === KANBAN_ALL_PROJECTS) {
+      return tasks;
+    }
+
+    return tasks.filter(
+      (task) =>
+        task.projectId === kanbanProjectFilter ||
+        task.project?.id === kanbanProjectFilter,
+    );
+  }, [kanbanProjectFilter, tasks]);
+
   const tasksByColumn = useMemo(() => {
     const buckets = new Map<string, PlannerTask[]>();
     for (const column of columns) {
       buckets.set(column.id, []);
     }
 
-    for (const task of tasks) {
+    for (const task of filteredKanbanTasks) {
       const mappedColumnId = taskColumnMap[task.id];
       const mappedColumnVisible = Boolean(
         mappedColumnId && buckets.has(mappedColumnId),
@@ -728,7 +789,7 @@ export function PlanningView({
     }
 
     return buckets;
-  }, [columns, customColumnIds, taskColumnMap, tasks]);
+  }, [columns, customColumnIds, filteredKanbanTasks, taskColumnMap]);
 
   const workloadLabel = `${formatMinutes(workload.scheduledMinutes)} / ${formatMinutes(
     workload.workMinutes,
@@ -1359,9 +1420,31 @@ export function PlanningView({
             ref={kanbanHeaderRef}
             className="flex shrink-0 items-center justify-between border-b border-[var(--border)] px-4 py-2.5 sm:px-6"
           >
-            <h2 className="text-sm font-medium text-[var(--foreground-strong)]">
-              Task Flow
-            </h2>
+            <div className="flex min-w-0 flex-wrap items-center gap-3">
+              <h2 className="text-sm font-medium text-[var(--foreground-strong)]">
+                Task Flow
+              </h2>
+              <label className="relative inline-flex min-w-[11rem] items-center">
+                <span className="sr-only">Filter Task Flow by project</span>
+                <select
+                  value={kanbanProjectFilter}
+                  onChange={(event) => setKanbanProjectFilter(event.target.value)}
+                  className="h-9 w-full appearance-none rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 pr-8 text-sm font-medium text-[var(--foreground-strong)] shadow-sm outline-none transition-colors hover:bg-[var(--surface-muted)] focus:border-[var(--accent-strong)]"
+                  aria-label="Filter Task Flow by project"
+                >
+                  <option value={KANBAN_ALL_PROJECTS}>All projects</option>
+                  {kanbanProjectOptions.map((project) => (
+                    <option key={project.id} value={project.id}>
+                      {project.name}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-2.5 h-4 w-4 text-[var(--muted-foreground)]" />
+              </label>
+              <span className="text-xs font-medium text-[var(--muted-foreground)]">
+                {filteredKanbanTasks.length} tasks
+              </span>
+            </div>
             <div className="flex items-center gap-2">
               <button
                 type="button"

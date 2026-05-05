@@ -8,6 +8,8 @@ const isPublicRoute = createRouteMatcher([
   "/api/webhooks(.*)",
   "/api/v1(.*)",
   "/mcp(.*)",
+  "/.well-known(.*)",
+  "/oauth(.*)",
 ]);
 
 const clerkConfigured = Boolean(

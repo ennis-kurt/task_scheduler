@@ -48,15 +48,19 @@ import { ProjectNotesNotebook } from "@/components/planner/project-notes-noteboo
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import type {
-  NewMilestoneInput,
-  PlannerMilestone,
-  PlannerTask,
-  Priority,
-  ProjectPlan,
-  TaskStatus,
-  UpdateMilestoneInput,
-  UpdateTaskInput,
+import {
+  TASK_STATUS_LABELS,
+  type AreaRecord,
+  type NewMilestoneInput,
+  type PlannerMilestone,
+  type PlannerTask,
+  type Priority,
+  type ProjectPlan,
+  type ProjectStatus,
+  type TaskStatus,
+  type UpdateMilestoneInput,
+  type UpdateProjectInput,
+  type UpdateTaskInput,
 } from "@/lib/planner/types";
 import { cn } from "@/lib/utils";
 import { Icon } from "@iconify/react";
@@ -66,6 +70,7 @@ export type ProjectPlanningSurface = "plan" | "timeline" | "charts" | "notes";
 const MIN_TIMELINE_DAY_WIDTH = 42;
 const LABEL_WIDTH = 240;
 const MIN_TIMELINE_WIDTH = 760;
+const GANTT_DESCRIPTION_LIMIT = 118;
 const COMPACT_MILESTONE_BAR_WIDTH = 156;
 const CHART_COLORS = {
   accent: "#3b82f6",
@@ -75,10 +80,45 @@ const CHART_COLORS = {
   danger: "#fb7185",
   muted: "#94a3b8",
 };
+
+function normalizeMilestoneSummaryText(value: string) {
+  return value
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/[`*_>#-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function truncateText(value: string, maxLength: number) {
+  const text = value.trim();
+
+  if (text.length <= maxLength) {
+    return text;
+  }
+
+  return `${text.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
+}
+
+function summarizeMilestoneDescription(description: string) {
+  const normalized = normalizeMilestoneSummaryText(description);
+
+  if (!normalized) {
+    return "Milestone without a short brief yet.";
+  }
+
+  const sentence = normalized.match(/^[^.!?]+[.!?]/)?.[0]?.trim() ?? "";
+  const candidate =
+    sentence && sentence.length <= GANTT_DESCRIPTION_LIMIT + 24
+      ? sentence
+      : normalized;
+
+  return truncateText(candidate, GANTT_DESCRIPTION_LIMIT);
+}
 const RESPONSIVE_CHART_INITIAL_DIMENSION = { width: 1, height: 1 };
 
 type ProjectPlanningModuleProps = {
   projectPlans: ProjectPlan[];
+  areas: AreaRecord[];
   activeProjectId: string;
   surface: ProjectPlanningSurface;
   isPending: boolean;
@@ -86,6 +126,7 @@ type ProjectPlanningModuleProps = {
   onOpenNewTask: (defaults?: { projectId?: string; milestoneId?: string | null }) => void;
   onOpenNewProject: () => void;
   milestoneComposerOpen: boolean;
+  githubRepoUrls: Record<string, string>;
   onOpenMilestoneComposer: () => void;
   onCloseMilestoneComposer: () => void;
   onCreateMilestone: (input: NewMilestoneInput) => Promise<void>;
@@ -94,6 +135,8 @@ type ProjectPlanningModuleProps = {
     input: UpdateMilestoneInput,
   ) => Promise<void>;
   onDeleteMilestone: (milestoneId: string) => Promise<void>;
+  onUpdateProject: (projectId: string, input: UpdateProjectInput) => Promise<void>;
+  onUpdateProjectGithubRepo: (projectId: string, repoUrl: string) => void;
   onUpdateTask: (taskId: string, input: UpdateTaskInput) => Promise<void>;
 };
 
@@ -120,6 +163,16 @@ type MilestoneEditorState = {
   description: string;
   startDate: string;
   deadline: string;
+};
+
+type ProjectEditorState = {
+  projectId: string;
+  name: string;
+  areaId: string;
+  color: string;
+  status: ProjectStatus;
+  deadlineAt: string;
+  githubRepoUrl: string;
 };
 
 function toInputDate(value: string) {
@@ -418,9 +471,11 @@ function InlineTaskDuePicker({
 }
 
 const STATUS_OPTIONS: Array<{ value: TaskStatus; label: string }> = [
-  { value: "todo", label: "To Do" },
+  { value: "todo", label: TASK_STATUS_LABELS.todo },
   { value: "in_progress", label: "Doing" },
-  { value: "done", label: "Done" },
+  { value: "review", label: TASK_STATUS_LABELS.review },
+  { value: "qa", label: TASK_STATUS_LABELS.qa },
+  { value: "done", label: TASK_STATUS_LABELS.done },
 ];
 
 function InlineTaskStatusPicker({
@@ -748,14 +803,14 @@ function TaskOwnerAvatar({ task, index }: { task: PlannerTask; index: number }) 
 
 function statusLabel(status: PlannerTask["status"]) {
   if (status === "done") {
-    return "Done";
+    return TASK_STATUS_LABELS.done;
   }
 
   if (status === "in_progress") {
     return "Doing";
   }
 
-  return "To Do";
+  return TASK_STATUS_LABELS[status];
 }
 
 function statusClassName(status: PlannerTask["status"]) {
@@ -765,6 +820,14 @@ function statusClassName(status: PlannerTask["status"]) {
 
   if (status === "in_progress") {
     return "border-[var(--border-strong)] bg-[var(--accent-soft)] text-[var(--accent-strong)]";
+  }
+
+  if (status === "review") {
+    return "border-[rgba(124,58,237,0.28)] bg-[rgba(124,58,237,0.10)] text-[color:#7c3aed]";
+  }
+
+  if (status === "qa") {
+    return "border-[rgba(14,165,233,0.28)] bg-[rgba(14,165,233,0.10)] text-[color:#0284c7]";
   }
 
   return "border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)]";
@@ -1131,6 +1194,199 @@ function MilestoneEditor({
   );
 }
 
+function ProjectEditor({
+  project,
+  areas,
+  githubRepoUrl,
+  onClose,
+  onSave,
+  onSaveGithubRepo,
+}: {
+  project: ProjectPlan["project"] | null;
+  areas: AreaRecord[];
+  githubRepoUrl: string;
+  onClose: () => void;
+  onSave: (projectId: string, input: UpdateProjectInput) => Promise<void>;
+  onSaveGithubRepo: (projectId: string, repoUrl: string) => void;
+}) {
+  const [form, setForm] = useState<ProjectEditorState | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    setForm(
+      project
+        ? {
+            projectId: project.id,
+            name: project.name,
+            areaId: project.areaId ?? "",
+            color: project.color,
+            status: project.status,
+            deadlineAt: project.deadlineAt ? toInputDate(project.deadlineAt) : "",
+            githubRepoUrl,
+          }
+        : null,
+    );
+  }, [githubRepoUrl, project]);
+
+  if (!project || !form) {
+    return null;
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 bg-[var(--modal-backdrop)]">
+      <button
+        type="button"
+        className="absolute inset-0"
+        onClick={onClose}
+        aria-label="Close project details"
+      />
+      <div className="absolute inset-x-3 bottom-3 top-6 max-h-[calc(100svh-2.25rem)] overflow-y-auto rounded-[32px] border border-[var(--task-modal-border)] bg-[var(--task-modal-shell)] p-6 text-[var(--foreground)] shadow-[var(--shadow-float)] sm:inset-x-0 sm:top-10 sm:mx-auto sm:max-h-[calc(100svh-5rem)] sm:w-full sm:max-w-xl">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
+              Project
+            </p>
+            <h3 className="mt-1 text-[1.45rem] font-semibold tracking-[-0.04em] text-[var(--foreground-strong)]">
+              Project details
+            </h3>
+          </div>
+          <Button variant="ghost" size="sm" onClick={onClose}>
+            Close
+          </Button>
+        </div>
+
+        <div className="mt-5 grid gap-4">
+          <div className="grid gap-3 rounded-[22px] border border-[var(--task-modal-border)] bg-[var(--task-modal-card)] p-4">
+            <Field label="Project name">
+              <Input
+                value={form.name}
+                onChange={(event) =>
+                  setForm((current) =>
+                    current ? { ...current, name: event.target.value } : current,
+                  )
+                }
+                className="h-10 rounded-[16px] bg-[var(--task-modal-neutral)]"
+              />
+            </Field>
+            <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
+              <Field label="Area">
+                <Select
+                  value={form.areaId}
+                  onChange={(event) =>
+                    setForm((current) =>
+                      current ? { ...current, areaId: event.target.value } : current,
+                    )
+                  }
+                  className="h-10 rounded-[16px] bg-[var(--task-modal-neutral)]"
+                >
+                  <option value="">No area</option>
+                  {areas.map((area) => (
+                    <option key={area.id} value={area.id}>
+                      {area.name}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="Color">
+                <Input
+                  type="color"
+                  value={form.color}
+                  onChange={(event) =>
+                    setForm((current) =>
+                      current ? { ...current, color: event.target.value } : current,
+                    )
+                  }
+                  className="h-10 w-20 rounded-[16px] bg-[var(--task-modal-neutral)] px-2"
+                />
+              </Field>
+            </div>
+          </div>
+
+          <div className="grid gap-3 rounded-[22px] border border-[var(--task-modal-border)] bg-[var(--task-modal-card)] p-4 sm:grid-cols-2">
+            <Field label="Status">
+              <Select
+                value={form.status}
+                onChange={(event) =>
+                  setForm((current) =>
+                    current
+                      ? { ...current, status: event.target.value as ProjectStatus }
+                      : current,
+                  )
+                }
+                className="h-10 rounded-[16px] bg-[var(--task-modal-neutral)]"
+              >
+                <option value="active">Active</option>
+                <option value="completed">Completed</option>
+                <option value="archived">Archived</option>
+              </Select>
+            </Field>
+            <Field label="Deadline">
+              <Input
+                type="date"
+                value={form.deadlineAt}
+                onChange={(event) =>
+                  setForm((current) =>
+                    current ? { ...current, deadlineAt: event.target.value } : current,
+                  )
+                }
+                className="h-10 rounded-[16px] bg-[var(--task-modal-neutral)]"
+              />
+            </Field>
+          </div>
+
+          <div className="grid gap-3 rounded-[22px] border border-[var(--task-modal-border)] bg-[var(--task-modal-card)] p-4">
+            <Field
+              label="GitHub repository"
+              description="Use org/repo or a GitHub repository URL. Task issue creation uses this link."
+            >
+              <Input
+                value={form.githubRepoUrl}
+                onChange={(event) =>
+                  setForm((current) =>
+                    current ? { ...current, githubRepoUrl: event.target.value } : current,
+                  )
+                }
+                placeholder="https://github.com/org/repo"
+                className="h-10 rounded-[16px] bg-[var(--task-modal-neutral)]"
+              />
+            </Field>
+          </div>
+        </div>
+
+        <div className="mt-5 flex justify-end gap-2 border-t border-[var(--border)] pt-4">
+          <Button variant="outline" size="sm" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            size="sm"
+            disabled={submitting || !form.name.trim()}
+            onClick={async () => {
+              setSubmitting(true);
+              try {
+                await onSave(form.projectId, {
+                  name: form.name.trim(),
+                  areaId: form.areaId || null,
+                  color: form.color,
+                  status: form.status,
+                  deadlineAt: form.deadlineAt
+                    ? dateInputToIso(form.deadlineAt)
+                    : null,
+                });
+                onSaveGithubRepo(form.projectId, form.githubRepoUrl);
+                onClose();
+              } finally {
+                setSubmitting(false);
+              }
+            }}
+          >
+            Save project
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function MilestoneActionMenu({
   milestone,
   onEdit,
@@ -1187,6 +1443,7 @@ function MilestoneActionMenu({
 
 export function ProjectPlanningModule({
   projectPlans,
+  areas,
   activeProjectId,
   surface,
   isPending,
@@ -1194,16 +1451,20 @@ export function ProjectPlanningModule({
   onOpenNewTask,
   onOpenNewProject,
   milestoneComposerOpen,
+  githubRepoUrls,
   onOpenMilestoneComposer,
   onCloseMilestoneComposer,
   onCreateMilestone,
   onUpdateMilestone,
   onDeleteMilestone,
+  onUpdateProject,
+  onUpdateProjectGithubRepo,
   onUpdateTask,
 }: ProjectPlanningModuleProps) {
   const [activeTab, setActiveTab] = useState<ProjectPlanningSurface>(surface || "plan");
   const [expandedMilestoneId, setExpandedMilestoneId] = useState<string | null>(null);
   const [editorState, setEditorState] = useState<MilestoneEditorState | null>(null);
+  const [projectEditorOpen, setProjectEditorOpen] = useState(false);
   const [draftMilestones, setDraftMilestones] = useState<
     Record<string, { startDate: string; deadline: string }>
   >({});
@@ -1240,6 +1501,7 @@ export function ProjectPlanningModule({
   useEffect(() => {
     setExpandedMilestoneId(null);
     setEditorState(null);
+    setProjectEditorOpen(false);
   }, [activeProjectId]);
 
   useEffect(() => {
@@ -1372,6 +1634,10 @@ export function ProjectPlanningModule({
         ? CHART_COLORS.success
         : entry.status === "in_progress"
           ? CHART_COLORS.accent
+          : entry.status === "review"
+            ? "#8b5cf6"
+            : entry.status === "qa"
+              ? "#0ea5e9"
           : CHART_COLORS.warning,
   }));
   const plottedMilestones = activeProject.plottedMilestones;
@@ -1415,6 +1681,14 @@ export function ProjectPlanningModule({
         onSave={onUpdateMilestone}
         onDelete={onDeleteMilestone}
       />
+      <ProjectEditor
+        project={projectEditorOpen ? activeProject.project : null}
+        areas={areas}
+        githubRepoUrl={githubRepoUrls[activeProject.project.id] ?? ""}
+        onClose={() => setProjectEditorOpen(false)}
+        onSave={onUpdateProject}
+        onSaveGithubRepo={onUpdateProjectGithubRepo}
+      />
 
       <header className="shrink-0 border-b border-[var(--border)] bg-[var(--surface)]">
         <div className="flex min-h-14 flex-col items-stretch gap-3 px-4 py-3 sm:h-14 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:py-0">
@@ -1426,16 +1700,12 @@ export function ProjectPlanningModule({
             <h1 className="truncate text-xl font-semibold tracking-[-0.02em] text-[var(--foreground-strong)]">
               {activeProject.project.name}
             </h1>
-            <Icon
-              icon="solar:alt-arrow-down-linear"
-              width="16"
-              className="shrink-0 text-[var(--muted-foreground)]"
-            />
           </div>
 
           <div className="flex min-w-0 shrink-0 items-center gap-2 overflow-x-auto pb-0.5 sm:gap-2.5 sm:overflow-visible sm:pb-0">
             <button
               type="button"
+              onClick={() => setProjectEditorOpen(true)}
               className="flex h-8 shrink-0 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-xs font-medium text-[var(--muted-foreground)] shadow-sm transition hover:border-[var(--border-strong)] hover:text-[var(--foreground-strong)]"
             >
               <Icon icon="solar:tuning-2-linear" width="16" />
@@ -1529,8 +1799,15 @@ export function ProjectPlanningModule({
                 className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)] shadow-[var(--shadow-soft)]"
               >
                 <div
-                  className="group flex flex-col items-stretch gap-3 border-b border-[var(--border)] bg-[var(--surface-muted)] px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:px-4"
-                  onClick={() => openMilestoneEditor(milestone)}
+                  className={cn(
+                    "group flex flex-col items-stretch gap-3 border-b border-[var(--border)] bg-[var(--surface-muted)] px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:px-4",
+                    !milestone.synthetic && "cursor-pointer",
+                  )}
+                  onClick={() => {
+                    if (!milestone.synthetic) {
+                      openMilestoneEditor(milestone);
+                    }
+                  }}
                 >
                   <div className="flex min-w-0 items-center gap-3">
                     <Icon icon="solar:alt-arrow-down-linear" width="16" className="text-[var(--muted-foreground)] group-hover:text-[var(--foreground-strong)] transition-colors" />
@@ -1599,8 +1876,17 @@ export function ProjectPlanningModule({
 	                      onClick={() => onOpenTask(task.id)}
 	                    >
                       <div className="flex min-w-0 items-center gap-3">
-                        <label className="relative flex items-center cursor-pointer" onClick={(e) => { e.stopPropagation(); }}>
-                          <input type="checkbox" className="peer sr-only task-checkbox" checked={task.status === "done"} onChange={() => {}} />
+                        <label className="relative flex cursor-pointer items-center" onClick={(event) => event.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            className="peer sr-only task-checkbox"
+                            checked={task.status === "done"}
+                            onChange={(event) =>
+                              onUpdateTask(task.id, {
+                                status: event.target.checked ? "done" : "todo",
+                              })
+                            }
+                          />
                           <div className="flex h-4 w-4 items-center justify-center rounded border-2 border-[var(--border)] bg-[var(--surface)] transition-all peer-checked:border-[var(--foreground-strong)] peer-checked:bg-[var(--foreground-strong)]">
                             <Icon icon="solar:check-read-linear" width="12" className="absolute text-[var(--surface)] opacity-0 transition-all" />
                           </div>
@@ -2002,6 +2288,7 @@ export function ProjectPlanningModule({
                 const isCompactBar = width < COMPACT_MILESTONE_BAR_WIDTH;
                 const isExpanded = expandedMilestoneId === milestone.id;
                 const canEditMilestone = !milestone.synthetic;
+                const milestoneSummary = summarizeMilestoneDescription(milestone.description);
 
                 return (
                   <Fragment key={milestone.id}>
@@ -2015,8 +2302,11 @@ export function ProjectPlanningModule({
                             <p className="truncate text-[14px] font-semibold text-[var(--foreground-strong)]">
                               {milestone.name}
                             </p>
-                            <p className="mt-1 text-[12px] leading-5 text-[var(--muted-foreground)]">
-                              {milestone.description || "Milestone without a short brief yet."}
+                            <p
+                              className="mt-1 text-[12px] leading-5 text-[var(--muted-foreground)]"
+                              title={milestone.description || undefined}
+                            >
+                              {milestoneSummary}
                             </p>
                           </div>
                           <div className="flex items-center gap-1">

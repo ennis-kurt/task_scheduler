@@ -9,6 +9,7 @@ import {
 } from "date-fns";
 
 import { DEFAULT_SETTINGS, SAVED_FILTERS } from "@/lib/planner/constants";
+import { listAgentRunners, listAgentRuns, listProjectAgentLinks } from "@/lib/agent-runs";
 import { getSessionContext } from "@/lib/auth";
 import { buildDefaultRange, calculateMinutes, expandRecurrence } from "@/lib/planner/date";
 import { buildProjectPlans } from "@/lib/planner/project-planning";
@@ -28,6 +29,11 @@ export async function getInitialPlannerPayload(range?: PlannerRange) {
   }
 
   const workspace = await plannerRepository.getWorkspace(session.userId);
+  const [agentRunners, projectAgentLinks, agentRuns] = await Promise.all([
+    listAgentRunners(session.userId),
+    listProjectAgentLinks(session.userId),
+    listAgentRuns(session.userId),
+  ]);
   const effectiveRange = range ?? buildDefaultRange(workspace.settings.weekStart);
   const primaryBlocksByTask = new Map(
     workspace.taskBlocks.map((block) => [
@@ -189,5 +195,8 @@ export async function getInitialPlannerPayload(range?: PlannerRange) {
     todayCount,
     unscheduledCount: unscheduledTasks.length,
     savedFilters: SAVED_FILTERS,
+    agentRunners,
+    projectAgentLinks,
+    agentRuns,
   } satisfies PlannerPayload;
 }

@@ -21,6 +21,10 @@ export function handleRouteError(error: unknown) {
     return NextResponse.json({ error: "NOT_FOUND" }, { status: 404 });
   }
 
+  if (error instanceof Error && error.message === "FORBIDDEN") {
+    return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
+  }
+
   if (
     error instanceof Error &&
     ["PROJECT_SCOPE_REQUIRED", "INVALID_PROJECT_SCOPE"].includes(error.message)

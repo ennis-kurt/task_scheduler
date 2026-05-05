@@ -18,14 +18,8 @@ import type {
   ProjectBurndownPoint,
   ProjectPlan,
   ProjectRecord,
-  TaskStatus,
 } from "@/lib/planner/types";
-
-const STATUS_LABELS: Record<TaskStatus, string> = {
-  todo: "To do",
-  in_progress: "In progress",
-  done: "Done",
-};
+import { TASK_STATUSES, TASK_STATUS_LABELS } from "@/lib/planner/types";
 
 function taskWeight(task: PlannerTask) {
   return Math.max(task.estimatedMinutes, 15);
@@ -255,9 +249,9 @@ export function buildProjectPlans(
         completedMinutes,
         totalMinutes,
         remainingMinutes: Math.max(totalMinutes - completedMinutes, 0),
-        statusBreakdown: (["todo", "in_progress", "done"] as TaskStatus[]).map((status) => ({
+        statusBreakdown: TASK_STATUSES.map((status) => ({
           status,
-          label: STATUS_LABELS[status],
+          label: TASK_STATUS_LABELS[status],
           count: projectTasks.filter((task) => task.status === status).length,
           minutes: projectTasks
             .filter((task) => task.status === status)

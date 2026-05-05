@@ -36,7 +36,7 @@ import {
   type PersistedFocusPhase as FocusPhase,
   type PersistedFocusPhaseKind as FocusPhaseKind,
 } from "@/lib/planner/focus-session";
-import type { PlannerTask, TaskStatus } from "@/lib/planner/types";
+import { TASK_STATUS_LABELS, type PlannerTask, type TaskStatus } from "@/lib/planner/types";
 import { cn } from "@/lib/utils";
 
 type SprintProfileId =
@@ -87,15 +87,10 @@ export type FocusViewProps = {
 const DEFAULT_COLUMNS: FocusColumn[] = [
   { id: "todo", kind: "status", label: "To Do", status: "todo" },
   { id: "in_progress", kind: "status", label: "In Progress", status: "in_progress" },
-  { id: "review", kind: "custom", label: "Review" },
+  { id: "review", kind: "status", label: "Review", status: "review" },
+  { id: "qa", kind: "status", label: "QA", status: "qa" },
   { id: "done", kind: "status", label: "Done", status: "done" },
 ];
-
-const STATUS_LABELS: Record<TaskStatus, string> = {
-  todo: "To Do",
-  in_progress: "In Progress",
-  done: "Done",
-};
 
 const RING_RADIUS = 166;
 const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
@@ -225,7 +220,13 @@ function buildCustomProfile(
 }
 
 function isTaskStatus(value: unknown): value is TaskStatus {
-  return value === "todo" || value === "in_progress" || value === "done";
+  return (
+    value === "todo" ||
+    value === "in_progress" ||
+    value === "review" ||
+    value === "qa" ||
+    value === "done"
+  );
 }
 
 function normalizeColumns(value: unknown): FocusColumn[] {
@@ -255,7 +256,7 @@ function normalizeColumns(value: unknown): FocusColumn[] {
       columns.push({
         id,
         kind: "status",
-        label: label || STATUS_LABELS[id],
+        label: label || TASK_STATUS_LABELS[id],
         status: id,
       });
       seen.add(id);
@@ -296,8 +297,10 @@ function normalizeTaskColumnMap(value: unknown) {
 function compareTasks(left: PlannerTask, right: PlannerTask) {
   const statusOrder: Record<TaskStatus, number> = {
     in_progress: 0,
-    todo: 1,
-    done: 2,
+    review: 1,
+    qa: 2,
+    todo: 3,
+    done: 4,
   };
 
   return (

@@ -5,6 +5,9 @@
   "scripts": {
     "dev": "next dev",
     "dev:demo": "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY= CLERK_SECRET_KEY= DATABASE_URL= PLANNER_DEMO_STORE_PATH=.planner-demo-store.json next dev",
+    "runner:dev": "pnpm --filter @inflara/runner-desktop dev",
+    "runner:build": "pnpm --filter @inflara/runner-desktop build",
+    "runner:typecheck": "pnpm --filter @inflara/runner-desktop typecheck",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",

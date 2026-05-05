@@ -3,7 +3,6 @@ import {
   differenceInCalendarDays,
   differenceInMinutes,
   format,
-  isSameDay,
   parseISO,
 } from "date-fns";
 
@@ -97,6 +96,9 @@ type ModeConfig = {
   focusBlockMinutes: number;
   maxTaskMinutes: number;
   breakMinutes: number;
+  minBreakMinutes: number;
+  startBufferMinutes: number;
+  endBufferMinutes: number;
   summary: string;
 };
 
@@ -145,16 +147,22 @@ function modeConfig(mode: PlanningMode, custom?: CustomPlanningPreferences): Mod
       focusBlockMinutes: 105,
       maxTaskMinutes: 120,
       breakMinutes: 10,
+      minBreakMinutes: 5,
+      startBufferMinutes: 0,
+      endBufferMinutes: 0,
       summary: "Today’s plan uses longer focus blocks and fewer gaps for deeper work.",
     };
   }
 
   if (mode === "chill") {
     return {
-      fillRatio: 0.62,
-      focusBlockMinutes: 45,
-      maxTaskMinutes: 60,
-      breakMinutes: 20,
+      fillRatio: 0.55,
+      focusBlockMinutes: 40,
+      maxTaskMinutes: 55,
+      breakMinutes: 25,
+      minBreakMinutes: 20,
+      startBufferMinutes: 10,
+      endBufferMinutes: 10,
       summary: "Today’s plan protects energy with lighter blocks and more breathing room.",
     };
   }
@@ -168,6 +176,9 @@ function modeConfig(mode: PlanningMode, custom?: CustomPlanningPreferences): Mod
       focusBlockMinutes: Number.isFinite(sessionLength) ? Math.min(120, Math.max(25, sessionLength)) : 60,
       maxTaskMinutes: Number.isFinite(sessionLength) ? Math.min(150, Math.max(30, sessionLength)) : 75,
       breakMinutes: intensity.includes("intense") ? 10 : 15,
+      minBreakMinutes: intensity.includes("intense") ? 5 : 10,
+      startBufferMinutes: intensity.includes("light") || intensity.includes("chill") ? 10 : 0,
+      endBufferMinutes: intensity.includes("light") || intensity.includes("chill") ? 10 : 0,
       summary: "Today’s plan follows your custom scheduling preferences.",
     };
   }
@@ -177,6 +188,9 @@ function modeConfig(mode: PlanningMode, custom?: CustomPlanningPreferences): Mod
     focusBlockMinutes: 75,
     maxTaskMinutes: 90,
     breakMinutes: 15,
+    minBreakMinutes: 10,
+    startBufferMinutes: 0,
+    endBufferMinutes: 0,
     summary: "Today’s plan balances urgent work, project progress, and breaks.",
   };
 }
@@ -196,10 +210,68 @@ function minutesToTime(minutes: number) {
   return `${String(hours).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`;
 }
 
-function itemStartsOnDate(item: PlannerCalendarItem, date: string) {
-  const day = parseISO(`${date}T12:00:00`);
+function dateTimePartsInTimezone(value: Date, timezone: string) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(value);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+
+  return {
+    date: `${values.year}-${values.month}-${values.day}`,
+    minutes:
+      Number.parseInt(values.hour ?? "0", 10) * 60 +
+      Number.parseInt(values.minute ?? "0", 10),
+  };
+}
+
+function nowInTimezone(timezone: string) {
+  return dateTimePartsInTimezone(new Date(), timezone);
+}
+
+function roundUpToPlanningSlot(minutes: number) {
+  return Math.ceil(minutes / 5) * 5;
+}
+
+function eventBusyWindowForDate(
+  item: PlannerCalendarItem,
+  date: string,
+  timezone: string,
+) {
   const start = parseISO(item.start);
-  return !Number.isNaN(start.getTime()) && isSameDay(start, day);
+  const end = parseISO(item.end);
+
+  if (
+    Number.isNaN(start.getTime()) ||
+    Number.isNaN(end.getTime()) ||
+    end.getTime() <= start.getTime()
+  ) {
+    return null;
+  }
+
+  const localStart = dateTimePartsInTimezone(start, timezone);
+  const localEnd = dateTimePartsInTimezone(end, timezone);
+
+  if (localEnd.date < date || localStart.date > date) {
+    return null;
+  }
+
+  const windowStart = localStart.date < date ? 0 : localStart.minutes;
+  const windowEnd = localEnd.date > date ? 24 * 60 : localEnd.minutes;
+
+  if (windowEnd <= windowStart) {
+    return null;
+  }
+
+  return {
+    start: windowStart,
+    end: windowEnd,
+  };
 }
 
 function nearestDeadline(task: PlannerTask) {
@@ -306,21 +378,24 @@ function subtractBusyWindows(
 
 function freeWindowsForDay(request: DailyPlanRequest) {
   const workWindow = getWorkWindow(request);
+  const timezoneNow = nowInTimezone(request.timezone);
+  const currentDayStart =
+    timezoneNow.date === request.date
+      ? Math.max(workWindow.startMinutes, roundUpToPlanningSlot(timezoneNow.minutes))
+      : workWindow.startMinutes;
+
+  if (currentDayStart >= workWindow.endMinutes) {
+    return [];
+  }
+
   const fixedBusy = request.scheduledItems
-    .filter((item) => item.source === "event" && itemStartsOnDate(item, request.date))
-    .map((item) => {
-      const start = parseISO(item.start);
-      const end = parseISO(item.end);
-      return {
-        start: start.getHours() * 60 + start.getMinutes(),
-        end: end.getHours() * 60 + end.getMinutes(),
-      };
-    })
-    .filter((window) => window.end > window.start)
+    .filter((item) => item.source === "event")
+    .map((item) => eventBusyWindowForDate(item, request.date, request.timezone))
+    .filter((window) => window !== null)
     .sort((a, b) => a.start - b.start);
 
   return subtractBusyWindows(
-    [{ start: workWindow.startMinutes, end: workWindow.endMinutes }],
+    [{ start: currentDayStart, end: workWindow.endMinutes }],
     fixedBusy,
   );
 }
@@ -392,9 +467,10 @@ export function generateDeterministicDailyPlan(request: DailyPlanRequest): Daily
   let scheduledWorkMinutes = 0;
 
   for (const window of windows) {
-    let cursor = window.start;
+    let cursor = Math.min(window.end, window.start + config.startBufferMinutes);
+    const windowEnd = Math.max(cursor, window.end - config.endBufferMinutes);
 
-    while (taskIndex < candidates.length && cursor + 15 <= window.end) {
+    while (taskIndex < candidates.length && cursor + 15 <= windowEnd) {
       const task = candidates[taskIndex];
       const remainingBudget = targetWorkMinutes - scheduledWorkMinutes;
 
@@ -407,7 +483,7 @@ export function generateDeterministicDailyPlan(request: DailyPlanRequest): Daily
         requestedMinutes,
         config.maxTaskMinutes,
         remainingBudget,
-        window.end - cursor,
+        windowEnd - cursor,
       );
 
       if (duration < 15) {
@@ -431,18 +507,22 @@ export function generateDeterministicDailyPlan(request: DailyPlanRequest): Daily
 
       if (
         taskIndex < candidates.length &&
-        cursor + config.breakMinutes + 15 <= window.end &&
+        cursor + config.minBreakMinutes + 15 <= windowEnd &&
         scheduledWorkMinutes < targetWorkMinutes
       ) {
+        const breakMinutes = Math.min(
+          config.breakMinutes,
+          Math.max(config.minBreakMinutes, windowEnd - cursor - 15),
+        );
         schedule.push({
           start_time: minutesToTime(cursor),
-          end_time: minutesToTime(cursor + config.breakMinutes),
+          end_time: minutesToTime(cursor + breakMinutes),
           type: "break",
           task_id: null,
           task_title: "Break",
-          reason: `${config.breakMinutes} minute recovery gap.`,
+          reason: `${breakMinutes} minute recovery gap.`,
         });
-        cursor += config.breakMinutes;
+        cursor += breakMinutes;
       }
     }
   }

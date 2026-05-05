@@ -16,7 +16,8 @@ export async function PATCH(request: Request, context: RouteContext) {
   try {
     const userId = await requireUserId();
     const { projectId, notePageId } = await context.params;
-    const input = updateProjectNotePageSchema.parse(await request.json());
+    const body = await request.text();
+    const input = updateProjectNotePageSchema.parse(body.trim() ? JSON.parse(body) : {});
     const note = await notePagesRepository.update(userId, projectId, notePageId, input);
     return success(note);
   } catch (error) {

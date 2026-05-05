@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { TASK_STATUSES } from "@/lib/planner/types";
+
 const recurrenceSchema = z
   .object({
     frequency: z.enum(["none", "daily", "weekly", "monthly", "weekdays"]),
@@ -46,7 +48,7 @@ const taskBaseSchema = z.object({
   recurrence: recurrenceSchema,
   startsAt: z.string().datetime().nullable().optional(),
   endsAt: z.string().datetime().nullable().optional(),
-  status: z.enum(["todo", "in_progress", "done"]).optional(),
+  status: z.enum(TASK_STATUSES).optional(),
   availability: z.enum(["ready", "later"]).optional(),
   completedAt: z.string().datetime().nullable().optional(),
   addToProjectNotes: z.boolean().optional(),

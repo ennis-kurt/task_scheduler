@@ -394,6 +394,10 @@ export const databaseRepository = {
       checklistItems: checklistRows.map(mapChecklistItem),
       taskTags: taskTagRows.map(mapTaskTag),
       apiAccessTokens: [],
+      agentRunners: [],
+      projectAgentLinks: [],
+      agentRuns: [],
+      agentRunEvents: [],
     };
   },
 

@@ -4,12 +4,12 @@ import {
   listRemoteTasks,
 } from "@/lib/remote-agent-planner";
 import { taskSchema } from "@/lib/planner/validators";
-import type { TaskStatus } from "@/lib/planner/types";
+import { TASK_STATUSES, type TaskStatus } from "@/lib/planner/types";
 
-const TASK_STATUSES = new Set(["todo", "in_progress", "done"]);
+const TASK_STATUS_SET = new Set(TASK_STATUSES);
 
 function parseTaskStatus(value: string | null): TaskStatus | null {
-  return value && TASK_STATUSES.has(value) ? (value as TaskStatus) : null;
+  return value && TASK_STATUS_SET.has(value as TaskStatus) ? (value as TaskStatus) : null;
 }
 
 export async function GET(request: Request) {
