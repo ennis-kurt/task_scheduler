@@ -212,6 +212,40 @@ async function installChimeSpy(page: Page) {
   });
 }
 
+async function readCalendarResizeMetrics(
+  page: Page,
+  eventClassName: string,
+  title: string,
+) {
+  const event = page
+    .locator(`.planning-calendar-shell .fc-event.${eventClassName}`, { hasText: title })
+    .first();
+  await expect(event).toBeVisible();
+
+  return event.evaluate((element) => {
+    const resizer = element.querySelector<HTMLElement>(".fc-event-resizer-end");
+    if (!resizer) return null;
+
+    const eventRect = element.getBoundingClientRect();
+    const resizerRect = resizer.getBoundingClientRect();
+    const resizerStyle = window.getComputedStyle(resizer);
+    const beforeStyle = window.getComputedStyle(resizer, "::before");
+    const afterStyle = window.getComputedStyle(resizer, "::after");
+
+    return {
+      cursor: resizerStyle.cursor,
+      eventWidth: eventRect.width,
+      handleHeight: resizerRect.height,
+      handleWidth: resizerRect.width,
+      leftInset: resizerRect.left - eventRect.left,
+      rightInset: eventRect.right - resizerRect.right,
+      bottomInset: eventRect.bottom - resizerRect.bottom,
+      bottomRuleHeight: Number.parseFloat(beforeStyle.height),
+      gripWidth: Number.parseFloat(afterStyle.width),
+    };
+  });
+}
+
 async function createAgentToken(
   request: APIRequestContext,
   name = "E2E remote agent",
@@ -2216,6 +2250,34 @@ test("calendar detail editors resync task and event schedule changes", async ({ 
       .filter({ hasText: /^Start/ })
       .getByRole("button"),
   ).toContainText("4:00 PM");
+});
+
+test("calendar task and event resize handles span the bottom edge", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Planning", exact: true }).click();
+
+  const taskMetrics = await readCalendarResizeMetrics(
+    page,
+    "planner-task-event",
+    "Outline the planner onboarding",
+  );
+  const eventMetrics = await readCalendarResizeMetrics(
+    page,
+    "planner-meeting-event",
+    "Project review",
+  );
+
+  for (const metrics of [taskMetrics, eventMetrics]) {
+    expect(metrics).not.toBeNull();
+    expect(metrics!.cursor).toBe("ns-resize");
+    expect(metrics!.handleWidth).toBeGreaterThan(metrics!.eventWidth * 0.74);
+    expect(metrics!.handleHeight).toBeGreaterThanOrEqual(12);
+    expect(metrics!.leftInset).toBeLessThanOrEqual(12);
+    expect(metrics!.rightInset).toBeLessThanOrEqual(12);
+    expect(Math.abs(metrics!.bottomInset)).toBeLessThanOrEqual(2);
+    expect(metrics!.bottomRuleHeight).toBeGreaterThanOrEqual(2);
+    expect(metrics!.gripWidth).toBeGreaterThanOrEqual(20);
+  }
 });
 
 test("calendar event starts and restored focus completions play chimes", async ({
