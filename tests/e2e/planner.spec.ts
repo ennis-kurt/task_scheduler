@@ -117,6 +117,23 @@ type ApiEnvelope<T> = {
   data: T;
 };
 
+type FocusSessionApiResponse = {
+  session: {
+    selectedTaskId: string | null;
+    selectedProfileId: string;
+    running: boolean;
+    remainingSeconds: number;
+    updatedAt: string;
+  } | null;
+  history: Array<{
+    id: string;
+    taskId: string | null;
+    taskTitle: string;
+    minutes: number;
+    completedAt: string;
+  }>;
+};
+
 type McpResponse = {
   id?: number | string;
   result?: {
@@ -464,6 +481,83 @@ test("focus view selects a task, marks it in progress, and starts a sprint", asy
       return snapshot.tasks.find((task) => task.title === "Review overdue follow-ups")?.status;
     })
     .toBe("in_progress");
+});
+
+test("focus session API syncs active timer state and history across clients", async ({
+  page,
+  request,
+}) => {
+  const updatedAt = new Date().toISOString();
+  const completedAt = new Date(Date.now() - 60_000).toISOString();
+
+  await expectJson<FocusSessionApiResponse>(
+    await request.patch("/api/focus-session", {
+      data: {
+        session: {
+          version: 1,
+          selectedTaskId: "task-plan",
+          selectedProfileId: "dynamic",
+          profileName: "Dynamic Ramp",
+          customFocusMinutes: 38,
+          customBreakMinutes: 5,
+          customLongBreakMinutes: 15,
+          customRounds: 4,
+          phaseIndex: 0,
+          remainingSeconds: 120,
+          running: true,
+          phases: [
+            {
+              id: "dynamic-focus-1",
+              kind: "focus",
+              label: "Work 1",
+              minutes: 10,
+            },
+            {
+              id: "dynamic-break-1",
+              kind: "break",
+              label: "Break",
+              minutes: 3,
+            },
+          ],
+          updatedAt,
+        },
+        history: [
+          {
+            id: "focus-history-synced",
+            taskId: "task-plan",
+            taskTitle: "Daily planning reset",
+            projectName: "Planner MVP",
+            profileName: "Dynamic Ramp",
+            minutes: 10,
+            completedAt,
+          },
+        ],
+      },
+    }),
+    200,
+  );
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Planning", exact: true }).click();
+
+  const globalFocusTimer = page.getByTestId("global-focus-timer");
+  await expect(globalFocusTimer).toBeVisible();
+  await expect(globalFocusTimer).toContainText("Focus");
+
+  await page.getByRole("button", { name: "Focus", exact: true }).click();
+  await expect(page.getByTestId("focus-view")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Daily planning reset" })).toBeVisible();
+  await expect(page.getByText("10 min").first()).toBeVisible();
+
+  const synced = await expectJson<FocusSessionApiResponse>(
+    await request.get("/api/focus-session"),
+    200,
+  );
+  expect(synced.session?.selectedTaskId).toBe("task-plan");
+  expect(synced.session?.running).toBe(true);
+  expect(synced.history.some((record) => record.id === "focus-history-synced")).toBe(
+    true,
+  );
 });
 
 test("project notes support markdown blocks, comments, and cloud persistence", async ({
@@ -1894,6 +1988,35 @@ test("project design inline date, status, and priority controls persist without 
       return snapshot.tasks.find((task) => task.id === "task-plan")?.dueAt?.slice(0, 10) ?? null;
     })
     .toBe("2026-05-08");
+});
+
+test("project design task search replaces the inactive filter", async ({ page }) => {
+  await page.goto("/");
+  await page.locator("aside").getByRole("button", { name: "Planner MVP", exact: true }).click();
+
+  const projectModule = page.locator("[data-project-planning-module]");
+  await expect(projectModule.getByRole("button", { name: "Filter" })).toHaveCount(0);
+
+  const search = projectModule.getByTestId("project-task-search");
+  await expect(search).toBeVisible();
+  await search.fill("Outline Planner Onboardng");
+  await expect(projectModule.getByTestId("project-task-search-count")).toContainText(
+    "1 matching task",
+  );
+  await expect(projectModule.getByTestId("project-task-row-task-outline")).toBeVisible();
+  await expect(projectModule.getByTestId("project-task-row-task-review")).toHaveCount(0);
+
+  await search.fill("approve-plannerkickoff");
+  await expect(projectModule.getByTestId("project-task-search-count")).toContainText(
+    "1 matching task",
+  );
+  await expect(projectModule.getByTestId("project-task-row-task-kickoff")).toBeVisible();
+  await expect(projectModule.getByTestId("project-task-row-task-outline")).toHaveCount(0);
+
+  await projectModule.getByTestId("project-task-search-clear").click();
+  await expect(projectModule.getByTestId("project-task-search-count")).toHaveCount(0);
+  await expect(projectModule.getByTestId("project-task-row-task-outline")).toBeVisible();
+  await expect(projectModule.getByTestId("project-task-row-task-kickoff")).toBeVisible();
 });
 
 test("planning kanban supports custom columns, local task columns, and collapse", async ({

@@ -1,6 +1,14 @@
 "use client";
 
-import { Fragment, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  type ReactNode,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   addDays,
   differenceInCalendarDays,
@@ -34,9 +42,11 @@ import {
   MoreHorizontal,
   Pencil,
   Plus,
+  Search,
   Target,
   TrendingDown,
   Trash2,
+  X,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -80,6 +90,84 @@ const CHART_COLORS = {
   danger: "#fb7185",
   muted: "#94a3b8",
 };
+
+function normalizeTaskSearchValue(value: string) {
+  return value
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[\s_-]+/g, "")
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function levenshteinDistance(left: string, right: string) {
+  if (left === right) return 0;
+  if (!left.length) return right.length;
+  if (!right.length) return left.length;
+
+  const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  const current = Array.from({ length: right.length + 1 }, () => 0);
+
+  for (let leftIndex = 1; leftIndex <= left.length; leftIndex += 1) {
+    current[0] = leftIndex;
+
+    for (let rightIndex = 1; rightIndex <= right.length; rightIndex += 1) {
+      const substitutionCost = left[leftIndex - 1] === right[rightIndex - 1] ? 0 : 1;
+      current[rightIndex] = Math.min(
+        current[rightIndex - 1] + 1,
+        previous[rightIndex] + 1,
+        previous[rightIndex - 1] + substitutionCost,
+      );
+    }
+
+    for (let index = 0; index < previous.length; index += 1) {
+      previous[index] = current[index];
+    }
+  }
+
+  return previous[right.length];
+}
+
+function fuzzyIncludesTaskTerm(haystack: string, needle: string) {
+  if (!needle) return true;
+  if (haystack.includes(needle)) return true;
+
+  const maxDistance = needle.length <= 4 ? 1 : Math.min(2, Math.ceil(needle.length * 0.24));
+
+  if (levenshteinDistance(haystack, needle) <= maxDistance) {
+    return true;
+  }
+
+  if (needle.length > haystack.length) {
+    return levenshteinDistance(haystack, needle) <= maxDistance;
+  }
+
+  for (let index = 0; index <= haystack.length - needle.length; index += 1) {
+    const segment = haystack.slice(index, index + needle.length);
+    if (levenshteinDistance(segment, needle) <= maxDistance) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function taskMatchesProjectSearch(taskTitle: string, query: string) {
+  const trimmedQuery = query.trim();
+  if (!trimmedQuery) return true;
+
+  const normalizedTitle = normalizeTaskSearchValue(taskTitle);
+  const normalizedQuery = normalizeTaskSearchValue(trimmedQuery);
+  const normalizedTerms = trimmedQuery
+    .split(/\s+/)
+    .map(normalizeTaskSearchValue)
+    .filter(Boolean);
+
+  return (
+    fuzzyIncludesTaskTerm(normalizedTitle, normalizedQuery) ||
+    normalizedTerms.every((term) => fuzzyIncludesTaskTerm(normalizedTitle, term))
+  );
+}
 
 function normalizeMilestoneSummaryText(value: string) {
   return value
@@ -1462,6 +1550,8 @@ export function ProjectPlanningModule({
   onUpdateTask,
 }: ProjectPlanningModuleProps) {
   const [activeTab, setActiveTab] = useState<ProjectPlanningSurface>(surface || "plan");
+  const [projectTaskSearch, setProjectTaskSearch] = useState("");
+  const deferredProjectTaskSearch = useDeferredValue(projectTaskSearch);
   const [expandedMilestoneId, setExpandedMilestoneId] = useState<string | null>(null);
   const [editorState, setEditorState] = useState<MilestoneEditorState | null>(null);
   const [projectEditorOpen, setProjectEditorOpen] = useState(false);
@@ -1502,6 +1592,7 @@ export function ProjectPlanningModule({
     setExpandedMilestoneId(null);
     setEditorState(null);
     setProjectEditorOpen(false);
+    setProjectTaskSearch("");
   }, [activeProjectId]);
 
   useEffect(() => {
@@ -1593,6 +1684,30 @@ export function ProjectPlanningModule({
     };
   }, [activeProject, draftMilestones, dragState, onUpdateMilestone, timelineDayWidth]);
 
+  const plottedMilestones = useMemo(
+    () => activeProject?.plottedMilestones ?? [],
+    [activeProject],
+  );
+  const normalizedProjectTaskSearch = deferredProjectTaskSearch.trim();
+  const visibleProjectMilestones = useMemo(() => {
+    if (!normalizedProjectTaskSearch) {
+      return plottedMilestones;
+    }
+
+    return plottedMilestones
+      .map((milestone) => ({
+        ...milestone,
+        tasks: milestone.tasks.filter((task) =>
+          taskMatchesProjectSearch(task.title, normalizedProjectTaskSearch),
+        ),
+      }))
+      .filter((milestone) => milestone.tasks.length > 0);
+  }, [normalizedProjectTaskSearch, plottedMilestones]);
+  const visibleProjectTaskCount = visibleProjectMilestones.reduce(
+    (total, milestone) => total + milestone.tasks.length,
+    0,
+  );
+
   if (!projectPlans.length || !activeProject) {
     return (
       <section
@@ -1640,7 +1755,6 @@ export function ProjectPlanningModule({
               ? "#0ea5e9"
           : CHART_COLORS.warning,
   }));
-  const plottedMilestones = activeProject.plottedMilestones;
   const milestoneChartData = plottedMilestones.map((milestone) => ({
     name: milestone.name,
     progress: milestone.completionPercentage,
@@ -1784,16 +1898,46 @@ export function ProjectPlanningModule({
               <h2 className="text-lg font-semibold tracking-[-0.02em] text-[var(--foreground-strong)]">
                 Milestones & Tasks
               </h2>
-              <button
-                type="button"
-                className="flex h-8 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-xs font-medium text-[var(--muted-foreground)] shadow-sm transition hover:border-[var(--border-strong)] hover:text-[var(--foreground-strong)]"
-              >
-                <Icon icon="solar:filter-linear" width="16" />
-                Filter
-              </button>
+              <div className="flex min-w-0 flex-1 justify-end">
+                <label className="sr-only" htmlFor="project-task-search">
+                  Search project tasks
+                </label>
+                <div className="relative w-full max-w-[360px]">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--muted-foreground)]" />
+                  <Input
+                    id="project-task-search"
+                    data-testid="project-task-search"
+                    value={projectTaskSearch}
+                    onChange={(event) => setProjectTaskSearch(event.target.value)}
+                    placeholder="Search tasks"
+                    className="h-9 rounded-lg border-[var(--border)] bg-[var(--surface)] pl-9 pr-9 text-sm shadow-sm"
+                  />
+                  {projectTaskSearch ? (
+                    <button
+                      type="button"
+                      data-testid="project-task-search-clear"
+                      aria-label="Clear project task search"
+                      onClick={() => setProjectTaskSearch("")}
+                      className="absolute right-2 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-[var(--muted-foreground)] transition hover:bg-[var(--surface-muted)] hover:text-[var(--foreground-strong)]"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  ) : null}
+                </div>
+              </div>
             </div>
+            {normalizedProjectTaskSearch ? (
+              <p
+                data-testid="project-task-search-count"
+                className="text-xs font-medium text-[var(--muted-foreground)]"
+              >
+                {visibleProjectTaskCount} matching{" "}
+                {visibleProjectTaskCount === 1 ? "task" : "tasks"}
+              </p>
+            ) : null}
 
-            {plottedMilestones.map((milestone) => (
+            {visibleProjectMilestones.length ? (
+              visibleProjectMilestones.map((milestone) => (
               <div
                 key={milestone.id}
                 className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)] shadow-[var(--shadow-soft)]"
@@ -1931,7 +2075,13 @@ export function ProjectPlanningModule({
                   </button>
                 </div>
               </div>
-            ))}
+              ))
+            ) : normalizedProjectTaskSearch ? (
+              <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--surface)] px-4 py-8 text-center text-sm leading-6 text-[var(--muted-foreground)]">
+                No tasks match &quot;{projectTaskSearch.trim()}&quot;. Try a shorter term or a
+                nearby task name.
+              </div>
+            ) : null}
 
             <button
               className="flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-[var(--border)] bg-[var(--surface)] py-5 text-sm font-medium text-[var(--muted-foreground)] transition-colors hover:border-[var(--border-strong)] hover:text-[var(--foreground-strong)]"
