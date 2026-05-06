@@ -14,14 +14,21 @@ import type {
   EventMountArg,
 } from "@fullcalendar/core";
 import {
+  Bot,
   CalendarClock,
   CalendarDays,
+  Copy,
+  ExternalLink,
+  GitBranch,
   Hash,
   Inbox,
+  KeyRound,
   Layers3,
   Menu,
+  Play,
   Plus,
   Settings,
+  ShieldCheck,
   Target,
   Trash2,
   X,
@@ -69,11 +76,11 @@ import {
   toDateTimeInput,
   todayDateString,
 } from "@/lib/planner/date";
+import { TASK_STATUS_LABELS } from "@/lib/planner/types";
 import type {
   DayCapacity,
   EventRecord,
   NewMilestoneInput,
-  NewTaskInput,
   PlannerCalendarItem,
   PlannerPayload,
   ProjectPlan,
@@ -85,8 +92,13 @@ import type {
   RecurrenceRule,
   TaskAvailability,
   TaskStatus,
+  UpdateProjectInput,
   UpdateSettingsInput,
   UpdateTaskInput,
+  ApiAccessTokenPublicRecord,
+  AgentRunWithEvents,
+  AgentRunnerPublicRecord,
+  AgentType,
 } from "@/lib/planner/types";
 import type { DailyPlanResponse } from "@/lib/planner/ai-daily-plan";
 import {
@@ -94,6 +106,7 @@ import {
   formatFocusPhaseLabel,
   formatFocusTimer,
   playFocusChime,
+  primeFocusChime,
   projectPersistedFocusSession,
   readPersistedFocusSession,
   writePersistedFocusSession,
@@ -123,6 +136,30 @@ type QuickAddDefaults = {
   milestoneId?: string | null;
 };
 
+type TaskSaveOptions = {
+  showToast?: boolean;
+};
+
+type TaskEditorAutoSaveState = "saved" | "queued" | "saving" | "error" | "invalid";
+
+type TaskEditorValidDraft = {
+  input: UpdateTaskInput;
+  key: string;
+  error: null;
+};
+
+type TaskEditorInvalidDraft = {
+  input: null;
+  key: null;
+  error: string;
+};
+
+type TaskEditorDraft = TaskEditorValidDraft | TaskEditorInvalidDraft;
+
+function isTaskEditorValidDraft(draft: TaskEditorDraft): draft is TaskEditorValidDraft {
+  return draft.input !== null;
+}
+
 type PendingRecurringEdit = {
   taskId: string;
   title: string;
@@ -136,6 +173,25 @@ type PendingRecurringEdit = {
 };
 
 const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+const INFLARA_MCP_ENDPOINT = "https://inflara.io/mcp";
+const GITHUB_REPO_LINKS_KEY = "inflara:github-repo-links:v1";
+const CALENDAR_TASK_SOUND_LOOKBACK_MS = 60_000;
+const TASK_EDITOR_AUTOSAVE_DELAY_MS = 700;
+const CLAUDE_CODE_MCP_COMMAND =
+  'claude mcp add --transport http inflara https://inflara.io/mcp --header "Authorization: Bearer <token>"';
+const CODEX_MCP_COMMAND =
+  'export INFLARA_API_TOKEN="<token>"\ncodex mcp add inflara --url https://inflara.io/mcp --bearer-token-env-var INFLARA_API_TOKEN';
+const ANTIGRAVITY_MCP_CONFIG = `{
+  "mcpServers": {
+    "inflara": {
+      "serverUrl": "https://inflara.io/mcp",
+      "headers": {
+        "Authorization": "Bearer <token>"
+      }
+    }
+  }
+}`;
 
 const PRIORITY_LABELS: Record<Priority, string> = {
   low: "Low",
@@ -168,6 +224,16 @@ const BOARD_COLUMNS: Array<{
     description: "Already moving this week.",
   },
   {
+    id: "review",
+    label: "Review",
+    description: "Ready for product or code review.",
+  },
+  {
+    id: "qa",
+    label: "QA",
+    description: "Validation before completion.",
+  },
+  {
     id: "done",
     label: "Done",
     description: "Closed loops for this plan.",
@@ -181,6 +247,41 @@ const AVAILABILITY_LABELS: Record<TaskAvailability, string> = {
 
 function taskAvailabilityLabel(task: Pick<PlannerTask, "availability">) {
   return AVAILABILITY_LABELS[task.availability ?? "ready"];
+}
+
+function calendarNotificationStorageKey(baseKey: string) {
+  return `${baseKey}:calendar-task-sounds:v1`;
+}
+
+function readCalendarNotificationKeys(baseKey: string) {
+  if (typeof window === "undefined") {
+    return new Set<string>();
+  }
+
+  try {
+    const raw = window.localStorage.getItem(calendarNotificationStorageKey(baseKey));
+    const parsed = raw ? JSON.parse(raw) : [];
+
+    return new Set(
+      Array.isArray(parsed)
+        ? parsed.filter((value): value is string => typeof value === "string")
+        : [],
+    );
+  } catch {
+    return new Set<string>();
+  }
+}
+
+function writeCalendarNotificationKeys(baseKey: string, keys: Set<string>) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const recentKeys = Array.from(keys).slice(-200);
+  window.localStorage.setItem(
+    calendarNotificationStorageKey(baseKey),
+    JSON.stringify(recentKeys),
+  );
 }
 
 function DateTimePicker({
@@ -303,11 +404,15 @@ function renderCalendarEventContent(info: EventContentArg) {
   const singleLine = !isWeekView && durationMinutes > 0 && durationMinutes < 60;
   const isTask = source === "task";
   const statusLabel =
-    status === "in_progress" ? "IN PROGRESS" : status === "done" ? "DONE" : "";
+    status && status !== "todo" ? TASK_STATUS_LABELS[status].toUpperCase() : "";
   const durationLabel = durationMinutes > 0 ? `${formatMinutes(durationMinutes)} block` : "";
   const accentColor =
     status === "in_progress"
       ? "#60A5FA"
+      : status === "review"
+        ? "#A78BFA"
+        : status === "qa"
+          ? "#38BDF8"
       : priority === "high" || priority === "critical"
         ? "#FB923C"
         : projectColor || "#FB923C";
@@ -577,6 +682,20 @@ function localPlanTimeToISOString(date: string, time: string) {
   return base.toISOString();
 }
 
+function dateTimeInputToIso(value: string) {
+  if (!value) {
+    return null;
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return undefined;
+  }
+
+  return date.toISOString();
+}
+
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
     ...init,
@@ -596,16 +715,177 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   return data;
 }
 
+function normalizeGitHubRepoUrl(value: string) {
+  const trimmed = value.trim();
+
+  if (!trimmed) {
+    return "";
+  }
+
+  const shorthand = trimmed.match(/^([\w.-]+)\/([\w.-]+)$/);
+
+  if (shorthand) {
+    return `https://github.com/${shorthand[1]}/${shorthand[2]}`;
+  }
+
+  try {
+    const url = new URL(trimmed.startsWith("http") ? trimmed : `https://${trimmed}`);
+    const parts = url.pathname.split("/").filter(Boolean);
+
+    if (!url.hostname.endsWith("github.com") || parts.length < 2) {
+      return "";
+    }
+
+    return `https://github.com/${parts[0]}/${parts[1].replace(/\.git$/, "")}`;
+  } catch {
+    return "";
+  }
+}
+
+function buildGitHubIssueDraftUrl(
+  repoUrl: string,
+  task: Pick<PlannerTask, "title" | "notes" | "priority" | "estimatedMinutes" | "dueAt">,
+) {
+  const normalizedRepoUrl = normalizeGitHubRepoUrl(repoUrl);
+
+  if (!normalizedRepoUrl) {
+    return "";
+  }
+
+  const body = [
+    task.notes?.trim() || "Created from an Inflara task.",
+    "",
+    "### Inflara task details",
+    `- Priority: ${PRIORITY_LABELS[task.priority]}`,
+    `- Estimate: ${task.estimatedMinutes} minutes`,
+    task.dueAt ? `- Due: ${format(parseISO(task.dueAt), "PPP p")}` : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
+  const url = new URL(`${normalizedRepoUrl}/issues/new`);
+  url.searchParams.set("title", task.title);
+  url.searchParams.set("body", body);
+
+  return url.toString();
+}
+
+function openGitHubIssueDraft(
+  repoUrl: string,
+  task: Pick<PlannerTask, "title" | "notes" | "priority" | "estimatedMinutes" | "dueAt">,
+) {
+  const issueUrl = buildGitHubIssueDraftUrl(repoUrl, task);
+
+  if (!issueUrl) {
+    toast.error("Add a valid GitHub repository first");
+    return;
+  }
+
+  window.open(issueUrl, "_blank", "noopener,noreferrer");
+}
+
+async function createGitHubIssueForTask(
+  repoUrl: string,
+  task: Pick<PlannerTask, "title" | "notes" | "priority" | "estimatedMinutes" | "dueAt">,
+) {
+  if (!normalizeGitHubRepoUrl(repoUrl)) {
+    toast.error("Add a valid GitHub repository first");
+    return false;
+  }
+
+  const response = await fetch("/api/github/issues", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      repoUrl,
+      task: {
+        title: task.title,
+        notes: task.notes,
+        priority: PRIORITY_LABELS[task.priority],
+        estimatedMinutes: task.estimatedMinutes,
+        dueAt: task.dueAt,
+      },
+    }),
+  });
+  const data = (await response.json().catch(() => null)) as
+    | {
+        issue?: {
+          number: number;
+          url: string;
+        };
+        error?: string;
+        message?: string;
+      }
+    | null;
+
+  if (response.ok && data?.issue) {
+    toast.success(`Created GitHub issue #${data.issue.number}`);
+    window.open(data.issue.url, "_blank", "noopener,noreferrer");
+    return true;
+  }
+
+  if (data?.error === "GITHUB_NOT_CONFIGURED") {
+    toast.error("GitHub issue creation is not configured. Opening a draft instead.");
+    openGitHubIssueDraft(repoUrl, task);
+    return false;
+  }
+
+  toast.error(data?.message ?? "GitHub issue was not created");
+  return false;
+}
+
+const AGENT_LABELS: Record<AgentType, string> = {
+  codex: "Codex",
+  claude_code: "Claude Code",
+};
+
+function latestRunForTask(taskId: string, runs: AgentRunWithEvents[]) {
+  return runs.find((run) => run.taskId === taskId) ?? null;
+}
+
+function activeAgentRunLabel(run: AgentRunWithEvents | null) {
+  if (!run) {
+    return null;
+  }
+
+  if (run.status === "queued") {
+    return `Queued for ${AGENT_LABELS[run.agentType]}`;
+  }
+
+  if (run.status === "awaiting_local_confirmation") {
+    return `Waiting on ${run.runner?.name ?? "runner"}`;
+  }
+
+  if (run.status === "running") {
+    return `Being worked on by ${AGENT_LABELS[run.agentType]}`;
+  }
+
+  if (run.status === "succeeded") {
+    return `Ready for review from ${AGENT_LABELS[run.agentType]}`;
+  }
+
+  if (run.status === "failed") {
+    return `${AGENT_LABELS[run.agentType]} failed`;
+  }
+
+  if (run.status === "cancelled") {
+    return `${AGENT_LABELS[run.agentType]} cancelled`;
+  }
+
+  return `${AGENT_LABELS[run.agentType]} blocked`;
+}
+
 function TaskCollectionView({
   title,
   description,
   tasks,
+  agentRuns,
   emptyLabel,
   onOpenTask,
 }: {
   title: string;
   description: string;
   tasks: PlannerTask[];
+  agentRuns: AgentRunWithEvents[];
   emptyLabel: string;
   onOpenTask: (taskId: string) => void;
 }) {
@@ -625,40 +905,47 @@ function TaskCollectionView({
         {tasks.length ? (
           <div className="mx-auto grid max-w-4xl gap-3">
             {tasks.map((task) => (
-              <button
-                key={task.id}
-                type="button"
-                onClick={() => onOpenTask(task.id)}
-                className={cn(
-                  "group grid gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 text-left shadow-[var(--shadow-soft)] transition hover:-translate-y-0.5 hover:border-[var(--border-strong)]",
-                  task.availability === "later" && "bg-[var(--surface-muted)] opacity-80",
-                )}
-              >
-                <div className="flex min-w-0 items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <h2 className="truncate text-sm font-semibold text-[var(--foreground-strong)] group-hover:text-[var(--accent-strong)]">
-                      {task.title}
-                    </h2>
-                    {task.notes ? (
-                      <p className="mt-1 line-clamp-2 text-xs leading-5 text-[var(--muted-foreground)]">
-                        {task.notes}
-                      </p>
-                    ) : null}
-                  </div>
-                  <Badge tone="neutral" className={priorityClass(task.priority)}>
-                    {PRIORITY_LABELS[task.priority]}
-                  </Badge>
-                </div>
-                <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--muted-foreground)]">
-                  <Badge tone={task.availability === "later" ? "neutral" : "accent"}>
-                    {taskAvailabilityLabel(task)}
-                  </Badge>
-                  {task.project ? <span>{task.project.name}</span> : null}
-                  {task.area ? <span>{task.area.name}</span> : null}
-                  <span>{formatMinutes(task.estimatedMinutes)}</span>
-                  {task.dueAt ? <span>Due {format(parseISO(task.dueAt), "MMM d")}</span> : null}
-                </div>
-              </button>
+              (() => {
+                const agentLabel = activeAgentRunLabel(latestRunForTask(task.id, agentRuns));
+
+                return (
+                  <button
+                    key={task.id}
+                    type="button"
+                    onClick={() => onOpenTask(task.id)}
+                    className={cn(
+                      "group grid gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 text-left shadow-[var(--shadow-soft)] transition hover:-translate-y-0.5 hover:border-[var(--border-strong)]",
+                      task.availability === "later" && "bg-[var(--surface-muted)] opacity-80",
+                    )}
+                  >
+                    <div className="flex min-w-0 items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <h2 className="truncate text-sm font-semibold text-[var(--foreground-strong)] group-hover:text-[var(--accent-strong)]">
+                          {task.title}
+                        </h2>
+                        {task.notes ? (
+                          <p className="mt-1 line-clamp-2 text-xs leading-5 text-[var(--muted-foreground)]">
+                            {task.notes}
+                          </p>
+                        ) : null}
+                      </div>
+                      <Badge tone="neutral" className={priorityClass(task.priority)}>
+                        {PRIORITY_LABELS[task.priority]}
+                      </Badge>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--muted-foreground)]">
+                      <Badge tone={task.availability === "later" ? "neutral" : "accent"}>
+                        {taskAvailabilityLabel(task)}
+                      </Badge>
+                      {agentLabel ? <Badge tone="accent">{agentLabel}</Badge> : null}
+                      {task.project ? <span>{task.project.name}</span> : null}
+                      {task.area ? <span>{task.area.name}</span> : null}
+                      <span>{formatMinutes(task.estimatedMinutes)}</span>
+                      {task.dueAt ? <span>Due {format(parseISO(task.dueAt), "MMM d")}</span> : null}
+                    </div>
+                  </button>
+                );
+              })()
             ))}
           </div>
         ) : (
@@ -847,6 +1134,82 @@ function useHeaderFocusSession(focusStorageKey: string, tasks: PlannerTask[]) {
   return session;
 }
 
+function useCalendarTaskSoundNotifications(
+  storageKey: string,
+  scheduledItems: PlannerCalendarItem[],
+) {
+  const notifiedKeysRef = useRef<Set<string>>(new Set());
+  const lastCheckedAtRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    notifiedKeysRef.current = readCalendarNotificationKeys(storageKey);
+    lastCheckedAtRef.current = Date.now();
+  }, [storageKey]);
+
+  useEffect(() => {
+    const unlockAudio = () => {
+      primeFocusChime();
+    };
+
+    window.addEventListener("pointerdown", unlockAudio, { once: true, passive: true });
+    window.addEventListener("keydown", unlockAudio, { once: true });
+
+    return () => {
+      window.removeEventListener("pointerdown", unlockAudio);
+      window.removeEventListener("keydown", unlockAudio);
+    };
+  }, []);
+
+  useEffect(() => {
+    const checkTaskStarts = () => {
+      const currentTime = Date.now();
+      const lastCheckedAt = lastCheckedAtRef.current ?? currentTime;
+      const windowStart = Math.max(
+        lastCheckedAt - 5_000,
+        currentTime - CALENDAR_TASK_SOUND_LOOKBACK_MS,
+      );
+
+      lastCheckedAtRef.current = currentTime;
+
+      let notified = false;
+
+      for (const item of scheduledItems) {
+        if (item.source !== "task" || item.status === "done") {
+          continue;
+        }
+
+        const startsAt = Date.parse(item.start);
+
+        if (!Number.isFinite(startsAt) || startsAt <= windowStart || startsAt > currentTime) {
+          continue;
+        }
+
+        const key = `${item.instanceId}:start:${item.start}`;
+
+        if (notifiedKeysRef.current.has(key)) {
+          continue;
+        }
+
+        notifiedKeysRef.current.add(key);
+        playFocusChime();
+        toast("Task starts now", {
+          description: item.title,
+        });
+        notified = true;
+      }
+
+      if (notified) {
+        writeCalendarNotificationKeys(storageKey, notifiedKeysRef.current);
+      }
+    };
+
+    checkTaskStarts();
+    const interval = window.setInterval(checkTaskStarts, 30_000);
+
+    return () => window.clearInterval(interval);
+  }, [scheduledItems, storageKey]);
+}
+
 export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
   const initialProjectId = pickInitialProjectId(initialData.projectPlans);
   const calendarRef = useRef<FullCalendar | null>(null);
@@ -873,12 +1236,83 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
   const [pendingRecurringEdit, setPendingRecurringEdit] = useState<PendingRecurringEdit | null>(
     null,
   );
+  const [agentDialogTaskId, setAgentDialogTaskId] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+  const [githubRepoUrls, setGithubRepoUrls] = useState<Record<string, string>>(() => {
+    const persistedLinks = Object.fromEntries(
+      initialData.projectAgentLinks
+        .filter((link) => link.repoUrl)
+        .map((link) => [link.projectId, link.repoUrl]),
+    );
+
+    if (typeof window === "undefined") {
+      return persistedLinks;
+    }
+
+    try {
+      const parsed = JSON.parse(
+        window.localStorage.getItem(GITHUB_REPO_LINKS_KEY) ?? "{}",
+      ) as Record<string, unknown>;
+
+      return {
+        ...persistedLinks,
+        ...Object.fromEntries(
+        Object.entries(parsed).filter(
+          (entry): entry is [string, string] =>
+            typeof entry[0] === "string" && typeof entry[1] === "string",
+        ),
+        ),
+      };
+    } catch {
+      return persistedLinks;
+    }
+  });
+
+  function updateProjectGithubRepo(projectId: string, value: string) {
+    const normalized = normalizeGitHubRepoUrl(value);
+
+    if (value.trim() && !normalized) {
+      toast.error("Use a GitHub repo URL like https://github.com/org/repo");
+      return;
+    }
+
+    setGithubRepoUrls((current) => {
+      const next = { ...current };
+
+      if (normalized) {
+        next[projectId] = normalized;
+      } else {
+        delete next[projectId];
+      }
+
+      window.localStorage.setItem(GITHUB_REPO_LINKS_KEY, JSON.stringify(next));
+      return next;
+    });
+    toast.success(normalized ? "GitHub repo linked" : "GitHub repo link cleared");
+    startTransition(async () => {
+      try {
+        await requestJson("/api/project-agent-links", {
+          method: "POST",
+          body: JSON.stringify({
+            projectId,
+            repoUrl: normalized,
+            defaultBranch: "main",
+          }),
+        });
+        await refreshPlanner();
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Could not save agent repo link");
+      }
+    });
+  }
 
   const selectedTask =
     drawerState?.type === "task"
       ? plannerData.tasks.find((task) => task.id === drawerState.taskId) ?? null
       : null;
+  const agentDialogTask = agentDialogTaskId
+    ? plannerData.tasks.find((task) => task.id === agentDialogTaskId) ?? null
+    : null;
   const selectedBlock =
     drawerState?.type === "task"
       ? plannerData.scheduledItems.find(
@@ -940,6 +1374,7 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
   const planningStorageKey = `inflara:planning:${plannerData.mode}:${plannerData.user.id}`;
   const focusStorageKey = `inflara:focus:${plannerData.mode}:${plannerData.user.id}`;
   const activeFocusSession = useHeaderFocusSession(focusStorageKey, plannerData.tasks);
+  useCalendarTaskSoundNotifications(planningStorageKey, plannerData.scheduledItems);
   const areaTasks = useMemo(
     () =>
       activeAreaId
@@ -1558,6 +1993,50 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
     }
   }
 
+  async function saveTaskFromEditor(
+    taskId: string,
+    input: UpdateTaskInput,
+    options: TaskSaveOptions = {},
+  ) {
+    const showToast = options.showToast ?? true;
+
+    try {
+      await requestJson(`/api/tasks/${taskId}`, {
+        method: "PATCH",
+        body: JSON.stringify(input),
+      });
+
+      if (showToast) {
+        toast.success("Task updated");
+      }
+
+      await refreshPlanner();
+    } catch (error) {
+      await refreshPlanner().catch(() => undefined);
+
+      if (showToast) {
+        toast.error(error instanceof Error ? error.message : "Could not update task");
+      }
+
+      throw error;
+    }
+  }
+
+  async function updateProjectFields(projectId: string, input: UpdateProjectInput) {
+    try {
+      await requestJson(`/api/projects/${projectId}`, {
+        method: "PATCH",
+        body: JSON.stringify(input),
+      });
+      toast.success("Project updated");
+      await refreshPlanner();
+    } catch (error) {
+      await refreshPlanner();
+      toast.error(error instanceof Error ? error.message : "Could not update project");
+      throw error;
+    }
+  }
+
   function updateTaskStatus(taskId: string, status: TaskStatus) {
     markTaskStatus(taskId, status);
     startTransition(async () => {
@@ -1571,7 +2050,7 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
             ? "Task marked done"
             : status === "in_progress"
               ? "Task moved to in progress"
-              : "Task moved back to to do",
+              : `Task moved to ${TASK_STATUS_LABELS[status].toLowerCase()}`,
         );
         await refreshPlanner();
       } catch (error) {
@@ -1585,27 +2064,57 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
     const focusBlocks = plan.schedule.filter(
       (block) => block.type === "focus_block" && block.task_id,
     );
+    const calendarBreaks = plan.schedule.filter(
+      (block) => block.type === "break" || block.type === "buffer",
+    );
 
     if (!focusBlocks.length) {
       toast.error("This draft does not include any task blocks to apply");
       return;
     }
 
-    for (const block of focusBlocks) {
+    const taskBlocksToCreate = focusBlocks.flatMap((block) => {
       const startsAt = localPlanTimeToISOString(plan.date || focusedDate, block.start_time);
       const endsAt = localPlanTimeToISOString(plan.date || focusedDate, block.end_time);
 
       if (startsAt >= endsAt || !block.task_id) {
-        continue;
+        return [];
       }
 
+      return {
+        taskId: block.task_id,
+        startsAt,
+        endsAt,
+      };
+    });
+    const calendarEventsToCreate = calendarBreaks.flatMap((block) => {
+      const startsAt = localPlanTimeToISOString(plan.date || focusedDate, block.start_time);
+      const endsAt = localPlanTimeToISOString(plan.date || focusedDate, block.end_time);
+
+      if (startsAt >= endsAt) {
+        return [];
+      }
+
+      return {
+        title: block.task_title || (block.type === "buffer" ? "Buffer" : "Break"),
+        notes: block.reason ?? "",
+        location: "",
+        startsAt,
+        endsAt,
+      };
+    });
+
+    for (const taskBlock of taskBlocksToCreate) {
       await requestJson("/api/task-blocks", {
         method: "POST",
-        body: JSON.stringify({
-          taskId: block.task_id,
-          startsAt,
-          endsAt,
-        }),
+        body: JSON.stringify(taskBlock),
+      });
+    }
+
+    for (const event of calendarEventsToCreate) {
+      await requestJson("/api/events", {
+        method: "POST",
+        body: JSON.stringify(event),
       });
     }
 
@@ -1674,6 +2183,7 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
         onOpenNewProject={() => openQuickAdd("project")}
         onOpenNewArea={() => openQuickAdd("area")}
         onOpenCreateTask={() => openQuickAdd("task")}
+        onUpdateProject={updateProjectFields}
         onOpenSettings={() => setDrawerState({ type: "settings" })}
         showUserButton={plannerData.mode === "clerk"}
         inboxCount={inboxTasks.length}
@@ -1754,6 +2264,7 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
             title="Inbox"
             description="Unscheduled work that still needs a plan."
             tasks={inboxTasks}
+            agentRuns={plannerData.agentRuns}
             emptyLabel="Inbox is clear"
             onOpenTask={(taskId) => setDrawerState({ type: "task", taskId })}
           />
@@ -1767,12 +2278,14 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
             title={activeArea?.name ?? "Area"}
             description="Tasks connected to this area."
             tasks={areaTasks}
+            agentRuns={plannerData.agentRuns}
             emptyLabel="No tasks in this area yet"
             onOpenTask={(taskId) => setDrawerState({ type: "task", taskId })}
           />
         ) : (
           <ProjectPlanningModule
             projectPlans={plannerData.projectPlans}
+            areas={plannerData.areas}
             activeProjectId={selectedProjectId}
             isPending={isPending}
             onOpenTask={(taskId) => setDrawerState({ type: "task", taskId })}
@@ -1780,11 +2293,14 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
             onOpenNewTask={(defaults) => openQuickAdd("task", defaults ?? {})}
             onOpenNewProject={() => openQuickAdd("project")}
             milestoneComposerOpen={milestoneComposerOpen}
+            githubRepoUrls={githubRepoUrls}
             onOpenMilestoneComposer={() => setMilestoneComposerOpen(true)}
             onCloseMilestoneComposer={() => setMilestoneComposerOpen(false)}
             onCreateMilestone={createMilestone}
             onUpdateMilestone={updateMilestone}
             onDeleteMilestone={deleteMilestone}
+            onUpdateProject={updateProjectFields}
+            onUpdateProjectGithubRepo={updateProjectGithubRepo}
             onUpdateTask={updateTaskFields}
           />
         )}
@@ -1797,16 +2313,9 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
         block={selectedBlock}
         event={selectedEvent}
         plannerData={plannerData}
-        onSaveTask={(taskId, input) =>
-          startTransition(async () => {
-            await requestJson(`/api/tasks/${taskId}`, {
-              method: "PATCH",
-              body: JSON.stringify(input),
-            });
-            toast.success("Task updated");
-            await refreshPlanner();
-          })
-        }
+        githubRepoUrls={githubRepoUrls}
+        onOpenAgentRun={(taskId) => setAgentDialogTaskId(taskId)}
+        onSaveTask={saveTaskFromEditor}
         onDeleteTask={(taskId) =>
           startTransition(async () => {
             await requestJson(`/api/tasks/${taskId}`, { method: "DELETE" });
@@ -1869,6 +2378,7 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
         open={quickAddKind}
         defaults={quickAddDefaults}
         plannerData={plannerData}
+        githubRepoUrls={githubRepoUrls}
         onClose={() => setQuickAddKind(null)}
         onSubmit={(kind, payload) =>
           startTransition(async () => {
@@ -1882,15 +2392,44 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
                     : kind === "area"
                       ? "/api/areas"
                       : "/api/tags";
-            await requestJson(endpoint, {
+            const shouldCreateGitHubIssue =
+              kind === "task" && payload.createGitHubIssue === true;
+            const requestPayload = { ...payload };
+            delete requestPayload.createGitHubIssue;
+            const created = await requestJson<PlannerTask | EventRecord | ProjectPlan["project"]>(
+              endpoint,
+              {
               method: "POST",
-              body: JSON.stringify(payload),
-            });
+              body: JSON.stringify(requestPayload),
+              },
+            );
             toast.success("Added to your planner");
+            if (shouldCreateGitHubIssue && kind === "task") {
+              const createdTask = created as PlannerTask;
+              const projectId = createdTask.projectId ?? (payload.projectId as string | null);
+              const repoUrl = projectId ? githubRepoUrls[projectId] ?? "" : "";
+              await createGitHubIssueForTask(repoUrl, {
+                title: createdTask.title,
+                notes: createdTask.notes,
+                priority: createdTask.priority,
+                estimatedMinutes: createdTask.estimatedMinutes,
+                dueAt: createdTask.dueAt,
+              });
+            }
             setQuickAddKind(null);
             await refreshPlanner();
           })
         }
+      />
+
+      <AgentRunDialog
+        task={agentDialogTask}
+        runners={plannerData.agentRunners}
+        onClose={() => setAgentDialogTaskId(null)}
+        onCreated={async () => {
+          setAgentDialogTaskId(null);
+          await refreshPlanner();
+        }}
       />
 
       {helpOpen ? <KeyboardShortcuts onClose={() => setHelpOpen(false)} /> : null}
@@ -2231,7 +2770,13 @@ type EditorModalProps = {
   block: PlannerCalendarItem | null;
   event: EventRecord | null;
   plannerData: PlannerPayload;
-  onSaveTask: (taskId: string, input: Partial<NewTaskInput> & { status?: TaskStatus }) => void;
+  githubRepoUrls: Record<string, string>;
+  onOpenAgentRun: (taskId: string) => void;
+  onSaveTask: (
+    taskId: string,
+    input: UpdateTaskInput,
+    options?: TaskSaveOptions,
+  ) => Promise<void>;
   onDeleteTask: (taskId: string) => void;
   onUnscheduleTask: (blockId: string) => void;
   onSaveEvent: (eventId: string, input: Partial<EventRecord>) => void;
@@ -2246,6 +2791,8 @@ function EditorModal({
   block,
   event,
   plannerData,
+  githubRepoUrls,
+  onOpenAgentRun,
   onSaveTask,
   onDeleteTask,
   onUnscheduleTask,
@@ -2342,7 +2889,9 @@ function EditorModal({
               task={task}
               block={block}
               plannerData={plannerData}
-              onSave={(input) => onSaveTask(task.id, input)}
+              githubRepoUrls={githubRepoUrls}
+              onOpenAgentRun={onOpenAgentRun}
+              onSave={(input, options) => onSaveTask(task.id, input, options)}
               onDelete={() => onDeleteTask(task.id)}
               onUnschedule={() => (block ? onUnscheduleTask(block.sourceId) : undefined)}
             />
@@ -2361,6 +2910,7 @@ function EditorModal({
             <SettingsEditor
               key={plannerData.settings.updatedAt}
               settings={plannerData.settings}
+              projects={plannerData.projects}
               onSave={onSaveSettings}
             />
           ) : null}
@@ -2422,10 +2972,166 @@ function RecurringEditPrompt({
   );
 }
 
+function AgentRunDialog({
+  task,
+  runners,
+  onClose,
+  onCreated,
+}: {
+  task: PlannerTask | null;
+  runners: AgentRunnerPublicRecord[];
+  onClose: () => void;
+  onCreated: () => Promise<void>;
+}) {
+  const activeRunners = useMemo(
+    () => runners.filter((runner) => !runner.revokedAt),
+    [runners],
+  );
+  const [runnerId, setRunnerId] = useState("");
+  const [agentType, setAgentType] = useState<AgentType>("codex");
+  const [modelName, setModelName] = useState("");
+  const [extraPrompt, setExtraPrompt] = useState("");
+  const [busy, setBusy] = useState(false);
+  const taskId = task?.id ?? null;
+
+  useEffect(() => {
+    if (taskId) {
+      setRunnerId(activeRunners[0]?.id ?? "");
+      setAgentType("codex");
+      setModelName("");
+      setExtraPrompt("");
+      setBusy(false);
+    }
+  }, [taskId, activeRunners]);
+
+  if (!task) {
+    return null;
+  }
+
+  async function createRun() {
+    if (!task) {
+      return;
+    }
+
+    if (!runnerId) {
+      toast.error("Connect an agent runner first");
+      return;
+    }
+
+    setBusy(true);
+    try {
+      await requestJson("/api/agent-runs", {
+        method: "POST",
+        body: JSON.stringify({
+          taskId: task.id,
+          milestoneId: task.milestoneId,
+          runnerId,
+          agentType,
+          modelName: modelName.trim() || null,
+          extraPrompt,
+        }),
+      });
+      toast.success(`Queued for ${AGENT_LABELS[agentType]}`);
+      await onCreated();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not queue agent work");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <button
+        type="button"
+        className="absolute inset-0 bg-[var(--modal-backdrop)]"
+        onClick={onClose}
+        aria-label="Close send to agent"
+      />
+      <div
+        role="dialog"
+        aria-label="Send task to agent"
+        className="relative z-10 grid w-full max-w-lg gap-4 rounded-[28px] border border-[var(--border-strong)] bg-[var(--surface)] p-5 text-[var(--foreground)] shadow-[var(--shadow-float)]"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--muted-foreground)]">
+              Bring your own agent
+            </p>
+            <h2 className="mt-1 text-lg font-semibold text-[var(--foreground-strong)]">
+              {task.title}
+            </h2>
+          </div>
+          <Button type="button" variant="ghost" size="sm" onClick={onClose}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+
+        <div className="grid gap-3">
+          <Field label="Runner">
+            <Select value={runnerId} onChange={(event) => setRunnerId(event.target.value)}>
+              {activeRunners.length ? (
+                activeRunners.map((runner) => (
+                  <option key={runner.id} value={runner.id}>
+                    {runner.name} · {runner.platform}
+                  </option>
+                ))
+              ) : (
+                <option value="">No connected runners</option>
+              )}
+            </Select>
+          </Field>
+          <Field label="Agent">
+            <Select
+              value={agentType}
+              onChange={(event) => setAgentType(event.target.value as AgentType)}
+            >
+              <option value="codex">Codex</option>
+              <option value="claude_code">Claude Code</option>
+            </Select>
+          </Field>
+          <Field label="Model override">
+            <Input
+              value={modelName}
+              onChange={(event) => setModelName(event.target.value)}
+              placeholder="Use runner default"
+            />
+          </Field>
+          <Field label="Additional prompt">
+            <Textarea
+              value={extraPrompt}
+              onChange={(event) => setExtraPrompt(event.target.value)}
+              placeholder="Optional extra instructions for this run."
+              className="min-h-28"
+            />
+          </Field>
+        </div>
+
+        <div className="rounded-[16px] border border-dashed border-[var(--border)] bg-[var(--surface-muted)] px-3 py-2 text-xs leading-5 text-[var(--muted-foreground)]">
+          The local runner will ask for confirmation before launching the selected agent.
+          Successful runs move the task to Review, not Done.
+        </div>
+
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="button" disabled={busy || !activeRunners.length} onClick={createRun}>
+            <Play className="h-4 w-4" />
+            {busy ? "Queueing..." : "Send to agent"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function TaskEditor({
   task,
   block,
   plannerData,
+  githubRepoUrls,
+  onOpenAgentRun,
   onSave,
   onDelete,
   onUnschedule,
@@ -2433,7 +3139,9 @@ function TaskEditor({
   task: PlannerTask;
   block: PlannerCalendarItem | null;
   plannerData: PlannerPayload;
-  onSave: (input: Partial<NewTaskInput> & { status?: TaskStatus }) => void;
+  githubRepoUrls: Record<string, string>;
+  onOpenAgentRun: (taskId: string) => void;
+  onSave: (input: UpdateTaskInput, options?: TaskSaveOptions) => Promise<void>;
   onDelete: () => void;
   onUnschedule: () => void;
 }) {
@@ -2452,6 +3160,7 @@ function TaskEditor({
   const [projectId, setProjectId] = useState(task.projectId ?? "");
   const [milestoneId, setMilestoneId] = useState(task.milestoneId ?? "");
   const [tagIds, setTagIds] = useState(task.tags.map((tag) => tag.id));
+  const [dependencyIds, setDependencyIds] = useState(task.dependencyIds);
   const [checklist, setChecklist] = useState(
     task.checklist.map<{
       id?: string;
@@ -2466,13 +3175,222 @@ function TaskEditor({
   const [recurrence, setRecurrence] = useState<RecurrenceRule | null>(
     task.recurrence ?? null,
   );
+  const [isCreatingGitHubIssue, setIsCreatingGitHubIssue] = useState(false);
   const compactFieldClassName =
     "h-9 rounded-[14px] border-[var(--task-modal-border)] bg-[var(--task-modal-neutral)] px-3 text-[13px] shadow-none";
   const compactTextAreaClassName =
     "min-h-[88px] rounded-[18px] border-[var(--task-modal-border)] bg-[var(--task-modal-neutral)] px-3 py-2.5 text-[13px] leading-5 shadow-none";
   const availableMilestones = plannerData.milestones.filter(
-    (milestone) => !projectId || milestone.projectId === projectId,
+    (milestone) => projectId && milestone.projectId === projectId,
   );
+  const dependencyOptions = useMemo(
+    () =>
+      plannerData.tasks
+        .filter((candidate) => candidate.id !== task.id)
+        .toSorted((left, right) => {
+          const leftProject = left.project?.name ?? "";
+          const rightProject = right.project?.name ?? "";
+
+          if (leftProject !== rightProject) {
+            return leftProject.localeCompare(rightProject);
+          }
+
+          return left.title.localeCompare(right.title);
+        }),
+    [plannerData.tasks, task.id],
+  );
+  const githubRepoUrl = projectId ? githubRepoUrls[projectId] ?? "" : "";
+  const taskAgentRuns = plannerData.agentRuns.filter((run) => run.taskId === task.id);
+  const latestAgentRun = taskAgentRuns[0] ?? null;
+  const latestAgentRunLabel = activeAgentRunLabel(latestAgentRun);
+  const [autoSaveState, setAutoSaveState] = useState<TaskEditorAutoSaveState>("saved");
+  const [autoSaveMessage, setAutoSaveMessage] = useState("All changes saved");
+  const lastSavedDraftKeyRef = useRef<string | null>(null);
+  const queuedDraftRef = useRef<TaskEditorValidDraft | null>(null);
+  const isAutoSavingRef = useRef(false);
+  const isMountedRef = useRef(false);
+  const taskDraft = useMemo<TaskEditorDraft>(() => {
+    const nextEstimatedMinutes = Number(estimatedMinutes);
+    const nextDueAt = dateTimeInputToIso(dueAt);
+    const nextStartsAt = dateTimeInputToIso(startsAt);
+    const nextEndsAt = dateTimeInputToIso(endsAt);
+
+    if (!title.trim()) {
+      return { input: null, key: null, error: "Task name is required before autosave." };
+    }
+
+    if (
+      !Number.isFinite(nextEstimatedMinutes) ||
+      !Number.isInteger(nextEstimatedMinutes) ||
+      nextEstimatedMinutes < 15 ||
+      nextEstimatedMinutes > 720
+    ) {
+      return {
+        input: null,
+        key: null,
+        error: "Estimated minutes must be a whole number from 15 to 720.",
+      };
+    }
+
+    if (nextDueAt === undefined) {
+      return { input: null, key: null, error: "Due date is invalid." };
+    }
+
+    if (nextStartsAt === undefined || nextEndsAt === undefined) {
+      return { input: null, key: null, error: "Schedule date is invalid." };
+    }
+
+    if ((nextStartsAt && !nextEndsAt) || (!nextStartsAt && nextEndsAt)) {
+      return {
+        input: null,
+        key: null,
+        error: "Start and end times are both required when scheduling a task.",
+      };
+    }
+
+    if (nextStartsAt && nextEndsAt && nextStartsAt >= nextEndsAt) {
+      return { input: null, key: null, error: "End time must be after start time." };
+    }
+
+    const input: UpdateTaskInput = {
+      title,
+      notes,
+      priority,
+      estimatedMinutes: nextEstimatedMinutes,
+      dueAt: nextDueAt,
+      areaId: areaId || null,
+      projectId: projectId || null,
+      milestoneId: projectId && milestoneId ? milestoneId : null,
+      status,
+      availability,
+      tagIds,
+      dependencyIds,
+      checklist: checklist.filter((item) => item.label.trim()),
+      recurrence,
+      startsAt: nextStartsAt,
+      endsAt: nextEndsAt,
+    };
+
+    return { input, key: JSON.stringify(input), error: null };
+  }, [
+    areaId,
+    availability,
+    checklist,
+    dueAt,
+    endsAt,
+    estimatedMinutes,
+    dependencyIds,
+    milestoneId,
+    notes,
+    priority,
+    projectId,
+    recurrence,
+    startsAt,
+    status,
+    tagIds,
+    title,
+  ]);
+  const latestDraftRef = useRef<TaskEditorDraft | null>(null);
+  latestDraftRef.current = taskDraft;
+  const runAutoSave = useEffectEvent(
+    async (draft: TaskEditorValidDraft, options?: { updateStatus?: boolean }) => {
+      queuedDraftRef.current = draft;
+
+      if (isAutoSavingRef.current) {
+        return;
+      }
+
+      isAutoSavingRef.current = true;
+
+      while (queuedDraftRef.current) {
+        const nextDraft = queuedDraftRef.current;
+        queuedDraftRef.current = null;
+
+        if (options?.updateStatus !== false && isMountedRef.current) {
+          setAutoSaveState("saving");
+          setAutoSaveMessage("Saving changes...");
+        }
+
+        try {
+          await onSave(nextDraft.input, { showToast: false });
+          lastSavedDraftKeyRef.current = nextDraft.key;
+
+          if (isMountedRef.current) {
+            setAutoSaveState("saved");
+            setAutoSaveMessage("All changes saved");
+          }
+        } catch (error) {
+          queuedDraftRef.current = null;
+
+          if (isMountedRef.current) {
+            setAutoSaveState("error");
+            setAutoSaveMessage(error instanceof Error ? error.message : "Autosave failed");
+          }
+        }
+      }
+
+      isAutoSavingRef.current = false;
+    },
+  );
+
+  useEffect(() => {
+    isMountedRef.current = true;
+
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isTaskEditorValidDraft(taskDraft)) {
+      if (lastSavedDraftKeyRef.current === null) {
+        lastSavedDraftKeyRef.current = "";
+      }
+
+      setAutoSaveState("invalid");
+      setAutoSaveMessage(taskDraft.error);
+      return;
+    }
+
+    const validDraft: TaskEditorValidDraft = taskDraft;
+
+    if (lastSavedDraftKeyRef.current === null) {
+      lastSavedDraftKeyRef.current = validDraft.key;
+      setAutoSaveState("saved");
+      setAutoSaveMessage("All changes saved");
+      return;
+    }
+
+    if (validDraft.key === lastSavedDraftKeyRef.current) {
+      if (!isAutoSavingRef.current) {
+        setAutoSaveState("saved");
+        setAutoSaveMessage("All changes saved");
+      }
+      return;
+    }
+
+    setAutoSaveState("queued");
+    setAutoSaveMessage("Autosave pending...");
+
+    const timeout = window.setTimeout(() => {
+      void runAutoSave(validDraft);
+    }, TASK_EDITOR_AUTOSAVE_DELAY_MS);
+
+    return () => window.clearTimeout(timeout);
+  }, [taskDraft]);
+
+  useEffect(() => {
+    return () => {
+      const latestDraft = latestDraftRef.current;
+
+      if (
+        latestDraft?.input &&
+        latestDraft.key !== lastSavedDraftKeyRef.current
+      ) {
+        void runAutoSave(latestDraft, { updateStatus: false });
+      }
+    };
+  }, []);
 
   return (
     <div className="grid gap-3">
@@ -2502,6 +3420,7 @@ function TaskEditor({
             <Button
               key={item}
               type="button"
+              aria-pressed={availability === item}
               variant={availability === item ? "solid" : "outline"}
               size="sm"
               onClick={() => setAvailability(item)}
@@ -2652,12 +3571,17 @@ function TaskEditor({
                 onChange={(event) => {
                   const nextProjectId = event.target.value;
                   setProjectId(nextProjectId);
+                  if (!nextProjectId) {
+                    setMilestoneId("");
+                    return;
+                  }
+
                   if (
                     milestoneId &&
                     !plannerData.milestones.some(
                       (milestone) =>
                         milestone.id === milestoneId &&
-                        (!nextProjectId || milestone.projectId === nextProjectId),
+                        milestone.projectId === nextProjectId,
                     )
                   ) {
                     setMilestoneId("");
@@ -2691,6 +3615,7 @@ function TaskEditor({
                     }
                   }
                 }}
+                disabled={!projectId}
                 className={compactFieldClassName}
               >
                 <option value="">No milestone</option>
@@ -2729,6 +3654,160 @@ function TaskEditor({
                 })}
               </div>
             </Field>
+          </TaskDetailSection>
+
+          <TaskDetailSection
+            title="Dependencies"
+            caption="Prerequisite tasks that should be scheduled first."
+          >
+            <div
+              data-testid="task-dependency-options"
+              className="grid max-h-44 gap-2 overflow-y-auto pr-1"
+            >
+              {dependencyOptions.length ? (
+                dependencyOptions.map((candidate) => {
+                  const checked = dependencyIds.includes(candidate.id);
+                  const wouldCreateDirectCycle = candidate.dependencyIds.includes(task.id);
+
+                  return (
+                    <label
+                      key={candidate.id}
+                      className={cn(
+                        "flex cursor-pointer items-start gap-2 rounded-[16px] border border-[var(--task-modal-border)] bg-[var(--task-modal-neutral)] px-3 py-2 text-[12px] leading-5",
+                        wouldCreateDirectCycle && "cursor-not-allowed opacity-55",
+                      )}
+                    >
+                      <Checkbox
+                        checked={checked}
+                        disabled={wouldCreateDirectCycle}
+                        onChange={(event) => {
+                          const nextChecked = event.target.checked;
+                          setDependencyIds((current) =>
+                            nextChecked
+                              ? [...new Set([...current, candidate.id])]
+                              : current.filter((id) => id !== candidate.id),
+                          );
+                        }}
+                      />
+                      <span className="min-w-0">
+                        <span className="block truncate font-medium text-[var(--foreground-strong)]">
+                          {candidate.title}
+                        </span>
+                        <span className="block truncate text-[11px] text-[var(--muted-foreground)]">
+                          {candidate.project?.name ?? "No project"}
+                          {candidate.status === "done" ? " · Done" : ""}
+                          {wouldCreateDirectCycle ? " · Already depends on this task" : ""}
+                        </span>
+                      </span>
+                    </label>
+                  );
+                })
+              ) : (
+                <div className="rounded-[16px] border border-dashed border-[var(--task-modal-border)] px-3 py-3 text-[12px] text-[var(--muted-foreground)]">
+                  No other tasks are available as prerequisites.
+                </div>
+              )}
+            </div>
+          </TaskDetailSection>
+
+          <TaskDetailSection
+            title="Agent work"
+            caption="Delegate this task to a local runner."
+            action={
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => onOpenAgentRun(task.id)}
+              >
+                <Bot className="h-4 w-4" />
+                Send to agent
+              </Button>
+            }
+          >
+            {latestAgentRun ? (
+              <div className="grid gap-2">
+                <div className="rounded-[16px] border border-[var(--task-modal-border)] bg-[var(--task-modal-neutral)] px-3 py-2 text-[12px] leading-5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge tone={latestAgentRun.status === "failed" ? "danger" : "accent"}>
+                      {latestAgentRunLabel}
+                    </Badge>
+                    <span className="text-[var(--muted-foreground)]">
+                      {latestAgentRun.runner?.name ?? "Unknown runner"}
+                    </span>
+                  </div>
+                  {latestAgentRun.branchName ? (
+                    <p className="mt-1 font-mono text-[11px] text-[var(--muted-foreground)]">
+                      {latestAgentRun.branchName}
+                    </p>
+                  ) : null}
+                  {latestAgentRun.summary ? (
+                    <p className="mt-2 text-[var(--foreground)]">{latestAgentRun.summary}</p>
+                  ) : null}
+                </div>
+                <div className="grid max-h-32 gap-1 overflow-y-auto pr-1">
+                  {latestAgentRun.events.slice(-4).map((event) => (
+                    <div
+                      key={event.id}
+                      className="rounded-[12px] bg-[var(--task-modal-neutral)] px-2.5 py-2 text-[11px] leading-4 text-[var(--muted-foreground)]"
+                    >
+                      <span className="font-semibold text-[var(--foreground-strong)]">
+                        {event.type}
+                      </span>
+                      {event.message ? ` · ${event.message}` : ""}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <p className="rounded-[16px] border border-dashed border-[var(--task-modal-border)] px-3 py-3 text-[12px] leading-5 text-[var(--muted-foreground)]">
+                No local agent has worked on this task yet.
+              </p>
+            )}
+          </TaskDetailSection>
+
+          <TaskDetailSection
+            title="GitHub"
+            caption="Create an issue from this task."
+          >
+            {githubRepoUrl ? (
+              <div className="grid gap-2">
+                <div className="rounded-[16px] border border-[var(--task-modal-border)] bg-[var(--task-modal-neutral)] px-3 py-2 text-[12px] text-[var(--muted-foreground)]">
+                  <span className="font-medium text-[var(--foreground-strong)]">
+                    Linked repo:
+                  </span>{" "}
+                  {githubRepoUrl}
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={isCreatingGitHubIssue}
+                  onClick={async () => {
+                    setIsCreatingGitHubIssue(true);
+                    try {
+                      await createGitHubIssueForTask(githubRepoUrl, {
+                        title,
+                        notes,
+                        priority,
+                        estimatedMinutes,
+                        dueAt: dueAt ? new Date(dueAt).toISOString() : null,
+                      });
+                    } finally {
+                      setIsCreatingGitHubIssue(false);
+                    }
+                  }}
+                >
+                  <GitBranch className="h-4 w-4" />
+                  {isCreatingGitHubIssue ? "Creating issue..." : "Create GitHub issue"}
+                  <ExternalLink className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            ) : (
+              <p className="rounded-[16px] border border-dashed border-[var(--task-modal-border)] px-3 py-3 text-[12px] leading-5 text-[var(--muted-foreground)]">
+                Link this project to a GitHub repo from Project Details to create issues from tasks.
+              </p>
+            )}
           </TaskDetailSection>
 
           <TaskDetailSection
@@ -2805,36 +3884,31 @@ function TaskEditor({
         </div>
       </div>
 
-      <div className="flex flex-wrap justify-between gap-2 border-t border-[var(--border)] pt-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--border)] pt-3">
         <Button variant="danger" size="sm" onClick={onDelete}>
           Delete task
         </Button>
-        <Button
-          size="sm"
-          onClick={() => {
-            const nextStartsAt = startsAt ? new Date(startsAt).toISOString() : null;
-            const nextEndsAt = endsAt ? new Date(endsAt).toISOString() : null;
-            onSave({
-              title,
-              notes,
-              priority,
-              estimatedMinutes,
-              dueAt: dueAt ? new Date(dueAt).toISOString() : null,
-              areaId: areaId || null,
-              projectId: projectId || null,
-              milestoneId: milestoneId || null,
-              status,
-              availability: nextStartsAt && nextEndsAt ? "ready" : availability,
-              tagIds,
-              checklist: checklist.filter((item) => item.label.trim()),
-              recurrence,
-              startsAt: nextStartsAt,
-              endsAt: nextEndsAt,
-            });
-          }}
+        <div
+          aria-live="polite"
+          className={cn(
+            "flex min-h-8 items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium",
+            autoSaveState === "error" || autoSaveState === "invalid"
+              ? "border-[var(--danger)] bg-[var(--danger-soft)] text-[var(--danger)]"
+              : "border-[var(--task-modal-border)] bg-[var(--task-modal-neutral)] text-[var(--muted-foreground)]",
+          )}
         >
-          Save task
-        </Button>
+          <span
+            className={cn(
+              "h-2 w-2 rounded-full",
+              autoSaveState === "saved"
+                ? "bg-[var(--success)]"
+                : autoSaveState === "error" || autoSaveState === "invalid"
+                  ? "bg-[var(--danger)]"
+                  : "bg-[var(--accent-strong)]",
+            )}
+          />
+          {autoSaveMessage}
+        </div>
       </div>
     </div>
   );
@@ -2967,15 +4041,235 @@ function EventEditor({
 
 function SettingsEditor({
   settings,
+  projects,
   onSave,
 }: {
   settings: PlannerPayload["settings"];
+  projects: PlannerPayload["projects"];
   onSave: (input: UpdateSettingsInput) => void;
 }) {
   const [timezone, setTimezone] = useState(settings.timezone);
   const [weekStart, setWeekStart] = useState(settings.weekStart);
   const [slotMinutes, setSlotMinutes] = useState(settings.slotMinutes);
   const [workHours, setWorkHours] = useState(settings.workHours);
+  const [tokenName, setTokenName] = useState("Development agent");
+  const [tokenScopeType, setTokenScopeType] =
+    useState<ApiAccessTokenPublicRecord["scopeType"]>("all_projects");
+  const [selectedTokenProjectIds, setSelectedTokenProjectIds] = useState<string[]>([]);
+  const [tokens, setTokens] = useState<ApiAccessTokenPublicRecord[]>([]);
+  const [newToken, setNewToken] = useState<string | null>(null);
+  const [copiedToken, setCopiedToken] = useState(false);
+  const [tokensLoading, setTokensLoading] = useState(true);
+  const [tokenBusy, setTokenBusy] = useState(false);
+  const [runnerName, setRunnerName] = useState("MacBook runner");
+  const [runners, setRunners] = useState<AgentRunnerPublicRecord[]>([]);
+  const [newRunnerToken, setNewRunnerToken] = useState<string | null>(null);
+  const [copiedRunnerToken, setCopiedRunnerToken] = useState(false);
+  const [runnersLoading, setRunnersLoading] = useState(true);
+  const [runnerBusy, setRunnerBusy] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadTokens() {
+      try {
+        setTokensLoading(true);
+        const response = await requestJson<{ tokens: ApiAccessTokenPublicRecord[] }>(
+          "/api/access-tokens",
+        );
+
+        if (!cancelled) {
+          setTokens(response.tokens);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          toast.error(error instanceof Error ? error.message : "Could not load API tokens");
+        }
+      } finally {
+        if (!cancelled) {
+          setTokensLoading(false);
+        }
+      }
+    }
+
+    loadTokens();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadRunners() {
+      try {
+        setRunnersLoading(true);
+        const response = await requestJson<{ runners: AgentRunnerPublicRecord[] }>(
+          "/api/agent-runners",
+        );
+
+        if (!cancelled) {
+          setRunners(response.runners);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          toast.error(error instanceof Error ? error.message : "Could not load agent runners");
+        }
+      } finally {
+        if (!cancelled) {
+          setRunnersLoading(false);
+        }
+      }
+    }
+
+    loadRunners();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function createToken() {
+    const name = tokenName.trim();
+
+    if (!name) {
+      toast.error("Name the token first");
+      return;
+    }
+
+    if (tokenScopeType === "selected_projects" && selectedTokenProjectIds.length === 0) {
+      toast.error("Select at least one project for this token");
+      return;
+    }
+
+    setTokenBusy(true);
+    setCopiedToken(false);
+    try {
+      const response = await requestJson<{
+        token: string;
+        record: ApiAccessTokenPublicRecord;
+      }>("/api/access-tokens", {
+        method: "POST",
+        body: JSON.stringify({
+          name,
+          scopeType: tokenScopeType,
+          projectIds:
+            tokenScopeType === "selected_projects" ? selectedTokenProjectIds : [],
+        }),
+      });
+      setNewToken(response.token);
+      setTokens((current) => [response.record, ...current]);
+      toast.success("API token created");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not create API token");
+    } finally {
+      setTokenBusy(false);
+    }
+  }
+
+  async function copyNewToken() {
+    if (!newToken) return;
+
+    try {
+      await navigator.clipboard.writeText(newToken);
+      setCopiedToken(true);
+      toast.success("Token copied");
+    } catch {
+      toast.error("Could not copy token");
+    }
+  }
+
+  async function revokeToken(tokenId: string) {
+    setTokenBusy(true);
+    try {
+      const response = await requestJson<{ token: ApiAccessTokenPublicRecord }>(
+        `/api/access-tokens/${tokenId}/revoke`,
+        {
+          method: "POST",
+          body: JSON.stringify({}),
+        },
+      );
+      setTokens((current) =>
+        current.map((token) => (token.id === tokenId ? response.token : token)),
+      );
+      toast.success("API token revoked");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not revoke API token");
+    } finally {
+      setTokenBusy(false);
+    }
+  }
+
+  async function createRunner() {
+    const name = runnerName.trim();
+
+    if (!name) {
+      toast.error("Name the runner first");
+      return;
+    }
+
+    setRunnerBusy(true);
+    setCopiedRunnerToken(false);
+    try {
+      const response = await requestJson<{
+        token: string;
+        runner: AgentRunnerPublicRecord;
+      }>("/api/agent-runners", {
+        method: "POST",
+        body: JSON.stringify({
+          name,
+          platform: "macos",
+          appVersion: "0.1.0",
+          capabilities: {
+            supportsWorktrees: true,
+            agents: [
+              { type: "codex", available: true },
+              { type: "claude_code", available: true },
+            ],
+          },
+        }),
+      });
+      setNewRunnerToken(response.token);
+      setRunners((current) => [response.runner, ...current]);
+      toast.success("Agent runner created");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not create agent runner");
+    } finally {
+      setRunnerBusy(false);
+    }
+  }
+
+  async function copyNewRunnerToken() {
+    if (!newRunnerToken) return;
+
+    try {
+      await navigator.clipboard.writeText(newRunnerToken);
+      setCopiedRunnerToken(true);
+      toast.success("Runner token copied");
+    } catch {
+      toast.error("Could not copy runner token");
+    }
+  }
+
+  async function revokeRunner(runnerId: string) {
+    setRunnerBusy(true);
+    try {
+      const response = await requestJson<{ runner: AgentRunnerPublicRecord }>(
+        `/api/agent-runners/${runnerId}/revoke`,
+        {
+          method: "POST",
+          body: JSON.stringify({}),
+        },
+      );
+      setRunners((current) =>
+        current.map((runner) => (runner.id === runnerId ? response.runner : runner)),
+      );
+      toast.success("Agent runner revoked");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not revoke agent runner");
+    } finally {
+      setRunnerBusy(false);
+    }
+  }
 
   return (
     <div className="grid gap-4">
@@ -3063,8 +4357,358 @@ function SettingsEditor({
       <Button onClick={() => onSave({ timezone, weekStart, slotMinutes, workHours })}>
         Save settings
       </Button>
+
+      <section className="grid gap-3 rounded-[22px] border border-[var(--border)] bg-[var(--surface-elevated)] p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <KeyRound className="h-4 w-4 text-[var(--accent)]" />
+              <h3 className="text-base font-semibold text-[var(--foreground-strong)]">
+                Remote agent access
+              </h3>
+            </div>
+            <p className="mt-1 max-w-[560px] text-sm leading-6 text-[var(--muted-foreground)]">
+              Create bearer tokens for Codex, Claude Code, Antigravity, or any MCP client that should read and update your Inflara planning data.
+            </p>
+          </div>
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border)] px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">
+            <ShieldCheck className="h-3.5 w-3.5" />
+            No delete access
+          </span>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
+          <Field label="Token name">
+            <Input
+              value={tokenName}
+              maxLength={80}
+              onChange={(event) => setTokenName(event.target.value)}
+              placeholder="Development agent"
+            />
+          </Field>
+          <Button className="self-end" onClick={createToken} disabled={tokenBusy}>
+            Create token
+          </Button>
+        </div>
+
+        <div className="grid gap-3 rounded-[16px] border border-[var(--border)] bg-[var(--surface)] p-3">
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant={tokenScopeType === "all_projects" ? "solid" : "outline"}
+              size="sm"
+              onClick={() => setTokenScopeType("all_projects")}
+            >
+              All projects
+            </Button>
+            <Button
+              type="button"
+              variant={tokenScopeType === "selected_projects" ? "solid" : "outline"}
+              size="sm"
+              onClick={() => setTokenScopeType("selected_projects")}
+            >
+              Selected projects
+            </Button>
+          </div>
+
+          {tokenScopeType === "selected_projects" ? (
+            <div className="grid gap-2">
+              <p className="text-xs text-[var(--muted-foreground)]">
+                This token can only read and update the projects selected below.
+              </p>
+              <div className="grid max-h-44 gap-2 overflow-y-auto rounded-[14px] border border-[var(--border)] bg-[var(--surface-elevated)] p-2">
+                {projects.length ? (
+                  projects.map((project) => {
+                    const checked = selectedTokenProjectIds.includes(project.id);
+                    return (
+                      <label
+                        key={project.id}
+                        className="flex items-center gap-2 rounded-[10px] px-2 py-1.5 text-sm text-[var(--foreground-strong)]"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(event) =>
+                            setSelectedTokenProjectIds((current) =>
+                              event.target.checked
+                                ? Array.from(new Set([...current, project.id]))
+                                : current.filter((projectId) => projectId !== project.id),
+                            )
+                          }
+                          className="h-4 w-4 rounded border-[var(--border-strong)] accent-[var(--accent)]"
+                        />
+                        {project.name}
+                      </label>
+                    );
+                  })
+                ) : (
+                  <p className="px-2 py-1.5 text-sm text-[var(--muted-foreground)]">
+                    Create a project before making a project-level token.
+                  </p>
+                )}
+              </div>
+            </div>
+          ) : (
+            <p className="text-xs text-[var(--muted-foreground)]">
+              This token can read and update every current and future project.
+            </p>
+          )}
+        </div>
+
+        {newToken ? (
+          <div className="grid gap-2 rounded-[18px] border border-[var(--accent)]/30 bg-[var(--accent-soft)] p-3">
+            <p className="text-sm font-semibold text-[var(--foreground-strong)]">
+              Copy this token now. It will only be shown once.
+            </p>
+            <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+              <Input
+                aria-label="New API token"
+                value={newToken}
+                readOnly
+                className="font-mono text-xs"
+              />
+              <Button variant="outline" onClick={copyNewToken}>
+                <Copy className="mr-2 h-4 w-4" />
+                {copiedToken ? "Copied" : "Copy token"}
+              </Button>
+            </div>
+          </div>
+        ) : null}
+
+        <div className="grid gap-2">
+          <div className="flex items-center justify-between">
+            <h4 className="text-sm font-semibold text-[var(--foreground-strong)]">
+              Active tokens
+            </h4>
+            {tokensLoading ? (
+              <span className="text-xs text-[var(--muted-foreground)]">Loading...</span>
+            ) : null}
+          </div>
+
+          {tokens.length ? (
+            <div className="grid gap-2">
+              {tokens.map((token) => {
+                const revoked = Boolean(token.revokedAt);
+                return (
+                  <div
+                    key={token.id}
+                    className="grid gap-3 rounded-[16px] border border-[var(--border)] bg-[var(--surface)] p-3 sm:grid-cols-[minmax(0,1fr)_auto]"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="font-medium text-[var(--foreground-strong)]">
+                          {token.name}
+                        </p>
+                        <span className="rounded-full bg-[var(--surface-muted)] px-2 py-0.5 font-mono text-[11px] text-[var(--muted-foreground)]">
+                          {token.tokenPrefix}
+                        </span>
+                        {revoked ? (
+                          <span className="rounded-full bg-red-500/10 px-2 py-0.5 text-[11px] font-semibold text-red-500">
+                            Revoked
+                          </span>
+                        ) : null}
+                      </div>
+                      <p className="mt-1 text-xs text-[var(--muted-foreground)]">
+                        Created {formatRemoteTokenDate(token.createdAt)} · Last used{" "}
+                        {formatRemoteTokenDate(token.lastUsedAt)}
+                      </p>
+                      <p className="mt-1 text-xs text-[var(--muted-foreground)]">
+                        Scope: {formatRemoteTokenScope(token, projects)}
+                      </p>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={revoked || tokenBusy}
+                      onClick={() => revokeToken(token.id)}
+                      aria-label={`Revoke token ${token.name}`}
+                    >
+                      Revoke
+                    </Button>
+                  </div>
+                );
+              })}
+            </div>
+          ) : !tokensLoading ? (
+            <p className="rounded-[16px] border border-dashed border-[var(--border)] p-3 text-sm text-[var(--muted-foreground)]">
+              No remote-agent tokens yet.
+            </p>
+          ) : null}
+        </div>
+
+        <div className="grid gap-3 rounded-[16px] border border-[var(--border)] bg-[var(--surface)] p-3">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-2">
+                <Bot className="h-4 w-4 text-[var(--accent)]" />
+                <h4 className="text-sm font-semibold text-[var(--foreground-strong)]">
+                  Local agent runners
+                </h4>
+              </div>
+              <p className="mt-1 text-xs leading-5 text-[var(--muted-foreground)]">
+                Register a desktop runner to receive tasks from Inflara and launch Codex or Claude Code locally.
+              </p>
+            </div>
+            {runnersLoading ? (
+              <span className="text-xs text-[var(--muted-foreground)]">Loading...</span>
+            ) : null}
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
+            <Field label="Runner name">
+              <Input
+                value={runnerName}
+                maxLength={100}
+                onChange={(event) => setRunnerName(event.target.value)}
+                placeholder="MacBook runner"
+              />
+            </Field>
+            <Button className="self-end" onClick={createRunner} disabled={runnerBusy}>
+              Create runner
+            </Button>
+          </div>
+
+          {newRunnerToken ? (
+            <div className="grid gap-2 rounded-[18px] border border-[var(--accent)]/30 bg-[var(--accent-soft)] p-3">
+              <p className="text-sm font-semibold text-[var(--foreground-strong)]">
+                Copy this runner token now. It will only be shown once.
+              </p>
+              <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+                <Input
+                  aria-label="New runner token"
+                  value={newRunnerToken}
+                  readOnly
+                  className="font-mono text-xs"
+                />
+                <Button variant="outline" onClick={copyNewRunnerToken}>
+                  <Copy className="mr-2 h-4 w-4" />
+                  {copiedRunnerToken ? "Copied" : "Copy token"}
+                </Button>
+              </div>
+            </div>
+          ) : null}
+
+          {runners.length ? (
+            <div className="grid gap-2">
+              {runners.map((runner) => {
+                const revoked = Boolean(runner.revokedAt);
+                return (
+                  <div
+                    key={runner.id}
+                    className="grid gap-3 rounded-[14px] border border-[var(--border)] bg-[var(--surface-elevated)] p-3 sm:grid-cols-[minmax(0,1fr)_auto]"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="font-medium text-[var(--foreground-strong)]">
+                          {runner.name}
+                        </p>
+                        <span className="rounded-full bg-[var(--surface-muted)] px-2 py-0.5 font-mono text-[11px] text-[var(--muted-foreground)]">
+                          {runner.tokenPrefix}
+                        </span>
+                        <Badge tone={revoked ? "danger" : "success"}>
+                          {revoked ? "Revoked" : "Active"}
+                        </Badge>
+                      </div>
+                      <p className="mt-1 text-xs text-[var(--muted-foreground)]">
+                        {runner.platform} · Last seen {formatRemoteTokenDate(runner.lastSeenAt)}
+                      </p>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={revoked || runnerBusy}
+                      onClick={() => revokeRunner(runner.id)}
+                      aria-label={`Revoke runner ${runner.name}`}
+                    >
+                      Revoke
+                    </Button>
+                  </div>
+                );
+              })}
+            </div>
+          ) : !runnersLoading ? (
+            <p className="rounded-[14px] border border-dashed border-[var(--border)] p-3 text-sm text-[var(--muted-foreground)]">
+              No local runners connected yet.
+            </p>
+          ) : null}
+        </div>
+
+        <div className="grid gap-3 rounded-[16px] border border-dashed border-[var(--border)] p-3 text-xs leading-5 text-[var(--muted-foreground)]">
+          <p>
+            MCP endpoint:{" "}
+            <span className="font-mono text-[var(--foreground)]">
+              {INFLARA_MCP_ENDPOINT}
+            </span>
+          </p>
+          <RemoteAgentSetupSnippet
+            title="Claude Code"
+            body={CLAUDE_CODE_MCP_COMMAND}
+          />
+          <RemoteAgentSetupSnippet title="Codex CLI" body={CODEX_MCP_COMMAND} />
+          <RemoteAgentSetupSnippet
+            title="Antigravity"
+            description="Open Agent Panel, Manage MCP Servers, View raw config, then merge this entry into mcp_config.json."
+            body={ANTIGRAVITY_MCP_CONFIG}
+          />
+        </div>
+      </section>
     </div>
   );
+}
+
+function RemoteAgentSetupSnippet({
+  title,
+  description,
+  body,
+}: {
+  title: string;
+  description?: string;
+  body: string;
+}) {
+  return (
+    <div className="grid gap-1.5 rounded-[14px] border border-[var(--border)] bg-[var(--surface)] p-2.5">
+      <div>
+        <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--foreground-strong)]">
+          {title}
+        </p>
+        {description ? (
+          <p className="mt-1 text-[11px] leading-5 text-[var(--muted-foreground)]">
+            {description}
+          </p>
+        ) : null}
+      </div>
+      <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-[10px] bg-[var(--surface-muted)] p-2 font-mono text-[11px] leading-5 text-[var(--foreground)]">
+        {body}
+      </pre>
+    </div>
+  );
+}
+
+function formatRemoteTokenDate(value: string | null) {
+  if (!value) {
+    return "never";
+  }
+
+  try {
+    return format(parseISO(value), "MMM d, yyyy h:mm a");
+  } catch {
+    return value;
+  }
+}
+
+function formatRemoteTokenScope(
+  token: ApiAccessTokenPublicRecord,
+  projects: PlannerPayload["projects"],
+) {
+  if (token.scopeType !== "selected_projects") {
+    return "All projects";
+  }
+
+  const projectNames = token.projectIds
+    .map((projectId) => projects.find((project) => project.id === projectId)?.name)
+    .filter(Boolean);
+
+  return projectNames.length ? projectNames.join(", ") : "Selected projects";
 }
 
 function RecurrenceFields({
@@ -3165,12 +4809,14 @@ function QuickAddDialog({
   open,
   defaults,
   plannerData,
+  githubRepoUrls,
   onClose,
   onSubmit,
 }: {
   open: QuickAddKind;
   defaults: QuickAddDefaults;
   plannerData: PlannerPayload;
+  githubRepoUrls: Record<string, string>;
   onClose: () => void;
   onSubmit: (kind: Exclude<QuickAddKind, null>, payload: Record<string, unknown>) => void;
 }) {
@@ -3180,13 +4826,16 @@ function QuickAddDialog({
   const [eventTitle, setEventTitle] = useState("");
   const [notes, setNotes] = useState("");
   const [addTaskNoteToProjectNotes, setAddTaskNoteToProjectNotes] = useState(false);
+  const [createGitHubIssue, setCreateGitHubIssue] = useState(false);
   const [location, setLocation] = useState("");
   const [scheduleTaskNow, setScheduleTaskNow] = useState(initialTaskScheduled);
   const [taskAvailability, setTaskAvailability] = useState<TaskAvailability>(
     initialTaskScheduled ? "ready" : "later",
   );
   const [taskProjectId, setTaskProjectId] = useState(defaults.projectId ?? "");
-  const [taskMilestoneId, setTaskMilestoneId] = useState(defaults.milestoneId ?? "");
+  const [taskMilestoneId, setTaskMilestoneId] = useState(
+    defaults.projectId ? defaults.milestoneId ?? "" : "",
+  );
   const [projectName, setProjectName] = useState("");
   const [projectStatus, setProjectStatus] = useState<ProjectStatus>("active");
   const [projectDeadline, setProjectDeadline] = useState("");
@@ -3222,8 +4871,9 @@ function QuickAddDialog({
   const [startsAt, setStartsAt] = useState(defaultDateTimes.startsAt);
   const [endsAt, setEndsAt] = useState(defaultDateTimes.endsAt);
   const availableMilestones = plannerData.milestones.filter(
-    (milestone) => !taskProjectId || milestone.projectId === taskProjectId,
+    (milestone) => taskProjectId && milestone.projectId === taskProjectId,
   );
+  const linkedGithubRepoUrl = taskProjectId ? githubRepoUrls[taskProjectId] ?? "" : "";
 
   if (!visible || !open) {
     return null;
@@ -3272,7 +4922,7 @@ function QuickAddDialog({
       <button type="button" className="absolute inset-0" onClick={onClose} aria-label="Close quick add" />
       <div
         data-testid="quick-add-dialog"
-        className="absolute inset-x-3 bottom-3 top-6 max-h-[calc(100svh-2.25rem)] overflow-y-auto rounded-[32px] border border-[var(--border-strong)] bg-[var(--surface)] p-6 shadow-[var(--shadow-float)] sm:inset-x-0 sm:top-10 sm:mx-auto sm:max-h-[calc(100svh-5rem)] sm:w-full sm:max-w-xl"
+        className="absolute inset-x-3 bottom-3 top-6 max-h-[calc(100svh-2.25rem)] overflow-y-auto rounded-[32px] border border-[var(--task-modal-border)] bg-[var(--task-modal-shell)] p-6 text-[var(--foreground)] shadow-[var(--shadow-float)] sm:inset-x-0 sm:top-10 sm:mx-auto sm:max-h-[calc(100svh-5rem)] sm:w-full sm:max-w-xl"
       >
         <div className="mb-5 flex items-center justify-between">
           <div>
@@ -3345,12 +4995,16 @@ function QuickAddDialog({
                 <Select
                   value={taskProjectId}
                   onChange={(event) => {
-                    const nextProjectId = event.target.value;
-                    setTaskProjectId(nextProjectId);
-                    if (!nextProjectId) {
-                      setAddTaskNoteToProjectNotes(false);
-                    }
-                    if (
+                  const nextProjectId = event.target.value;
+                  setTaskProjectId(nextProjectId);
+                  if (!nextProjectId) {
+                    setAddTaskNoteToProjectNotes(false);
+                    setCreateGitHubIssue(false);
+                  }
+                  if (!githubRepoUrls[nextProjectId]) {
+                    setCreateGitHubIssue(false);
+                  }
+                  if (
                       taskMilestoneId &&
                       !plannerData.milestones.some(
                         (milestone) =>
@@ -3388,8 +5042,9 @@ function QuickAddDialog({
                       setTaskProjectId(milestone.projectId);
                     }
                   }}
+                  disabled={!taskProjectId}
                 >
-                  <option value="">Directly under project</option>
+                  <option value="">No milestone</option>
                   {availableMilestones.map((milestone) => (
                     <option key={milestone.id} value={milestone.id}>
                       {milestone.name}
@@ -3399,15 +5054,28 @@ function QuickAddDialog({
               </Field>
             </div>
             {taskProjectId ? (
-              <label className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface-elevated)] px-3 py-2 text-sm font-medium text-[var(--foreground-strong)]">
-                <input
-                  type="checkbox"
-                  checked={addTaskNoteToProjectNotes}
-                  onChange={(event) => setAddTaskNoteToProjectNotes(event.target.checked)}
-                  className="h-4 w-4 rounded border-[var(--border-strong)] accent-[var(--accent)]"
-                />
-                Also add to project Notes
-              </label>
+              <div className="grid gap-2">
+                <label className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface-elevated)] px-3 py-2 text-sm font-medium text-[var(--foreground-strong)]">
+                  <input
+                    type="checkbox"
+                    checked={addTaskNoteToProjectNotes}
+                    onChange={(event) => setAddTaskNoteToProjectNotes(event.target.checked)}
+                    className="h-4 w-4 rounded border-[var(--border-strong)] accent-[var(--accent)]"
+                  />
+                  Also add to project Notes
+                </label>
+                {linkedGithubRepoUrl ? (
+                  <label className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface-elevated)] px-3 py-2 text-sm font-medium text-[var(--foreground-strong)]">
+                    <input
+                      type="checkbox"
+                      checked={createGitHubIssue}
+                      onChange={(event) => setCreateGitHubIssue(event.target.checked)}
+                      className="h-4 w-4 rounded border-[var(--border-strong)] accent-[var(--accent)]"
+                    />
+                    Create GitHub issue after creating
+                  </label>
+                ) : null}
+              </div>
             ) : null}
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Priority">
@@ -3593,6 +5261,7 @@ function QuickAddDialog({
                   projectId: taskProjectId || null,
                   milestoneId: taskMilestoneId || null,
                   addToProjectNotes: addTaskNoteToProjectNotes && Boolean(taskProjectId),
+                  createGitHubIssue: createGitHubIssue && Boolean(linkedGithubRepoUrl),
                   availability: scheduleTaskNow ? "ready" : taskAvailability,
                   startsAt:
                     scheduleTaskNow && startsAt ? new Date(startsAt).toISOString() : null,

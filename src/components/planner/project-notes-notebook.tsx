@@ -37,6 +37,7 @@ import {
   Folder,
   FolderOpen,
   FolderPlus,
+  GripVertical,
   Heading1,
   Heading2,
   ImagePlus,
@@ -44,14 +45,19 @@ import {
   Link2,
   List,
   ListOrdered,
+  ListTree,
   MessageSquare,
+  MessageSquareQuote,
+  Minus,
+  NotebookPen,
   Palette,
   PanelRight,
   Plus,
   Quote,
   Save,
+  Search,
   Send,
-  Sparkles,
+  SlidersHorizontal,
   Strikethrough,
   Text,
   Trash2,
@@ -164,7 +170,7 @@ type NoteHeading = {
   text: string;
 };
 
-type NotesPanel = "collaboration" | "outline" | "comments";
+type NotesPanel = "folders" | "tools" | "outline" | "comments" | "collaboration";
 type SaveState = "loading" | "saving" | "saved" | "offline";
 
 type SlashMenuState = {
@@ -179,11 +185,31 @@ type ProjectNotesNotebookProps = {
   projectPlan: ProjectPlan;
 };
 
+type WritingTool = {
+  id: string;
+  label: string;
+  hint: string;
+  icon: LucideIcon;
+  onRun: () => void;
+  active?: boolean;
+  disabled?: boolean;
+  color?: string;
+};
+
+type WritingToolGroup = {
+  title: string;
+  tools: WritingTool[];
+};
+
 type BlockStyle = "paragraph" | "heading1" | "heading2";
 
 const NOTE_STATUSES: ProjectNoteDocumentV2["status"][] = ["Draft", "Shared", "Final"];
 const LOCAL_NOTE_PAGE_PREFIX = "local-note-page";
 const MAX_EMBEDDED_IMAGE_BYTES = 1_500_000;
+const NOTES_SIDEBAR_WIDTH_STORAGE_KEY = "inflara:project-notes-sidebar-width";
+const DEFAULT_NOTES_SIDEBAR_WIDTH = 296;
+const MIN_NOTES_SIDEBAR_WIDTH = 236;
+const MAX_NOTES_SIDEBAR_WIDTH = 460;
 
 const NOTE_TEXT_COLORS = {
   red: "#e11d48",
@@ -386,7 +412,7 @@ const slashCommands: SlashCommand[] = [
     id: "callout",
     label: "Callout",
     hint: "Highlighted note",
-    icon: Sparkles,
+    icon: MessageSquareQuote,
     keywords: "callout note alert",
   },
   {
@@ -400,7 +426,7 @@ const slashCommands: SlashCommand[] = [
     id: "divider",
     label: "Divider",
     hint: "Horizontal rule",
-    icon: PanelRight,
+    icon: Minus,
     keywords: "divider rule line",
   },
   {
@@ -1044,6 +1070,13 @@ function getCurrentBlockStyle(editor: Editor | null): BlockStyle {
   return "paragraph";
 }
 
+function clampNotesSidebarWidth(width: number) {
+  return Math.min(
+    MAX_NOTES_SIDEBAR_WIDTH,
+    Math.max(MIN_NOTES_SIDEBAR_WIDTH, Math.round(width)),
+  );
+}
+
 function getSlashMenuState(editor: Editor, shell: HTMLElement | null): SlashMenuState | null {
   const { selection } = editor.state;
 
@@ -1115,7 +1148,18 @@ export function ProjectNotesNotebook({ projectPlan }: ProjectNotesNotebookProps)
   const [showSidebar, setShowSidebar] = useState(() =>
     typeof window === "undefined" ? true : window.matchMedia("(min-width: 1280px)").matches,
   );
-  const [activeNotesPanel, setActiveNotesPanel] = useState<NotesPanel>("outline");
+  const [notesSidebarWidth, setNotesSidebarWidth] = useState(() => {
+    if (typeof window === "undefined") {
+      return DEFAULT_NOTES_SIDEBAR_WIDTH;
+    }
+
+    const storedWidth = Number(window.localStorage.getItem(NOTES_SIDEBAR_WIDTH_STORAGE_KEY));
+    return Number.isFinite(storedWidth)
+      ? clampNotesSidebarWidth(storedWidth)
+      : DEFAULT_NOTES_SIDEBAR_WIDTH;
+  });
+  const [isResizingNotesSidebar, setIsResizingNotesSidebar] = useState(false);
+  const [activeNotesPanel, setActiveNotesPanel] = useState<NotesPanel>("folders");
   const [wordCount, setWordCount] = useState(0);
   const [headings, setHeadings] = useState<NoteHeading[]>([]);
   const [lastSavedAt, setLastSavedAt] = useState(activePage.updatedAt);
@@ -1140,6 +1184,42 @@ export function ProjectNotesNotebook({ projectPlan }: ProjectNotesNotebookProps)
   useEffect(() => {
     noteMetaRef.current = noteMeta;
   }, [noteMeta]);
+
+  useEffect(() => {
+    if (!isResizingNotesSidebar || typeof window === "undefined") {
+      return;
+    }
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const nextWidth = clampNotesSidebarWidth(window.innerWidth - event.clientX);
+      setNotesSidebarWidth(nextWidth);
+    };
+    const handlePointerUp = () => {
+      setIsResizingNotesSidebar(false);
+    };
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp, { once: true });
+
+    return () => {
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    };
+  }, [isResizingNotesSidebar]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem(NOTES_SIDEBAR_WIDTH_STORAGE_KEY, String(notesSidebarWidth));
+  }, [notesSidebarWidth]);
 
   useEffect(() => {
     setExpandedSections((current) => {
@@ -2221,68 +2301,279 @@ export function ProjectNotesNotebook({ projectPlan }: ProjectNotesNotebookProps)
     headingsInDocument[headingIndex]?.scrollIntoView({ block: "center" });
   };
 
+  const currentBlockStyle = getCurrentBlockStyle(editor);
+  const currentTextColor =
+    typeof editor?.getAttributes("textStyle").color === "string"
+      ? String(editor.getAttributes("textStyle").color)
+      : null;
+  const writingToolGroups: WritingToolGroup[] = [
+    {
+      title: "Structure",
+      tools: [
+        {
+          id: "text",
+          label: "Text",
+          hint: "Set the current block to body text",
+          icon: Text,
+          active: currentBlockStyle === "paragraph",
+          disabled: !editor,
+          onRun: () => setBlockStyle("paragraph"),
+        },
+        {
+          id: "heading1",
+          label: "Heading 1",
+          hint: "Promote the current block",
+          icon: Heading1,
+          active: currentBlockStyle === "heading1",
+          disabled: !editor,
+          onRun: () => setBlockStyle("heading1"),
+        },
+        {
+          id: "heading2",
+          label: "Heading 2",
+          hint: "Create a subsection heading",
+          icon: Heading2,
+          active: currentBlockStyle === "heading2",
+          disabled: !editor,
+          onRun: () => setBlockStyle("heading2"),
+        },
+        {
+          id: "divider",
+          label: "Divider",
+          hint: "Separate sections with a rule",
+          icon: Minus,
+          disabled: !editor,
+          onRun: () => editor?.chain().focus().setHorizontalRule().run(),
+        },
+      ],
+    },
+    {
+      title: "Format",
+      tools: [
+        {
+          id: "bold",
+          label: "Bold",
+          hint: "Toggle bold text",
+          icon: Bold,
+          active: editor?.isActive("bold") ?? false,
+          disabled: !editor,
+          onRun: () => editor?.chain().focus().toggleBold().run(),
+        },
+        {
+          id: "italic",
+          label: "Italic",
+          hint: "Toggle italic text",
+          icon: Italic,
+          active: editor?.isActive("italic") ?? false,
+          disabled: !editor,
+          onRun: () => editor?.chain().focus().toggleItalic().run(),
+        },
+        {
+          id: "underline",
+          label: "Underline",
+          hint: "Toggle underline",
+          icon: UnderlineIcon,
+          active: editor?.isActive("underline") ?? false,
+          disabled: !editor,
+          onRun: () => editor?.chain().focus().toggleUnderline().run(),
+        },
+        {
+          id: "strike",
+          label: "Strikethrough",
+          hint: "Toggle strikethrough",
+          icon: Strikethrough,
+          active: editor?.isActive("strike") ?? false,
+          disabled: !editor,
+          onRun: () => editor?.chain().focus().toggleStrike().run(),
+        },
+        {
+          id: "inlineCode",
+          label: "Inline code",
+          hint: "Toggle inline code",
+          icon: Code2,
+          active: editor?.isActive("code") ?? false,
+          disabled: !editor,
+          onRun: () => editor?.chain().focus().toggleCode().run(),
+        },
+      ],
+    },
+    {
+      title: "Lists",
+      tools: [
+        {
+          id: "bulletList",
+          label: "Bullets",
+          hint: "Toggle a bullet list",
+          icon: List,
+          active: editor?.isActive("bulletList") ?? false,
+          disabled: !editor,
+          onRun: () => editor?.chain().focus().toggleBulletList().run(),
+        },
+        {
+          id: "orderedList",
+          label: "Numbering",
+          hint: "Toggle a numbered list",
+          icon: ListOrdered,
+          active: editor?.isActive("orderedList") ?? false,
+          disabled: !editor,
+          onRun: () => editor?.chain().focus().toggleOrderedList().run(),
+        },
+        {
+          id: "taskList",
+          label: "Checklist",
+          hint: "Track action items",
+          icon: CheckSquare,
+          active: editor?.isActive("taskList") ?? false,
+          disabled: !editor,
+          onRun: () => editor?.chain().focus().toggleTaskList().run(),
+        },
+        {
+          id: "quote",
+          label: "Quote",
+          hint: "Call out supporting context",
+          icon: Quote,
+          active: editor?.isActive("blockquote") ?? false,
+          disabled: !editor,
+          onRun: () => editor?.chain().focus().toggleBlockquote().run(),
+        },
+        {
+          id: "callout",
+          label: "Callout",
+          hint: "Insert a highlighted note",
+          icon: MessageSquareQuote,
+          disabled: !editor,
+          onRun: () =>
+            editor
+              ?.chain()
+              .focus()
+              .insertContent({
+                type: "blockquote",
+                content: [
+                  {
+                    type: "paragraph",
+                    content: [{ type: "text", text: "Note: " }],
+                  },
+                ],
+              })
+              .run(),
+        },
+      ],
+    },
+    {
+      title: "Insert",
+      tools: [
+        {
+          id: "link",
+          label: "Link",
+          hint: "Add or edit a link",
+          icon: Link2,
+          active: editor?.isActive("link") ?? false,
+          disabled: !editor,
+          onRun: setLink,
+        },
+        {
+          id: "image",
+          label: "Image",
+          hint: "Attach an image to this note",
+          icon: ImagePlus,
+          disabled: !editor,
+          onRun: () => fileInputRef.current?.click(),
+        },
+        {
+          id: "code",
+          label: "Code block",
+          hint: "Format a technical snippet",
+          icon: Code2,
+          active: editor?.isActive("codeBlock") ?? false,
+          disabled: !editor,
+          onRun: () => editor?.chain().focus().toggleCodeBlock().run(),
+        },
+        {
+          id: "copyMarkdown",
+          label: "Copy Markdown",
+          hint: "Copy the current note as Markdown",
+          icon: ClipboardCopy,
+          disabled: !editor,
+          onRun: () => {
+            void copyMarkdown();
+          },
+        },
+      ],
+    },
+    {
+      title: "Color",
+      tools: [
+        {
+          id: "colorDefault",
+          label: "Default color",
+          hint: "Remove text color",
+          icon: Palette,
+          active: Boolean(editor) && !currentTextColor,
+          disabled: !editor,
+          onRun: () => editor?.chain().focus().unsetColor().removeEmptyTextStyle().run(),
+        },
+        {
+          id: "colorRed",
+          label: "Red",
+          hint: "Continue typing in red",
+          icon: Palette,
+          color: NOTE_TEXT_COLORS.red,
+          active: currentTextColor === NOTE_TEXT_COLORS.red,
+          disabled: !editor,
+          onRun: () => editor?.chain().focus().setColor(NOTE_TEXT_COLORS.red).run(),
+        },
+        {
+          id: "colorOrange",
+          label: "Orange",
+          hint: "Continue typing in orange",
+          icon: Palette,
+          color: NOTE_TEXT_COLORS.orange,
+          active: currentTextColor === NOTE_TEXT_COLORS.orange,
+          disabled: !editor,
+          onRun: () => editor?.chain().focus().setColor(NOTE_TEXT_COLORS.orange).run(),
+        },
+        {
+          id: "colorBlue",
+          label: "Blue",
+          hint: "Continue typing in blue",
+          icon: Palette,
+          color: NOTE_TEXT_COLORS.blue,
+          active: currentTextColor === NOTE_TEXT_COLORS.blue,
+          disabled: !editor,
+          onRun: () => editor?.chain().focus().setColor(NOTE_TEXT_COLORS.blue).run(),
+        },
+        {
+          id: "colorGreen",
+          label: "Green",
+          hint: "Continue typing in green",
+          icon: Palette,
+          color: NOTE_TEXT_COLORS.green,
+          active: currentTextColor === NOTE_TEXT_COLORS.green,
+          disabled: !editor,
+          onRun: () => editor?.chain().focus().setColor(NOTE_TEXT_COLORS.green).run(),
+        },
+        {
+          id: "colorPurple",
+          label: "Purple",
+          hint: "Continue typing in purple",
+          icon: Palette,
+          color: NOTE_TEXT_COLORS.purple,
+          active: currentTextColor === NOTE_TEXT_COLORS.purple,
+          disabled: !editor,
+          onRun: () => editor?.chain().focus().setColor(NOTE_TEXT_COLORS.purple).run(),
+        },
+      ],
+    },
+  ];
+
   return (
     <div
       data-testid="project-notes"
       className="flex min-h-0 flex-1 flex-col bg-[var(--background)]"
     >
       <div className="flex min-h-0 flex-1 overflow-hidden">
-        <aside className="hidden w-[clamp(13rem,18vw,17rem)] shrink-0 flex-col border-r border-[var(--border)] bg-[var(--surface)] p-3 lg:flex">
-          <div className="mb-2 flex items-center justify-between gap-2 px-1">
-            <div>
-              <h2 className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-foreground)]">
-                Project Notes
-              </h2>
-              <p className="text-[11px] text-[var(--muted-foreground)]">
-                Sections mirror planning
-              </p>
-            </div>
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                aria-label="Create section"
-                title="Create section"
-                onClick={() => createSection(null)}
-                className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--surface-elevated)] text-[var(--muted-foreground)] transition hover:bg-[var(--surface-muted)] hover:text-[var(--foreground-strong)]"
-              >
-                <FolderPlus className="h-4 w-4" />
-              </button>
-              <button
-                type="button"
-                aria-label="Create note page"
-                title="Create note"
-                onClick={() => createNotePage(null)}
-                className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--surface-elevated)] text-[var(--muted-foreground)] transition hover:bg-[var(--surface-muted)] hover:text-[var(--foreground-strong)]"
-              >
-                <Plus className="h-4 w-4" />
-              </button>
-            </div>
-          </div>
-          <NotesNavigationTree
-            pages={pages}
-            activePageId={activePageId}
-            expandedSections={expandedSections}
-            onToggleSection={(sectionId) =>
-              setExpandedSections((current) => {
-                const next = new Set(current);
-                if (next.has(sectionId)) {
-                  next.delete(sectionId);
-                } else {
-                  next.add(sectionId);
-                }
-                return next;
-              })
-            }
-            onSelectNote={selectNotePage}
-            onCreateNote={createNotePage}
-            onCreateSection={createSection}
-            onDeleteNote={deleteNotePage}
-            onMoveNote={(noteId, sectionId) => updatePageOrganization(noteId, { sectionId })}
-          />
-        </aside>
-
         <main className="min-w-0 flex-1 overflow-y-auto px-3 pb-8 pt-4 sm:px-6 sm:py-6" style={{ scrollbarWidth: "thin" }}>
-          <div className="mx-auto max-w-5xl">
+          <div className="mx-auto max-w-6xl">
             <div className="mb-3 flex items-center gap-2 lg:hidden">
               <Select
                 aria-label="Select note page"
@@ -2304,114 +2595,67 @@ export function ProjectNotesNotebook({ projectPlan }: ProjectNotesNotebookProps)
               >
                 <Plus className="h-4 w-4" />
               </button>
+              <button
+                type="button"
+                aria-label="Toggle notes sidebar"
+                className="flex h-9 w-9 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)] transition hover:bg-[var(--surface-muted)] hover:text-[var(--foreground-strong)]"
+                onClick={() => setShowSidebar((current) => !current)}
+              >
+                <PanelRight className="h-4 w-4" />
+              </button>
             </div>
-            <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2 shadow-[var(--shadow-soft)]">
-              <div className="flex min-w-0 flex-wrap items-center gap-2">
-                <Select
-                  aria-label="Block style"
-                  value={getCurrentBlockStyle(editor)}
-                  onChange={(event) => setBlockStyle(event.target.value as BlockStyle)}
-                  className="h-8 w-36 rounded-lg text-xs shadow-none"
-                >
-                  <option value="paragraph">Text</option>
-                  <option value="heading1">Heading 1</option>
-                  <option value="heading2">Heading 2</option>
-                </Select>
-                <ToolbarButton label="Bold" active={editor?.isActive("bold")} onClick={() => editor?.chain().focus().toggleBold().run()}>
-                  <Bold className="h-4 w-4" />
-                </ToolbarButton>
-                <ToolbarButton label="Italic" active={editor?.isActive("italic")} onClick={() => editor?.chain().focus().toggleItalic().run()}>
-                  <Italic className="h-4 w-4" />
-                </ToolbarButton>
-                <ToolbarButton label="Underline" active={editor?.isActive("underline")} onClick={() => editor?.chain().focus().toggleUnderline().run()}>
-                  <UnderlineIcon className="h-4 w-4" />
-                </ToolbarButton>
-                <ToolbarButton label="Strikethrough" active={editor?.isActive("strike")} onClick={() => editor?.chain().focus().toggleStrike().run()}>
-                  <Strikethrough className="h-4 w-4" />
-                </ToolbarButton>
-                <ToolbarDivider />
-                <ToolbarButton label="Bullet list" active={editor?.isActive("bulletList")} onClick={() => editor?.chain().focus().toggleBulletList().run()}>
-                  <List className="h-4 w-4" />
-                </ToolbarButton>
-                <ToolbarButton label="Numbered list" active={editor?.isActive("orderedList")} onClick={() => editor?.chain().focus().toggleOrderedList().run()}>
-                  <ListOrdered className="h-4 w-4" />
-                </ToolbarButton>
-                <ToolbarButton label="Checklist" active={editor?.isActive("taskList")} onClick={() => editor?.chain().focus().toggleTaskList().run()}>
-                  <CheckSquare className="h-4 w-4" />
-                </ToolbarButton>
-                <ToolbarButton label="Quote" active={editor?.isActive("blockquote")} onClick={() => editor?.chain().focus().toggleBlockquote().run()}>
-                  <Quote className="h-4 w-4" />
-                </ToolbarButton>
-                <ToolbarButton label="Inline code" active={editor?.isActive("code")} onClick={() => editor?.chain().focus().toggleCode().run()}>
-                  <Code2 className="h-4 w-4" />
-                </ToolbarButton>
-                <ToolbarDivider />
-                <ToolbarButton label="Link" active={editor?.isActive("link")} onClick={setLink}>
-                  <Link2 className="h-4 w-4" />
-                </ToolbarButton>
-                <ToolbarButton label="Attach image" onClick={() => fileInputRef.current?.click()}>
-                  <ImagePlus className="h-4 w-4" />
-                </ToolbarButton>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  className="hidden h-8 items-center gap-1.5 rounded-lg border border-[var(--border)] px-2.5 text-[11px] font-medium text-[var(--muted-foreground)] transition hover:bg-[var(--surface-muted)] hover:text-[var(--foreground-strong)] sm:flex"
-                  onClick={copyMarkdown}
-                >
-                  <ClipboardCopy className="h-3.5 w-3.5" />
-                  Copy Markdown
-                </button>
-                <span className="hidden items-center gap-1.5 rounded-full border border-[var(--border)] px-2.5 py-1 text-[11px] font-medium text-[var(--muted-foreground)] sm:flex">
-                  <Save className="h-3.5 w-3.5" />
-                  {getNoteSaveLabel(saveState)}
-                </span>
-                <button
-                  type="button"
-                  aria-label="Toggle notes sidebar"
-                  className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)] transition hover:bg-[var(--surface-muted)] hover:text-[var(--foreground-strong)] xl:hidden"
-                  onClick={() => setShowSidebar((current) => !current)}
-                >
-                  <PanelRight className="h-4 w-4" />
-                </button>
-              </div>
-              <input
-                ref={fileInputRef}
-                data-testid="project-note-image-input"
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={handleImageUpload}
-              />
-            </div>
+            <input
+              ref={fileInputRef}
+              data-testid="project-note-image-input"
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={handleImageUpload}
+            />
 
-            <article className="rounded-xl border border-[var(--border)] bg-[var(--surface)] shadow-[var(--shadow-soft)]">
-              <div className="border-b border-[var(--border)] px-4 py-5 sm:px-8 sm:py-7">
+            <article className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)] shadow-[var(--shadow-soft)]">
+              <div className="border-b border-[var(--border)] bg-[var(--surface-elevated)] px-4 py-5 sm:px-8 sm:py-7">
                 <Input
                   data-testid="project-note-title"
                   value={noteMeta.title}
                   onChange={(event) => handleTitleChange(event.target.value)}
                   className="h-auto border-0 bg-transparent px-0 py-0 text-2xl font-semibold tracking-[-0.03em] text-[var(--foreground-strong)] shadow-none focus:ring-0 sm:text-3xl"
                 />
-                <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-[var(--muted-foreground)]">
-                  <span className="flex items-center gap-1.5">
-                    <CalendarDays className="h-4 w-4" />
-                    {formatRelativeDate(lastSavedAt)}
-                  </span>
-                  <Select
-                    aria-label="Note status"
-                    value={noteMeta.status}
-                    onChange={(event) => handleStatusChange(event.target.value as ProjectNoteDocumentV2["status"])}
-                    className="h-7 w-24 rounded-md bg-[var(--surface-muted)] px-2 py-0 text-xs font-medium text-[var(--accent-strong)] shadow-none"
-                  >
-                    {NOTE_STATUSES.map((status) => (
-                      <option key={status} value={status}>
-                        {status}
-                      </option>
-                    ))}
-                  </Select>
-                  <span>{wordCount} words</span>
-                  <span>Type / for commands</span>
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-xs text-[var(--muted-foreground)]">
+                  <div className="flex min-w-0 flex-wrap items-center gap-3">
+                    <span className="flex items-center gap-1.5">
+                      <CalendarDays className="h-4 w-4" />
+                      {formatRelativeDate(lastSavedAt)}
+                    </span>
+                    <Select
+                      aria-label="Note status"
+                      value={noteMeta.status}
+                      onChange={(event) => handleStatusChange(event.target.value as ProjectNoteDocumentV2["status"])}
+                      className="h-7 w-24 rounded-md bg-[var(--surface-muted)] px-2 py-0 text-xs font-medium text-[var(--accent-strong)] shadow-none"
+                    >
+                      {NOTE_STATUSES.map((status) => (
+                        <option key={status} value={status}>
+                          {status}
+                        </option>
+                      ))}
+                    </Select>
+                    <span>{wordCount} words</span>
+                    <span>Type / for commands</span>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <button
+                      type="button"
+                      className="flex h-8 items-center gap-1.5 rounded-lg border border-[var(--border)] px-2.5 text-[11px] font-medium text-[var(--muted-foreground)] transition hover:bg-[var(--surface-muted)] hover:text-[var(--foreground-strong)]"
+                      onClick={copyMarkdown}
+                    >
+                      <ClipboardCopy className="h-3.5 w-3.5" />
+                      Copy Markdown
+                    </button>
+                    <span className="flex h-8 items-center gap-1.5 rounded-lg border border-[var(--border)] px-2.5 text-[11px] font-medium text-[var(--muted-foreground)]">
+                      <Save className="h-3.5 w-3.5" />
+                      {getNoteSaveLabel(saveState)}
+                    </span>
+                  </div>
                 </div>
               </div>
 
@@ -2445,12 +2689,39 @@ export function ProjectNotesNotebook({ projectPlan }: ProjectNotesNotebookProps)
 
         <aside
           className={cn(
-            "fixed inset-y-0 right-0 z-[80] min-h-0 shrink-0 border-l border-[var(--border)] bg-[var(--surface)] shadow-[var(--shadow-float)] lg:static lg:z-auto lg:shadow-none",
+            "fixed inset-y-0 right-0 z-[80] min-h-0 shrink-0 border-l border-[var(--border)] bg-[var(--surface)] shadow-[var(--shadow-float)] lg:relative lg:inset-auto lg:z-auto lg:shadow-none",
             showSidebar
-              ? "flex w-[min(84vw,18.5rem)] lg:w-[clamp(14.5rem,19.8vw,18.5rem)]"
+              ? "flex w-[min(84vw,var(--notes-sidebar-width))] lg:w-[var(--notes-sidebar-width)]"
               : "hidden w-12 lg:flex",
           )}
+          style={
+            showSidebar
+              ? ({ "--notes-sidebar-width": `${notesSidebarWidth}px` } as React.CSSProperties)
+              : undefined
+          }
         >
+          {showSidebar ? (
+            <button
+              type="button"
+              data-testid="project-notes-sidebar-resize-handle"
+              aria-label="Resize notes sidebar"
+              title="Resize notes sidebar"
+              onPointerDown={(event) => {
+                if (event.button !== 0) {
+                  return;
+                }
+
+                event.preventDefault();
+                setIsResizingNotesSidebar(true);
+              }}
+              className={cn(
+                "absolute inset-y-0 left-0 z-20 hidden w-2 -translate-x-1/2 cursor-col-resize items-center justify-center text-[var(--muted-foreground)] transition hover:text-[var(--foreground-strong)] lg:flex",
+                isResizingNotesSidebar && "text-[var(--accent-strong)]",
+              )}
+            >
+              <GripVertical className="h-5 w-3 rounded-full bg-[var(--surface)]" />
+            </button>
+          ) : null}
           <NotesPanelRail
             activePanel={activeNotesPanel}
             expanded={showSidebar}
@@ -2463,9 +2734,29 @@ export function ProjectNotesNotebook({ projectPlan }: ProjectNotesNotebookProps)
           {showSidebar ? (
             <NotesSidebar
               activePanel={activeNotesPanel}
+              pages={pages}
+              activePageId={activePageId}
+              expandedSections={expandedSections}
               outline={headings}
               comments={noteMeta.comments}
               commentDraft={commentDraft}
+              writingToolGroups={writingToolGroups}
+              onToggleSection={(sectionId) =>
+                setExpandedSections((current) => {
+                  const next = new Set(current);
+                  if (next.has(sectionId)) {
+                    next.delete(sectionId);
+                  } else {
+                    next.add(sectionId);
+                  }
+                  return next;
+                })
+              }
+              onSelectNote={selectNotePage}
+              onCreateNote={createNotePage}
+              onCreateSection={createSection}
+              onDeleteNote={deleteNotePage}
+              onMoveNote={(noteId, sectionId) => updatePageOrganization(noteId, { sectionId })}
               setCommentDraft={setCommentDraft}
               onAddComment={addComment}
               onClose={() => setShowSidebar(false)}
@@ -2482,6 +2773,7 @@ function NotesNavigationTree({
   pages,
   activePageId,
   expandedSections,
+  searchQuery = "",
   onToggleSection,
   onSelectNote,
   onCreateNote,
@@ -2492,6 +2784,7 @@ function NotesNavigationTree({
   pages: ProjectNotePage[];
   activePageId: string;
   expandedSections: Set<string>;
+  searchQuery?: string;
   onToggleSection: (sectionId: string) => void;
   onSelectNote: (pageId: string) => void;
   onCreateNote: (sectionId: string | null) => void;
@@ -2524,6 +2817,25 @@ function NotesNavigationTree({
   const uncategorizedNotes = (notesBySection.get(null) ?? []).filter(
     (note) => note.systemKey !== "project:description",
   );
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+  const matchesPage = (page: ProjectNotePage) =>
+    !normalizedQuery || (page.title || "Untitled page").toLowerCase().includes(normalizedQuery);
+  const sectionHasMatch = (section: ProjectNotePage): boolean => {
+    if (matchesPage(section)) {
+      return true;
+    }
+
+    const sectionNotes = notesBySection.get(section.id) ?? [];
+    const childSections = sectionsByParent.get(section.id) ?? [];
+    return sectionNotes.some(matchesPage) || childSections.some(sectionHasMatch);
+  };
+  const filteredProjectDescriptionNotes = projectDescriptionNotes.filter(matchesPage);
+  const filteredUncategorizedNotes = uncategorizedNotes.filter(matchesPage);
+  const rootSections = (sectionsByParent.get(null) ?? []).filter(sectionHasMatch);
+  const hasVisibleItems =
+    filteredProjectDescriptionNotes.length ||
+    rootSections.length ||
+    filteredUncategorizedNotes.length;
 
   const handleDrop = (
     event: React.DragEvent<HTMLDivElement>,
@@ -2549,19 +2861,19 @@ function NotesNavigationTree({
         event.dataTransfer.effectAllowed = "move";
       }}
       className={cn(
-        "group flex items-center gap-2 rounded-lg border py-1.5 pr-1.5 transition",
+        "group flex min-h-8 items-center gap-2 py-1 pr-1 transition",
         note.id === activePageId
-          ? "border-[var(--accent-soft)] bg-[var(--accent-soft)] text-[var(--foreground-strong)]"
-          : "border-transparent text-[var(--muted-foreground)] hover:bg-[var(--surface-muted)] hover:text-[var(--foreground-strong)]",
+          ? "bg-[var(--surface-muted)] text-[var(--foreground-strong)]"
+          : "text-[var(--foreground)] hover:bg-[var(--surface-muted)]",
       )}
-      style={{ paddingLeft: `${8 + depth * 14}px` }}
+      style={{ paddingLeft: `${6 + depth * 18}px` }}
     >
       <button
         type="button"
         onClick={() => onSelectNote(note.id)}
         className="flex min-w-0 flex-1 items-center gap-2 text-left"
       >
-        <FileText className="h-4 w-4 shrink-0" />
+        <FileText className="h-4 w-4 shrink-0 text-[var(--muted-foreground)]" />
         <span className="truncate text-sm font-medium">
           {note.title || "Untitled page"}
         </span>
@@ -2571,7 +2883,7 @@ function NotesNavigationTree({
         aria-label={`Delete ${note.title || "Untitled page"}`}
         onClick={() => onDeleteNote(note.id)}
         disabled={notes.length <= 1 || Boolean(note.systemKey)}
-        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--muted-foreground)] opacity-0 transition hover:bg-[var(--surface)] hover:text-[var(--danger)] disabled:cursor-not-allowed disabled:opacity-0 group-hover:opacity-100"
+        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--muted-foreground)] opacity-0 transition hover:text-[var(--danger)] disabled:cursor-not-allowed disabled:opacity-0 group-hover:opacity-100"
       >
         <Trash2 className="h-3.5 w-3.5" />
       </button>
@@ -2579,25 +2891,33 @@ function NotesNavigationTree({
   );
 
   const renderSection = (section: ProjectNotePage, depth = 0): React.ReactNode => {
-    const isExpanded = expandedSections.has(section.id);
+    const isSearchExpanded = Boolean(normalizedQuery);
+    const isExpanded = isSearchExpanded || expandedSections.has(section.id);
     const childSections = sectionsByParent.get(section.id) ?? [];
     const sectionNotes = notesBySection.get(section.id) ?? [];
+    const sectionMatchesSelf = matchesPage(section);
+    const visibleSectionNotes =
+      normalizedQuery && !sectionMatchesSelf ? sectionNotes.filter(matchesPage) : sectionNotes;
+    const visibleChildSections =
+      normalizedQuery && !sectionMatchesSelf
+        ? childSections.filter(sectionHasMatch)
+        : childSections;
 
     return (
-      <div key={section.id} className="space-y-1">
+      <div key={section.id} className="space-y-0.5">
         <div
           data-note-kind="section"
           data-note-title={section.title}
           onDragOver={(event) => event.preventDefault()}
           onDrop={(event) => handleDrop(event, section.id)}
-          className="group flex items-center gap-1 rounded-lg border border-transparent py-1.5 pr-1.5 text-[var(--muted-foreground)] transition hover:bg-[var(--surface-muted)] hover:text-[var(--foreground-strong)]"
-          style={{ paddingLeft: `${4 + depth * 14}px` }}
+          className="group flex min-h-8 items-center gap-1 py-1 pr-1 text-[var(--foreground)] transition hover:bg-[var(--surface-muted)]"
+          style={{ paddingLeft: `${2 + depth * 18}px` }}
         >
           <button
             type="button"
             aria-label={isExpanded ? `Collapse ${section.title}` : `Expand ${section.title}`}
             onClick={() => onToggleSection(section.id)}
-            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md hover:bg-[var(--surface)]"
+            className="flex h-6 w-6 shrink-0 items-center justify-center text-[var(--muted-foreground)] hover:text-[var(--foreground-strong)]"
           >
             {isExpanded ? (
               <ChevronDown className="h-3.5 w-3.5" />
@@ -2611,9 +2931,9 @@ function NotesNavigationTree({
             className="flex min-w-0 flex-1 items-center gap-2 text-left"
           >
             {isExpanded ? (
-              <FolderOpen className="h-4 w-4 shrink-0" />
+              <FolderOpen className="h-5 w-5 shrink-0 text-[color:#93c5fd]" />
             ) : (
-              <Folder className="h-4 w-4 shrink-0" />
+              <Folder className="h-5 w-5 shrink-0 text-[color:#93c5fd]" />
             )}
             <span className="truncate text-sm font-semibold">{section.title}</span>
           </button>
@@ -2627,7 +2947,7 @@ function NotesNavigationTree({
               }
               onCreateNote(section.id);
             }}
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md opacity-0 transition hover:bg-[var(--surface)] group-hover:opacity-100"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md opacity-0 transition hover:text-[var(--foreground-strong)] group-hover:opacity-100"
           >
             <Plus className="h-3.5 w-3.5" />
           </button>
@@ -2641,15 +2961,20 @@ function NotesNavigationTree({
               }
               onCreateSection(section.id);
             }}
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md opacity-0 transition hover:bg-[var(--surface)] group-hover:opacity-100"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md opacity-0 transition hover:text-[var(--foreground-strong)] group-hover:opacity-100"
           >
             <FolderPlus className="h-3.5 w-3.5" />
           </button>
         </div>
         {isExpanded ? (
-          <div className="space-y-1">
-            {sectionNotes.map((note) => renderNote(note, depth + 1))}
-            {childSections.map((child) => renderSection(child, depth + 1))}
+          <div
+            className={cn(
+              "space-y-0.5",
+              depth === 0 && "ml-6 border-l border-[var(--border-strong)] pl-1.5",
+            )}
+          >
+            {visibleSectionNotes.map((note) => renderNote(note, depth + 1))}
+            {visibleChildSections.map((child) => renderSection(child, depth + 1))}
           </div>
         ) : null}
       </div>
@@ -2658,63 +2983,42 @@ function NotesNavigationTree({
 
   return (
     <div
-      className="min-h-0 flex-1 space-y-1 overflow-y-auto pr-1"
+      className="min-h-0 flex-1 space-y-0.5 overflow-y-auto pr-1"
       style={{ scrollbarWidth: "thin" }}
     >
-      {projectDescriptionNotes.map((note) => renderNote(note))}
-      {(sectionsByParent.get(null) ?? []).map((section) => renderSection(section))}
-      <div
-        onDragOver={(event) => event.preventDefault()}
-        onDrop={(event) => handleDrop(event, null)}
-        className="mt-2 rounded-lg border border-dashed border-[var(--border)] p-1"
-      >
-        <div className="flex items-center gap-2 px-2 py-1 text-xs font-semibold uppercase tracking-wide text-[var(--muted-foreground)]">
-          <Folder className="h-3.5 w-3.5" />
-          Uncategorized
-        </div>
-        <div className="space-y-1">
-          {uncategorizedNotes.length ? (
-            uncategorizedNotes.map((note) => renderNote(note, 1))
-          ) : (
-            <p className="px-2 py-1.5 text-xs text-[var(--muted-foreground)]">
-              No uncategorized notes.
-            </p>
-          )}
-        </div>
-      </div>
+      {hasVisibleItems ? (
+        <>
+          {filteredProjectDescriptionNotes.map((note) => renderNote(note))}
+          {rootSections.map((section) => renderSection(section))}
+          {(!normalizedQuery || filteredUncategorizedNotes.length) ? (
+            <div
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={(event) => handleDrop(event, null)}
+              className="mt-2 p-1"
+            >
+              <div className="flex min-h-8 items-center gap-2 px-1 py-1 text-xs font-semibold uppercase tracking-wide text-[var(--muted-foreground)]">
+                <Folder className="h-4 w-4 text-[color:#93c5fd]" />
+                Uncategorized
+              </div>
+              <div className="space-y-0.5">
+                {filteredUncategorizedNotes.length ? (
+                  filteredUncategorizedNotes.map((note) => renderNote(note, 1))
+                ) : (
+                  <p className="px-2 py-1.5 text-xs text-[var(--muted-foreground)]">
+                    No uncategorized notes.
+                  </p>
+                )}
+              </div>
+            </div>
+          ) : null}
+        </>
+      ) : (
+        <p className="rounded-lg border border-dashed border-[var(--border)] px-3 py-2 text-xs leading-5 text-[var(--muted-foreground)]">
+          No notes match that search.
+        </p>
+      )}
     </div>
   );
-}
-
-function ToolbarButton({
-  label,
-  active,
-  onClick,
-  children,
-}: {
-  label: string;
-  active?: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      title={label}
-      onClick={onClick}
-      className={cn(
-        "flex h-8 w-8 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition hover:bg-[var(--surface-muted)] hover:text-[var(--foreground-strong)]",
-        active && "bg-[var(--surface-muted)] text-[var(--foreground-strong)]",
-      )}
-    >
-      {children}
-    </button>
-  );
-}
-
-function ToolbarDivider() {
-  return <span className="mx-1 h-5 w-px bg-[var(--border)]" />;
 }
 
 function SlashCommandMenu({
@@ -2794,9 +3098,11 @@ function NotesPanelRail({
     label: string;
     icon: LucideIcon;
   }> = [
-    { id: "collaboration", label: "Show collaboration", icon: Users },
-    { id: "outline", label: "Show outline", icon: PanelRight },
+    { id: "folders", label: "Show folder structure", icon: FolderOpen },
+    { id: "tools", label: "Show writing tools", icon: NotebookPen },
+    { id: "outline", label: "Show outline", icon: ListTree },
     { id: "comments", label: "Show comments", icon: MessageSquare },
+    { id: "collaboration", label: "Show collaboration", icon: Users },
   ];
 
   return (
@@ -2837,36 +3143,108 @@ function NotesPanelRail({
   );
 }
 
+function WritingToolButton({ tool }: { tool: WritingTool }) {
+  const Icon = tool.icon;
+  const tooltipId = `project-note-writing-tool-tooltip-${tool.id}`;
+
+  return (
+    <button
+      type="button"
+      data-testid={`project-note-writing-tool-${tool.id}`}
+      aria-label={`${tool.label}: ${tool.hint}`}
+      aria-describedby={tooltipId}
+      title={`${tool.label}: ${tool.hint}`}
+      disabled={tool.disabled}
+      onClick={tool.onRun}
+      className={cn(
+        "group/tool relative flex h-9 w-9 items-center justify-center rounded-md border border-[var(--border)] bg-[var(--surface-elevated)] text-[var(--muted-foreground)] shadow-[var(--shadow-soft)] transition hover:border-[var(--border-strong)] hover:bg-[var(--surface)] hover:text-[var(--foreground-strong)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-soft)] disabled:cursor-not-allowed disabled:opacity-45",
+        tool.active && "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent-strong)]",
+      )}
+    >
+      <Icon className="h-4 w-4" style={tool.color ? { color: tool.color } : undefined} />
+      {tool.color ? (
+        <span
+          aria-hidden="true"
+          className="absolute bottom-1 right-1 h-1.5 w-1.5 rounded-full border border-[var(--surface)]"
+          style={{ backgroundColor: tool.color }}
+        />
+      ) : null}
+      <span
+        id={tooltipId}
+        data-testid={tooltipId}
+        role="tooltip"
+        className="invisible absolute left-1/2 top-full z-30 mt-2 w-max max-w-48 -translate-x-1/2 rounded-md border border-[var(--border)] bg-[var(--surface-elevated)] px-2 py-1.5 text-left opacity-0 shadow-[var(--shadow-float)] transition group-hover/tool:visible group-hover/tool:opacity-100 group-focus-visible/tool:visible group-focus-visible/tool:opacity-100"
+      >
+        <span className="block whitespace-nowrap text-[11px] font-semibold leading-4 text-[var(--foreground-strong)]">
+          {tool.label}
+        </span>
+        <span className="block max-w-44 whitespace-normal text-[10px] leading-4 text-[var(--muted-foreground)]">
+          {tool.hint}
+        </span>
+      </span>
+    </button>
+  );
+}
+
 function NotesSidebar({
   activePanel,
+  pages,
+  activePageId,
+  expandedSections,
   outline,
   comments,
   commentDraft,
+  writingToolGroups,
+  onToggleSection,
+  onSelectNote,
+  onCreateNote,
+  onCreateSection,
+  onDeleteNote,
+  onMoveNote,
   setCommentDraft,
   onAddComment,
   onClose,
   onJumpToHeading,
 }: {
   activePanel: NotesPanel;
+  pages: ProjectNotePage[];
+  activePageId: string;
+  expandedSections: Set<string>;
   outline: NoteHeading[];
   comments: NoteComment[];
   commentDraft: string;
+  writingToolGroups: WritingToolGroup[];
+  onToggleSection: (sectionId: string) => void;
+  onSelectNote: (pageId: string) => void;
+  onCreateNote: (sectionId: string | null) => void;
+  onCreateSection: (parentSectionId: string | null) => void;
+  onDeleteNote: (pageId: string) => void;
+  onMoveNote: (pageId: string, sectionId: string | null) => void;
   setCommentDraft: (value: string) => void;
   onAddComment: () => void;
   onClose: () => void;
   onJumpToHeading: (headingIndex: number) => void;
 }) {
+  const [folderSearch, setFolderSearch] = useState("");
   const title =
-    activePanel === "collaboration"
+    activePanel === "folders"
+      ? "Folder Structure"
+      : activePanel === "tools"
+      ? "Writing tools"
+      : activePanel === "collaboration"
       ? "Collaboration"
       : activePanel === "outline"
         ? "Outline"
         : "Comments";
   const HeaderIcon =
-    activePanel === "collaboration"
+    activePanel === "folders"
+      ? FolderOpen
+    : activePanel === "tools"
+      ? NotebookPen
+      : activePanel === "collaboration"
       ? Users
       : activePanel === "outline"
-        ? PanelRight
+        ? ListTree
         : MessageSquare;
 
   return (
@@ -2887,6 +3265,98 @@ function NotesSidebar({
           <PanelRight className="h-4 w-4" />
         </button>
       </div>
+
+      {activePanel === "folders" ? (
+        <div
+          data-testid="project-note-folder-structure"
+          className="flex min-h-0 flex-1 flex-col px-3 py-3"
+        >
+          <div className="mb-3 grid gap-2">
+            <div className="flex items-center gap-1.5">
+              <div className="relative min-w-0 flex-1">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--muted-foreground)]" />
+                <Input
+                  data-testid="project-note-folder-search"
+                  value={folderSearch}
+                  onChange={(event) => setFolderSearch(event.target.value)}
+                  placeholder="Type to search"
+                  className="h-9 rounded-md border-[var(--border-strong)] bg-[var(--surface)] pl-8 pr-2 text-sm shadow-none"
+                />
+              </div>
+              <button
+                type="button"
+                aria-label="Clear folder search"
+                title="Clear search"
+                disabled={!folderSearch}
+                onClick={() => setFolderSearch("")}
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)] transition hover:bg-[var(--surface-muted)] hover:text-[var(--foreground-strong)] disabled:cursor-not-allowed disabled:opacity-45"
+              >
+                <SlidersHorizontal className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                aria-label="Create section"
+                title="Create section"
+                onClick={() => onCreateSection(null)}
+                className="flex h-8 flex-1 items-center justify-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 text-[11px] font-medium text-[var(--muted-foreground)] transition hover:bg-[var(--surface-muted)] hover:text-[var(--foreground-strong)]"
+              >
+                <FolderPlus className="h-3.5 w-3.5" />
+                Section
+              </button>
+              <button
+                type="button"
+                aria-label="Create note page"
+                title="Create note"
+                onClick={() => onCreateNote(null)}
+                className="flex h-8 flex-1 items-center justify-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 text-[11px] font-medium text-[var(--muted-foreground)] transition hover:bg-[var(--surface-muted)] hover:text-[var(--foreground-strong)]"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                Note
+              </button>
+            </div>
+          </div>
+          <NotesNavigationTree
+            pages={pages}
+            activePageId={activePageId}
+            expandedSections={expandedSections}
+            searchQuery={folderSearch}
+            onToggleSection={onToggleSection}
+            onSelectNote={onSelectNote}
+            onCreateNote={onCreateNote}
+            onCreateSection={onCreateSection}
+            onDeleteNote={onDeleteNote}
+            onMoveNote={onMoveNote}
+          />
+        </div>
+      ) : null}
+
+      {activePanel === "tools" ? (
+        <div
+          data-testid="project-note-writing-tools"
+          className="min-h-0 flex-1 overflow-y-auto px-3 py-3"
+          style={{ scrollbarWidth: "thin" }}
+        >
+          <div className="grid gap-3">
+            {writingToolGroups.map((group) => (
+              <section
+                key={group.title}
+                className="grid gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface-muted)]/55 px-2.5 py-2.5"
+              >
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-[var(--muted-foreground)]">
+                  {group.title}
+                </p>
+                <div className="grid grid-cols-5 gap-1.5">
+                  {group.tools.map((tool) => (
+                    <WritingToolButton key={tool.id} tool={tool} />
+                  ))}
+                </div>
+              </section>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       {activePanel === "collaboration" ? (
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4" style={{ scrollbarWidth: "thin" }}>

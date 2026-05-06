@@ -6,7 +6,7 @@
   --surface-elevated: #ffffff;
   --surface-muted: #f5f6f8;
   --surface-glass: rgba(255, 255, 255, 0.9);
-  --mobile-menu-surface: rgba(245, 246, 248, 0.85);
+  --mobile-menu-surface: rgba(245, 246, 248, 0.9);
   --card: #ffffff;
   --foreground: #1d2128;
   --foreground-strong: #111318;
@@ -54,10 +54,10 @@
   --calendar-event-border: #d7dbe2;
   --calendar-event-text: #1f2937;
   --modal-backdrop: rgba(15, 23, 42, 0.22);
-  --task-modal-shell: rgba(255, 255, 255, 0.9);
+  --task-modal-shell: rgba(255, 255, 255, 0.92);
   --task-modal-border: rgba(17, 24, 39, 0.12);
-  --task-modal-neutral: rgba(255, 255, 255, 0.58);
-  --task-modal-card: rgba(255, 255, 255, 0.72);
+  --task-modal-neutral: rgba(255, 255, 255, 0.9);
+  --task-modal-card: rgba(255, 255, 255, 0.9);
   --auth-page-bg: #ffffff;
   --auth-backdrop: radial-gradient(circle at top left, rgba(255, 106, 97, 0.12), transparent 28%),
     radial-gradient(circle at bottom right, rgba(79, 100, 255, 0.16), transparent 34%);
@@ -79,8 +79,8 @@
   --surface: #090b0f;
   --surface-elevated: #10141a;
   --surface-muted: #0d1116;
-  --surface-glass: rgba(12, 15, 20, 0.9);
-  --mobile-menu-surface: rgba(13, 17, 22, 0.85);
+  --surface-glass: rgba(12, 15, 20, 0.92);
+  --mobile-menu-surface: rgba(13, 17, 22, 0.9);
   --card: #10141a;
   --foreground: #d9dee8;
   --foreground-strong: #f5f7fb;
@@ -128,10 +128,10 @@
   --calendar-event-border: #303744;
   --calendar-event-text: #eef2f7;
   --modal-backdrop: rgba(2, 5, 10, 0.54);
-  --task-modal-shell: rgba(16, 19, 25, 0.86);
+  --task-modal-shell: rgba(16, 19, 25, 0.92);
   --task-modal-border: rgba(255, 255, 255, 0.08);
-  --task-modal-neutral: rgba(255, 255, 255, 0.04);
-  --task-modal-card: rgba(18, 22, 29, 0.76);
+  --task-modal-neutral: rgba(16, 19, 25, 0.9);
+  --task-modal-card: rgba(18, 22, 29, 0.9);
   --auth-page-bg: #090b0f;
   --auth-backdrop: radial-gradient(circle at top left, rgba(255, 106, 97, 0.08), transparent 28%),
     radial-gradient(circle at bottom right, rgba(79, 100, 255, 0.11), transparent 34%);
@@ -151,10 +151,10 @@
   color-scheme: light;
   --background: #f5f2ec;
   --surface: rgba(255, 255, 255, 0.64);
-  --surface-elevated: rgba(255, 255, 255, 0.82);
-  --surface-muted: rgba(241, 238, 232, 0.76);
-  --surface-glass: rgba(255, 255, 255, 0.68);
-  --mobile-menu-surface: rgba(241, 238, 232, 0.85);
+  --surface-elevated: rgba(255, 255, 255, 0.9);
+  --surface-muted: rgba(241, 238, 232, 0.9);
+  --surface-glass: rgba(255, 255, 255, 0.9);
+  --mobile-menu-surface: rgba(241, 238, 232, 0.9);
   --card: rgba(255, 255, 255, 0.78);
   --foreground: #2b3037;
   --foreground-strong: #151923;
@@ -202,10 +202,10 @@
   --calendar-event-border: rgba(78, 91, 110, 0.18);
   --calendar-event-text: #26323b;
   --modal-backdrop: rgba(77, 85, 99, 0.22);
-  --task-modal-shell: rgba(255, 255, 255, 0.68);
+  --task-modal-shell: rgba(255, 255, 255, 0.9);
   --task-modal-border: rgba(78, 91, 110, 0.16);
-  --task-modal-neutral: rgba(255, 255, 255, 0.48);
-  --task-modal-card: rgba(255, 255, 255, 0.56);
+  --task-modal-neutral: rgba(255, 255, 255, 0.9);
+  --task-modal-card: rgba(255, 255, 255, 0.9);
   --auth-page-bg: #f5f2ec;
   --auth-backdrop: linear-gradient(135deg, rgba(245, 176, 151, 0.14), transparent 32%),
     linear-gradient(315deg, rgba(140, 181, 169, 0.18), transparent 38%),
@@ -228,8 +228,8 @@
   --surface: #0f172a;
   --surface-elevated: #1e293b;
   --surface-muted: #0b1120;
-  --surface-glass: rgba(15, 23, 42, 0.85);
-  --mobile-menu-surface: rgba(11, 17, 32, 0.85);
+  --surface-glass: rgba(15, 23, 42, 0.9);
+  --mobile-menu-surface: rgba(11, 17, 32, 0.9);
   --card: #1e293b;
   --foreground: #f8fafc;
   --foreground-strong: #ffffff;
@@ -270,8 +270,8 @@
   --modal-backdrop: rgba(2, 6, 23, 0.7);
   --task-modal-shell: rgba(15, 23, 42, 0.95);
   --task-modal-border: rgba(51, 65, 85, 0.8);
-  --task-modal-neutral: rgba(255, 255, 255, 0.05);
-  --task-modal-card: rgba(30, 41, 59, 0.8);
+  --task-modal-neutral: rgba(15, 23, 42, 0.9);
+  --task-modal-card: rgba(30, 41, 59, 0.9);
   --auth-page-bg: #020617;
   --auth-backdrop: radial-gradient(circle at top left, rgba(16, 185, 129, 0.15), transparent 40%), radial-gradient(circle at bottom right, rgba(59, 130, 246, 0.15), transparent 40%);
   --auth-intro-bg: linear-gradient(180deg, rgba(15, 23, 42, 0.9), rgba(2, 6, 23, 0.95));
@@ -291,8 +291,8 @@
   --surface: #ffffff;
   --surface-elevated: #ffffff;
   --surface-muted: #f5f5f4;
-  --surface-glass: rgba(255, 255, 255, 0.8);
-  --mobile-menu-surface: rgba(245, 245, 244, 0.85);
+  --surface-glass: rgba(255, 255, 255, 0.9);
+  --mobile-menu-surface: rgba(245, 245, 244, 0.9);
   --card: #ffffff;
   --foreground: #292524;
   --foreground-strong: #0c0a09;
@@ -333,7 +333,7 @@
   --modal-backdrop: rgba(28, 25, 23, 0.2);
   --task-modal-shell: rgba(255, 255, 255, 0.95);
   --task-modal-border: rgba(231, 229, 228, 0.8);
-  --task-modal-neutral: rgba(0, 0, 0, 0.03);
+  --task-modal-neutral: rgba(255, 255, 255, 0.9);
   --task-modal-card: #ffffff;
   --auth-page-bg: #fafaf9;
   --auth-backdrop: radial-gradient(circle at top left, rgba(124, 58, 237, 0.08), transparent 40%), radial-gradient(circle at bottom right, rgba(236, 72, 153, 0.05), transparent 40%);
@@ -978,6 +978,15 @@ body {
   min-height: 100vh !important;
   min-height: 100dvh !important;
   background: var(--surface);
+}
+
+.ai-planner-apply-button {
+  background: var(--button-solid-bg);
+  color: var(--button-solid-fg);
+}
+
+.ai-planner-apply-button:hover:not(:disabled) {
+  background: var(--button-solid-hover);
 }
 
 .planning-schedule-panel {

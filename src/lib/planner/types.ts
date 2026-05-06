@@ -5,7 +5,15 @@ export type PreferredTimeBand =
   | "morning"
   | "afternoon"
   | "evening";
-export type TaskStatus = "todo" | "in_progress" | "done";
+export const TASK_STATUSES = ["todo", "in_progress", "review", "qa", "done"] as const;
+export type TaskStatus = (typeof TASK_STATUSES)[number];
+export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
+  todo: "To do",
+  in_progress: "In progress",
+  review: "Review",
+  qa: "QA",
+  done: "Done",
+};
 export type TaskAvailability = "ready" | "later";
 export type PlannerItemSource = "task" | "event";
 export type PlannerView = "timeGridWeek" | "timeGridDay" | "listDay";
@@ -150,6 +158,12 @@ export type TaskTagRecord = {
   tagId: string;
 };
 
+export type TaskDependencyRecord = {
+  taskId: string;
+  dependsOnTaskId: string;
+  createdAt: string;
+};
+
 export type ProjectNoteStatus = "Draft" | "Shared" | "Final";
 export type ProjectNoteKind = "note" | "section";
 export type ProjectNoteLinkedEntityType = "project" | "milestone" | "task" | "manual";
@@ -182,6 +196,148 @@ export type ProjectNotePageRecord = {
   updatedAt: string;
 };
 
+export type ApiAccessTokenScopeType = "all_projects" | "selected_projects";
+
+export type ApiAccessTokenRecord = {
+  id: string;
+  userId: string;
+  name: string;
+  tokenPrefix: string;
+  tokenHash: string;
+  scopeType: ApiAccessTokenScopeType;
+  projectIds: string[];
+  lastUsedAt: string | null;
+  revokedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ApiAccessTokenPublicRecord = Omit<ApiAccessTokenRecord, "tokenHash">;
+
+export type CreatedApiAccessToken = {
+  token: string;
+  record: ApiAccessTokenPublicRecord;
+};
+
+export const AGENT_TYPES = ["codex", "claude_code"] as const;
+export type AgentType = (typeof AGENT_TYPES)[number];
+
+export const AGENT_RUN_STATUSES = [
+  "queued",
+  "awaiting_local_confirmation",
+  "running",
+  "blocked",
+  "succeeded",
+  "failed",
+  "cancelled",
+] as const;
+export type AgentRunStatus = (typeof AGENT_RUN_STATUSES)[number];
+
+export const AGENT_RUN_STATUS_LABELS: Record<AgentRunStatus, string> = {
+  queued: "Queued",
+  awaiting_local_confirmation: "Awaiting local confirmation",
+  running: "Running",
+  blocked: "Blocked",
+  succeeded: "Ready for review",
+  failed: "Failed",
+  cancelled: "Cancelled",
+};
+
+export const AGENT_RUN_EVENT_TYPES = [
+  "created",
+  "claimed",
+  "confirmation_requested",
+  "started",
+  "log",
+  "status",
+  "finished",
+  "failed",
+  "cancelled",
+  "heartbeat",
+] as const;
+export type AgentRunEventType = (typeof AGENT_RUN_EVENT_TYPES)[number];
+
+export type AgentRunnerCapabilities = {
+  agents?: Array<{
+    type: AgentType;
+    available: boolean;
+    version?: string | null;
+    models?: string[];
+  }>;
+  supportsWorktrees?: boolean;
+};
+
+export type AgentRunnerRecord = {
+  id: string;
+  userId: string;
+  name: string;
+  tokenPrefix: string;
+  tokenHash: string;
+  platform: string;
+  appVersion: string;
+  capabilities: AgentRunnerCapabilities;
+  lastSeenAt: string | null;
+  revokedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AgentRunnerPublicRecord = Omit<AgentRunnerRecord, "tokenHash">;
+
+export type CreatedAgentRunner = {
+  token: string;
+  runner: AgentRunnerPublicRecord;
+};
+
+export type ProjectAgentLinkRecord = {
+  id: string;
+  userId: string;
+  projectId: string;
+  repoUrl: string;
+  defaultBranch: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AgentRunRecord = {
+  id: string;
+  userId: string;
+  taskId: string | null;
+  milestoneId: string | null;
+  projectId: string | null;
+  runnerId: string | null;
+  agentType: AgentType;
+  modelName: string | null;
+  status: AgentRunStatus;
+  extraPrompt: string;
+  branchName: string | null;
+  summary: string | null;
+  changedFiles: string[];
+  verification: unknown;
+  confidence: number | null;
+  riskyAreas: string[];
+  errorMessage: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AgentRunEventRecord = {
+  id: string;
+  userId: string;
+  runId: string;
+  type: AgentRunEventType;
+  message: string;
+  data: unknown;
+  createdAt: string;
+};
+
+export type AgentRunWithEvents = AgentRunRecord & {
+  runner: AgentRunnerPublicRecord | null;
+  events: AgentRunEventRecord[];
+};
+
 export type WorkspaceSnapshot = {
   user: AppUserRecord;
   settings: UserSettingsRecord;
@@ -194,6 +350,12 @@ export type WorkspaceSnapshot = {
   events: EventRecord[];
   checklistItems: TaskChecklistItemRecord[];
   taskTags: TaskTagRecord[];
+  taskDependencies: TaskDependencyRecord[];
+  apiAccessTokens: ApiAccessTokenRecord[];
+  agentRunners: AgentRunnerRecord[];
+  projectAgentLinks: ProjectAgentLinkRecord[];
+  agentRuns: AgentRunRecord[];
+  agentRunEvents: AgentRunEventRecord[];
 };
 
 export type PlannerTask = TaskRecord & {
@@ -202,6 +364,7 @@ export type PlannerTask = TaskRecord & {
   milestone: MilestoneRecord | null;
   tags: TagRecord[];
   checklist: TaskChecklistItemRecord[];
+  dependencyIds: string[];
   hasBlock: boolean;
   primaryBlock: {
     id: string;
@@ -316,6 +479,9 @@ export type PlannerPayload = {
   todayCount: number;
   unscheduledCount: number;
   savedFilters: SavedFilter[];
+  agentRunners: AgentRunnerPublicRecord[];
+  projectAgentLinks: ProjectAgentLinkRecord[];
+  agentRuns: AgentRunWithEvents[];
 };
 
 export type PlannerRange = {
@@ -336,6 +502,7 @@ export type NewTaskInput = {
   projectId?: string | null;
   milestoneId?: string | null;
   tagIds?: string[];
+  dependencyIds?: string[];
   checklist?: Array<{
     id?: string;
     label: string;

@@ -23,6 +23,22 @@ function normalizeSnapshot(snapshot: WorkspaceSnapshot): WorkspaceSnapshot {
       status: project.status ?? "active",
     })),
     milestones: Array.isArray(snapshot.milestones) ? snapshot.milestones : [],
+    apiAccessTokens: Array.isArray(snapshot.apiAccessTokens)
+      ? snapshot.apiAccessTokens.map((token) => ({
+          ...token,
+          scopeType: token.scopeType ?? "all_projects",
+          projectIds: Array.isArray(token.projectIds) ? token.projectIds : [],
+        }))
+      : [],
+    agentRunners: Array.isArray(snapshot.agentRunners) ? snapshot.agentRunners : [],
+    projectAgentLinks: Array.isArray(snapshot.projectAgentLinks)
+      ? snapshot.projectAgentLinks
+      : [],
+    agentRuns: Array.isArray(snapshot.agentRuns) ? snapshot.agentRuns : [],
+    agentRunEvents: Array.isArray(snapshot.agentRunEvents) ? snapshot.agentRunEvents : [],
+    taskDependencies: Array.isArray(snapshot.taskDependencies)
+      ? snapshot.taskDependencies
+      : [],
     tasks: snapshot.tasks.map((task) => ({
       ...task,
       milestoneId: task.milestoneId ?? null,

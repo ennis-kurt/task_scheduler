@@ -3,7 +3,6 @@ import {
   differenceInCalendarDays,
   differenceInMinutes,
   format,
-  isSameDay,
   parseISO,
 } from "date-fns";
 
@@ -19,6 +18,7 @@ import type {
 } from "./types";
 
 export type PlanningMode = "deep_focus" | "standard" | "chill" | "custom";
+export type ScheduledTaskHandling = "preserve_future" | "rearrange_future";
 
 export type CustomPlanningPreferences = {
   intensity?: string;
@@ -35,8 +35,10 @@ export type DailyPlanTaskDependency = {
 
 export type DailyPlanRequest = {
   planningMode: PlanningMode;
+  scheduledTaskHandling?: ScheduledTaskHandling;
   date: string;
   timezone: string;
+  currentTime?: string;
   tasks: PlannerTask[];
   projects: ProjectRecord[];
   milestones: MilestoneRecord[];
@@ -97,6 +99,9 @@ type ModeConfig = {
   focusBlockMinutes: number;
   maxTaskMinutes: number;
   breakMinutes: number;
+  minBreakMinutes: number;
+  startBufferMinutes: number;
+  endBufferMinutes: number;
   summary: string;
 };
 
@@ -120,6 +125,12 @@ export const AI_DAILY_PLANNER_DEVELOPER_PROMPT = [
   "Standard should balance urgent work, project progress, breaks, and task variety.",
   "Chill should reduce cognitive load with more breathing room and less total scheduled work.",
   "Custom should follow the user's explicit organization preferences.",
+  "Scheduled task handling is explicit. If scheduledTaskHandling is preserve_future, keep future scheduled task blocks on the selected date and treat their slots as already booked. If scheduledTaskHandling is rearrange_future, unfinished future scheduled tasks may be moved into the new plan.",
+  "If the provided tasks list is project-filtered, ignore tasks outside that list for prioritization and scheduling, but still treat their existing scheduled blocks as occupied time when those blocks are present in scheduledItems.",
+  "Respect task dependency order. A task with dependencies must be scheduled only after its prerequisite tasks are already done, preserved earlier on the selected date, or placed earlier in the generated plan.",
+  "Never ignore unfinished task blocks that already started before the current planning cursor on the selected date. Treat those as missed work and reschedule them after the current time when the task is still not done.",
+  "Never overlap fixed events or preserved scheduled task blocks. When preserving future scheduled tasks, schedule all other tasks around those occupied slots.",
+  "For the selected date, respect the provided current time: never schedule blocks in the past, and leave past selected dates empty.",
   "Warn clearly when available time cannot realistically satisfy deadlines.",
   "The output must include planning_mode, summary, schedule, warnings, postponed_tasks, alternatives, and explanation_summary.",
 ].join("\n");
@@ -128,7 +139,7 @@ export const AI_DAILY_PLANNER_USER_PROMPT_TEMPLATE = [
   "Create a daily plan for {{date}} in {{timezone}}.",
   "Selected planning mode: {{planning_mode}}.",
   "Custom instructions: {{custom_instructions}}.",
-  "Use the provided JSON context: tasks, projects, milestones, deadlines, priorities, estimated durations, fixed events, available working hours, project progress, and dependencies.",
+  "Use the provided JSON context: current time, tasks, projects, milestones, deadlines, priorities, estimated durations, scheduled task blocks, fixed events, available working hours, project progress, dependencies, and scheduledTaskHandling.",
   "Return JSON only in the expected DailyPlanResponse format.",
 ].join("\n");
 
@@ -145,16 +156,22 @@ function modeConfig(mode: PlanningMode, custom?: CustomPlanningPreferences): Mod
       focusBlockMinutes: 105,
       maxTaskMinutes: 120,
       breakMinutes: 10,
+      minBreakMinutes: 5,
+      startBufferMinutes: 0,
+      endBufferMinutes: 0,
       summary: "Today’s plan uses longer focus blocks and fewer gaps for deeper work.",
     };
   }
 
   if (mode === "chill") {
     return {
-      fillRatio: 0.62,
-      focusBlockMinutes: 45,
-      maxTaskMinutes: 60,
-      breakMinutes: 20,
+      fillRatio: 0.55,
+      focusBlockMinutes: 40,
+      maxTaskMinutes: 55,
+      breakMinutes: 25,
+      minBreakMinutes: 20,
+      startBufferMinutes: 10,
+      endBufferMinutes: 10,
       summary: "Today’s plan protects energy with lighter blocks and more breathing room.",
     };
   }
@@ -168,6 +185,9 @@ function modeConfig(mode: PlanningMode, custom?: CustomPlanningPreferences): Mod
       focusBlockMinutes: Number.isFinite(sessionLength) ? Math.min(120, Math.max(25, sessionLength)) : 60,
       maxTaskMinutes: Number.isFinite(sessionLength) ? Math.min(150, Math.max(30, sessionLength)) : 75,
       breakMinutes: intensity.includes("intense") ? 10 : 15,
+      minBreakMinutes: intensity.includes("intense") ? 5 : 10,
+      startBufferMinutes: intensity.includes("light") || intensity.includes("chill") ? 10 : 0,
+      endBufferMinutes: intensity.includes("light") || intensity.includes("chill") ? 10 : 0,
       summary: "Today’s plan follows your custom scheduling preferences.",
     };
   }
@@ -177,6 +197,9 @@ function modeConfig(mode: PlanningMode, custom?: CustomPlanningPreferences): Mod
     focusBlockMinutes: 75,
     maxTaskMinutes: 90,
     breakMinutes: 15,
+    minBreakMinutes: 10,
+    startBufferMinutes: 0,
+    endBufferMinutes: 0,
     summary: "Today’s plan balances urgent work, project progress, and breaks.",
   };
 }
@@ -196,10 +219,82 @@ function minutesToTime(minutes: number) {
   return `${String(hours).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`;
 }
 
-function itemStartsOnDate(item: PlannerCalendarItem, date: string) {
-  const day = parseISO(`${date}T12:00:00`);
+function dateTimePartsInTimezone(value: Date, timezone: string) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(value);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+
+  return {
+    date: `${values.year}-${values.month}-${values.day}`,
+    minutes:
+      Number.parseInt(values.hour ?? "0", 10) * 60 +
+      Number.parseInt(values.minute ?? "0", 10),
+  };
+}
+
+function nowInTimezone(timezone: string) {
+  return dateTimePartsInTimezone(new Date(), timezone);
+}
+
+function currentTimeInTimezone(request: DailyPlanRequest) {
+  if (!request.currentTime) {
+    return nowInTimezone(request.timezone);
+  }
+
+  const currentTime = parseISO(request.currentTime);
+
+  if (Number.isNaN(currentTime.getTime())) {
+    return nowInTimezone(request.timezone);
+  }
+
+  return dateTimePartsInTimezone(currentTime, request.timezone);
+}
+
+function roundUpToPlanningSlot(minutes: number) {
+  return Math.ceil(minutes / 5) * 5;
+}
+
+function eventBusyWindowForDate(
+  item: PlannerCalendarItem,
+  date: string,
+  timezone: string,
+) {
   const start = parseISO(item.start);
-  return !Number.isNaN(start.getTime()) && isSameDay(start, day);
+  const end = parseISO(item.end);
+
+  if (
+    Number.isNaN(start.getTime()) ||
+    Number.isNaN(end.getTime()) ||
+    end.getTime() <= start.getTime()
+  ) {
+    return null;
+  }
+
+  const localStart = dateTimePartsInTimezone(start, timezone);
+  const localEnd = dateTimePartsInTimezone(end, timezone);
+
+  if (localEnd.date < date || localStart.date > date) {
+    return null;
+  }
+
+  const windowStart = localStart.date < date ? 0 : localStart.minutes;
+  const windowEnd = localEnd.date > date ? 24 * 60 : localEnd.minutes;
+
+  if (windowEnd <= windowStart) {
+    return null;
+  }
+
+  return {
+    start: windowStart,
+    end: windowEnd,
+  };
 }
 
 function nearestDeadline(task: PlannerTask) {
@@ -306,22 +401,212 @@ function subtractBusyWindows(
 
 function freeWindowsForDay(request: DailyPlanRequest) {
   const workWindow = getWorkWindow(request);
-  const fixedBusy = request.scheduledItems
-    .filter((item) => item.source === "event" && itemStartsOnDate(item, request.date))
-    .map((item) => {
-      const start = parseISO(item.start);
-      const end = parseISO(item.end);
-      return {
-        start: start.getHours() * 60 + start.getMinutes(),
-        end: end.getHours() * 60 + end.getMinutes(),
-      };
-    })
-    .filter((window) => window.end > window.start)
+  const timezoneNow = currentTimeInTimezone(request);
+
+  if (request.date < timezoneNow.date) {
+    return [];
+  }
+
+  const currentDayStart =
+    timezoneNow.date === request.date
+      ? Math.max(workWindow.startMinutes, roundUpToPlanningSlot(timezoneNow.minutes))
+      : workWindow.startMinutes;
+
+  if (currentDayStart >= workWindow.endMinutes) {
+    return [];
+  }
+
+  const scheduledBusy = request.scheduledItems
+    .filter((item) => shouldPreserveScheduledItem(item, request, timezoneNow))
+    .map((item) => eventBusyWindowForDate(item, request.date, request.timezone))
+    .filter((window) => window !== null)
     .sort((a, b) => a.start - b.start);
 
   return subtractBusyWindows(
-    [{ start: workWindow.startMinutes, end: workWindow.endMinutes }],
-    fixedBusy,
+    [{ start: currentDayStart, end: workWindow.endMinutes }],
+    scheduledBusy,
+  );
+}
+
+function scheduledItemStartedBeforePlanningCursor(
+  item: PlannerCalendarItem,
+  request: DailyPlanRequest,
+  timezoneNow: ReturnType<typeof currentTimeInTimezone>,
+) {
+  if (request.date !== timezoneNow.date) {
+    return false;
+  }
+
+  const window = eventBusyWindowForDate(item, request.date, request.timezone);
+
+  if (!window) {
+    return false;
+  }
+
+  return window.start < roundUpToPlanningSlot(timezoneNow.minutes);
+}
+
+function scheduledItemOverlapsPlanningDate(item: PlannerCalendarItem, request: DailyPlanRequest) {
+  return eventBusyWindowForDate(item, request.date, request.timezone) !== null;
+}
+
+function isUnfinishedScheduledTask(item: PlannerCalendarItem) {
+  return item.source === "task" && item.taskId && item.status !== "done";
+}
+
+function taskIsInPlanningScope(item: PlannerCalendarItem, request: DailyPlanRequest) {
+  return Boolean(item.taskId && request.tasks.some((task) => task.id === item.taskId));
+}
+
+function shouldPreserveScheduledItem(
+  item: PlannerCalendarItem,
+  request: DailyPlanRequest,
+  timezoneNow: ReturnType<typeof currentTimeInTimezone>,
+) {
+  if (item.source !== "task") {
+    return true;
+  }
+
+  if (!isUnfinishedScheduledTask(item)) {
+    return true;
+  }
+
+  if (!taskIsInPlanningScope(item, request)) {
+    return true;
+  }
+
+  if (scheduledItemStartedBeforePlanningCursor(item, request, timezoneNow)) {
+    return false;
+  }
+
+  return request.scheduledTaskHandling !== "rearrange_future";
+}
+
+function dependencyMapForRequest(request: DailyPlanRequest) {
+  const dependenciesByTask = new Map<string, Set<string>>();
+
+  function addDependency(taskId: string, dependsOnTaskId: string) {
+    if (taskId === dependsOnTaskId) {
+      return;
+    }
+
+    if (!dependenciesByTask.has(taskId)) {
+      dependenciesByTask.set(taskId, new Set());
+    }
+
+    dependenciesByTask.get(taskId)?.add(dependsOnTaskId);
+  }
+
+  for (const task of request.tasks) {
+    for (const dependsOnTaskId of task.dependencyIds ?? []) {
+      addDependency(task.id, dependsOnTaskId);
+    }
+  }
+
+  for (const dependency of request.dependencies) {
+    addDependency(dependency.taskId, dependency.dependsOnTaskId);
+  }
+
+  return dependenciesByTask;
+}
+
+function preservedScheduledTaskEndMinutes(
+  request: DailyPlanRequest,
+  timezoneNow: ReturnType<typeof currentTimeInTimezone>,
+) {
+  const endMinutesByTask = new Map<string, number>();
+
+  for (const item of request.scheduledItems) {
+    if (
+      item.source !== "task" ||
+      !item.taskId ||
+      !scheduledItemOverlapsPlanningDate(item, request) ||
+      !shouldPreserveScheduledItem(item, request, timezoneNow)
+    ) {
+      continue;
+    }
+
+    const window = eventBusyWindowForDate(item, request.date, request.timezone);
+
+    if (!window) {
+      continue;
+    }
+
+    endMinutesByTask.set(
+      item.taskId,
+      Math.max(endMinutesByTask.get(item.taskId) ?? 0, window.end),
+    );
+  }
+
+  return endMinutesByTask;
+}
+
+function taskDependenciesSatisfiedAtCursor({
+  task,
+  cursor,
+  dependenciesByTask,
+  tasksById,
+  remainingTaskIds,
+  scheduledTaskEndMinutes,
+  preservedTaskEndMinutes,
+}: {
+  task: PlannerTask;
+  cursor: number;
+  dependenciesByTask: Map<string, Set<string>>;
+  tasksById: Map<string, PlannerTask>;
+  remainingTaskIds: Set<string>;
+  scheduledTaskEndMinutes: Map<string, number>;
+  preservedTaskEndMinutes: Map<string, number>;
+}) {
+  for (const dependsOnTaskId of dependenciesByTask.get(task.id) ?? []) {
+    const dependencyTask = tasksById.get(dependsOnTaskId);
+
+    if (dependencyTask?.status === "done") {
+      continue;
+    }
+
+    const generatedEnd = scheduledTaskEndMinutes.get(dependsOnTaskId);
+
+    if (generatedEnd !== undefined && generatedEnd <= cursor) {
+      continue;
+    }
+
+    const preservedEnd = preservedTaskEndMinutes.get(dependsOnTaskId);
+
+    if (preservedEnd !== undefined && preservedEnd <= cursor) {
+      continue;
+    }
+
+    if (remainingTaskIds.has(dependsOnTaskId)) {
+      return false;
+    }
+
+    return false;
+  }
+
+  return true;
+}
+
+function selectNextDependencyReadyTask(
+  candidates: PlannerTask[],
+  cursor: number,
+  dependenciesByTask: Map<string, Set<string>>,
+  tasksById: Map<string, PlannerTask>,
+  scheduledTaskEndMinutes: Map<string, number>,
+  preservedTaskEndMinutes: Map<string, number>,
+) {
+  const remainingTaskIds = new Set(candidates.map((task) => task.id));
+
+  return candidates.findIndex((task) =>
+    taskDependenciesSatisfiedAtCursor({
+      task,
+      cursor,
+      dependenciesByTask,
+      tasksById,
+      remainingTaskIds,
+      scheduledTaskEndMinutes,
+      preservedTaskEndMinutes,
+    }),
   );
 }
 
@@ -381,24 +666,56 @@ export function generateDeterministicDailyPlan(request: DailyPlanRequest): Daily
   const availableMinutes = windows.reduce((total, window) => total + window.end - window.start, 0);
   const targetWorkMinutes = Math.max(0, Math.floor(availableMinutes * config.fillRatio));
   const avoidedText = (request.customInstructions?.avoidTasks ?? "").toLowerCase();
+  const timezoneNow = currentTimeInTimezone(request);
+  const tasksById = new Map(request.tasks.map((task) => [task.id, task]));
+  const dependenciesByTask = dependencyMapForRequest(request);
+  const preservedTaskEndMinutes = preservedScheduledTaskEndMinutes(request, timezoneNow);
+  const scheduledTaskEndMinutes = new Map<string, number>();
+  const scheduledTaskIds = new Set(
+    request.scheduledItems
+      .filter(
+        (item) =>
+          item.source === "task" &&
+          item.taskId &&
+          scheduledItemOverlapsPlanningDate(item, request) &&
+          shouldPreserveScheduledItem(item, request, timezoneNow),
+      )
+      .flatMap((item) => (item.taskId ? [item.taskId] : [])),
+  );
   const candidates = request.tasks
     .filter((task) => task.status !== "done")
+    .filter((task) => !scheduledTaskIds.has(task.id))
     .filter((task) => !avoidedText || !task.title.toLowerCase().includes(avoidedText))
     .sort((a, b) => scoreTask(b, request) - scoreTask(a, request));
 
   const schedule: DailyPlanBlock[] = [];
   const postponed: PostponedTask[] = [];
-  let taskIndex = 0;
+  const remainingCandidates = [...candidates];
   let scheduledWorkMinutes = 0;
 
   for (const window of windows) {
-    let cursor = window.start;
+    let cursor = Math.min(window.end, window.start + config.startBufferMinutes);
+    const windowEnd = Math.max(cursor, window.end - config.endBufferMinutes);
 
-    while (taskIndex < candidates.length && cursor + 15 <= window.end) {
-      const task = candidates[taskIndex];
+    while (remainingCandidates.length && cursor + 15 <= windowEnd) {
+      const taskIndex = selectNextDependencyReadyTask(
+        remainingCandidates,
+        cursor,
+        dependenciesByTask,
+        tasksById,
+        scheduledTaskEndMinutes,
+        preservedTaskEndMinutes,
+      );
+
+      if (taskIndex === -1) {
+        break;
+      }
+
+      const [task] = remainingCandidates.splice(taskIndex, 1);
       const remainingBudget = targetWorkMinutes - scheduledWorkMinutes;
 
       if (remainingBudget < 15) {
+        remainingCandidates.unshift(task);
         break;
       }
 
@@ -407,10 +724,11 @@ export function generateDeterministicDailyPlan(request: DailyPlanRequest): Daily
         requestedMinutes,
         config.maxTaskMinutes,
         remainingBudget,
-        window.end - cursor,
+        windowEnd - cursor,
       );
 
       if (duration < 15) {
+        remainingCandidates.unshift(task);
         break;
       }
 
@@ -426,34 +744,40 @@ export function generateDeterministicDailyPlan(request: DailyPlanRequest): Daily
         reason: blockReason(task),
       });
       scheduledWorkMinutes += duration;
+      scheduledTaskEndMinutes.set(task.id, end);
       cursor = end;
-      taskIndex += 1;
 
-      if (
-        taskIndex < candidates.length &&
-        cursor + config.breakMinutes + 15 <= window.end &&
-        scheduledWorkMinutes < targetWorkMinutes
-      ) {
+      if (remainingCandidates.length && scheduledWorkMinutes < targetWorkMinutes) {
+        if (cursor + config.minBreakMinutes + 15 > windowEnd) {
+          break;
+        }
+
+        const breakMinutes = Math.min(
+          config.breakMinutes,
+          Math.max(config.minBreakMinutes, windowEnd - cursor - 15),
+        );
         schedule.push({
           start_time: minutesToTime(cursor),
-          end_time: minutesToTime(cursor + config.breakMinutes),
+          end_time: minutesToTime(cursor + breakMinutes),
           type: "break",
           task_id: null,
           task_title: "Break",
-          reason: `${config.breakMinutes} minute recovery gap.`,
+          reason: `${breakMinutes} minute recovery gap.`,
         });
-        cursor += config.breakMinutes;
+        cursor += breakMinutes;
       }
     }
   }
 
-  for (const task of candidates.slice(taskIndex)) {
+  for (const task of remainingCandidates) {
     postponed.push({
       task_id: task.id,
       task_title: task.title,
       reason:
         scheduledWorkMinutes >= targetWorkMinutes
           ? "Lower schedule score or outside today’s realistic capacity."
+          : (dependenciesByTask.get(task.id)?.size ?? 0) > 0
+            ? "Could not schedule after prerequisite tasks within today’s available time."
           : "Could not fit around fixed events and work hours.",
     });
   }
@@ -472,7 +796,7 @@ export function generateDeterministicDailyPlan(request: DailyPlanRequest): Daily
     warnings,
     postponed_tasks: postponed.slice(0, 8),
     alternatives: [],
-    explanation_summary: `Drafted ${schedule.filter((block) => block.type === "focus_block").length} focus blocks totaling ${workLabel}. Tasks were scored by deadline urgency, priority, estimated effort, current status, and project progress while preserving fixed calendar events.`,
+    explanation_summary: `Drafted ${schedule.filter((block) => block.type === "focus_block").length} focus blocks totaling ${workLabel}. Tasks were scored by deadline urgency, priority, estimated effort, current status, and project progress while ${request.scheduledTaskHandling === "rearrange_future" ? "rearranging unfinished future scheduled task blocks" : "preserving fixed events and future scheduled task blocks"}.`,
   };
 }
 

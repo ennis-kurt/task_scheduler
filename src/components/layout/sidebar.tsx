@@ -1,12 +1,12 @@
 "use client";
 
 import { Icon } from "@iconify/react";
-import { useSyncExternalStore } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { useTheme } from "next-themes";
 
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import type { ProjectPlan, AreaRecord } from "@/lib/planner/types";
+import type { ProjectPlan, AreaRecord, UpdateProjectInput } from "@/lib/planner/types";
 import { UserButton } from "@clerk/nextjs";
 
 export type ActiveViewType =
@@ -25,6 +25,7 @@ export type SidebarProps = {
   onOpenNewProject: () => void;
   onOpenNewArea: () => void;
   onOpenCreateTask: () => void;
+  onUpdateProject: (projectId: string, input: UpdateProjectInput) => Promise<void>;
   onOpenSettings: () => void;
   showUserButton: boolean;
   inboxCount: number;
@@ -103,10 +104,32 @@ export function Sidebar({
   onOpenNewProject,
   onOpenNewArea,
   onOpenCreateTask,
+  onUpdateProject,
   onOpenSettings,
   showUserButton,
   inboxCount,
 }: SidebarProps) {
+  const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
+  const [draftProjectName, setDraftProjectName] = useState("");
+  const [savingProjectId, setSavingProjectId] = useState<string | null>(null);
+
+  async function saveProjectName(projectId: string) {
+    const nextName = draftProjectName.trim();
+
+    if (!nextName) {
+      return;
+    }
+
+    setSavingProjectId(projectId);
+    try {
+      await onUpdateProject(projectId, { name: nextName });
+      setEditingProjectId(null);
+      setDraftProjectName("");
+    } finally {
+      setSavingProjectId(null);
+    }
+  }
+
   return (
     <aside className="hidden h-full w-[clamp(12.9rem,15.8vw,14.9rem)] shrink-0 flex-col border-r border-[var(--border-strong)] bg-[var(--surface-muted)] transition-colors md:flex">
       {/* Brand / User */}
@@ -188,41 +211,97 @@ export function Sidebar({
 
         {/* Projects */}
         <div className="flex flex-col gap-1">
-          <div className="flex items-center justify-between px-2 py-1 group">
-            <span className="text-xs font-medium tracking-tight text-[var(--muted-foreground)] uppercase">Projects</span>
+          <div className="group flex items-center justify-between gap-2 px-2 py-1">
+            <span className="min-w-0 truncate text-xs font-medium uppercase tracking-tight text-[var(--muted-foreground)]">Projects</span>
             <button
               type="button"
               aria-label="Add project"
-              className="text-[var(--muted-foreground)] opacity-0 group-hover:opacity-100 hover:text-[var(--foreground-strong)] transition-all"
+              className="flex h-6 w-6 flex-none items-center justify-center rounded text-[var(--muted-foreground)] opacity-0 transition-opacity group-hover:opacity-100 hover:bg-[var(--button-ghost-hover)] hover:text-[var(--foreground-strong)]"
               onClick={onOpenNewProject}
             >
-              <Icon icon="solar:add-square-linear" width="16" />
+              <Icon icon="solar:add-square-linear" className="h-4 w-4 shrink-0" />
             </button>
           </div>
           {projectPlans.map((plan) => {
             const isActive = activeView === `project:${plan.project.id}`;
 
-            return (
-              <button
-                key={plan.project.id}
-                onClick={() => onChangeView(`project:${plan.project.id}`)}
-                className={cn(
-                  "flex items-center gap-2.5 px-2 py-1.5 rounded-md transition-colors text-sm w-full text-left",
-                  isActive
-                    ? "bg-[var(--accent-soft)] text-[var(--foreground-strong)] font-medium"
-                    : "text-[var(--muted-foreground)] hover:bg-[var(--button-ghost-hover)] hover:text-[var(--foreground-strong)]"
-                )}
-              >
+              if (editingProjectId === plan.project.id) {
+                return (
+                  <form
+                    key={plan.project.id}
+                    className="flex items-center gap-1 rounded-md bg-[var(--surface)] px-2 py-1"
+                    onSubmit={async (event) => {
+                      event.preventDefault();
+                      await saveProjectName(plan.project.id);
+                    }}
+                  >
+                    <div
+                      className="h-2 w-2 shrink-0 rounded-full border"
+                      style={{ borderColor: plan.project.color, backgroundColor: plan.project.color }}
+                    />
+                    <input
+                      value={draftProjectName}
+                      autoFocus
+                      disabled={savingProjectId === plan.project.id}
+                      onChange={(event) => setDraftProjectName(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Escape") {
+                          event.preventDefault();
+                          setEditingProjectId(null);
+                          setDraftProjectName("");
+                        }
+                      }}
+                      onBlur={() => {
+                        if (draftProjectName.trim() && draftProjectName.trim() !== plan.project.name) {
+                          void saveProjectName(plan.project.id);
+                        } else {
+                          setEditingProjectId(null);
+                          setDraftProjectName("");
+                        }
+                      }}
+                      className="min-w-0 flex-1 rounded border border-[var(--border)] bg-[var(--surface-elevated)] px-1.5 py-0.5 text-sm font-medium text-[var(--foreground-strong)] outline-none focus:border-[var(--border-strong)]"
+                    />
+                  </form>
+                );
+              }
+
+              return (
                 <div
-                  className="w-2 h-2 rounded-full border"
-                  style={{
-                    borderColor: plan.project.color,
-                    backgroundColor: isActive ? plan.project.color : "transparent",
-                  }}
-                />
-                <span className="truncate">{plan.project.name}</span>
-              </button>
-            );
+                  key={plan.project.id}
+                  className={cn(
+                    "group flex min-w-0 items-center overflow-hidden rounded-md text-sm transition-colors w-full",
+                    isActive
+                      ? "bg-[var(--accent-soft)] text-[var(--foreground-strong)] font-medium"
+                      : "text-[var(--muted-foreground)] hover:bg-[var(--button-ghost-hover)] hover:text-[var(--foreground-strong)]",
+                  )}
+                >
+                  <button
+                    type="button"
+                    onClick={() => onChangeView(`project:${plan.project.id}`)}
+                    className="flex min-w-0 flex-1 basis-0 items-center gap-2.5 px-2 py-1.5 text-left"
+                  >
+                    <div
+                      className="h-2 w-2 shrink-0 rounded-full border"
+                      style={{
+                        borderColor: plan.project.color,
+                        backgroundColor: isActive ? plan.project.color : "transparent",
+                      }}
+                    />
+                    <span className="truncate">{plan.project.name}</span>
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Rename project"
+                    className="mr-1 flex h-6 w-6 flex-none items-center justify-center rounded text-[var(--muted-foreground)] opacity-0 transition-opacity group-hover:opacity-100 hover:bg-[var(--button-ghost-hover)] hover:text-[var(--foreground-strong)]"
+                    onClick={() => {
+                      setEditingProjectId(plan.project.id);
+                      setDraftProjectName(plan.project.name);
+                    }}
+                  >
+                    <Icon icon="solar:pen-linear" className="h-3.5 w-3.5 shrink-0" />
+                  </button>
+                </div>
+              );
           })}
         </div>
 
