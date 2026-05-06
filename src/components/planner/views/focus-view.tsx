@@ -689,11 +689,14 @@ export function FocusView({
   );
 
   const advancePhase = useCallback(
-    (options?: { countFocus?: boolean }) => {
+    (options?: { countFocus?: boolean; timerComplete?: boolean }) => {
       const completedPhase = selectedProfile.phases[phaseIndex] ?? selectedProfile.phases[0];
 
       if (options?.countFocus && completedPhase.kind === "focus") {
         recordFocusSession(completedPhase);
+      }
+
+      if (options?.timerComplete) {
         playFocusChime();
       }
 
@@ -717,7 +720,7 @@ export function FocusView({
     const interval = window.setInterval(() => {
       setRemainingSeconds((current) => {
         if (current <= 1) {
-          window.setTimeout(() => advancePhase({ countFocus: true }), 0);
+          window.setTimeout(() => advancePhase({ countFocus: true, timerComplete: true }), 0);
           return 0;
         }
 

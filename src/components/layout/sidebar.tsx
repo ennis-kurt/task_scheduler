@@ -211,12 +211,13 @@ export function Sidebar({
 
         {/* Projects */}
         <div className="flex flex-col gap-1">
-          <div className="group flex items-center justify-between gap-2 px-2 py-1">
+          <div className="group grid grid-cols-[minmax(0,1fr)_2.25rem] items-center gap-1 px-2 py-1">
             <span className="min-w-0 truncate text-xs font-medium uppercase tracking-tight text-[var(--muted-foreground)]">Projects</span>
             <button
               type="button"
               aria-label="Add project"
-              className="flex h-6 w-6 flex-none items-center justify-center rounded text-[var(--muted-foreground)] opacity-0 transition-opacity group-hover:opacity-100 hover:bg-[var(--button-ghost-hover)] hover:text-[var(--foreground-strong)]"
+              data-testid="sidebar-add-project-action"
+              className="flex h-6 w-8 shrink-0 items-center justify-center justify-self-end overflow-visible rounded text-[var(--muted-foreground)] opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 hover:bg-[var(--button-ghost-hover)] hover:text-[var(--foreground-strong)]"
               onClick={onOpenNewProject}
             >
               <Icon icon="solar:add-square-linear" className="h-4 w-4 shrink-0" />
@@ -268,8 +269,9 @@ export function Sidebar({
               return (
                 <div
                   key={plan.project.id}
+                  data-testid={`sidebar-project-row-${plan.project.id}`}
                   className={cn(
-                    "group flex min-w-0 items-center overflow-hidden rounded-md text-sm transition-colors w-full",
+                    "group grid w-full min-w-0 grid-cols-[minmax(0,1fr)_2.25rem] items-center rounded-md text-sm transition-colors",
                     isActive
                       ? "bg-[var(--accent-soft)] text-[var(--foreground-strong)] font-medium"
                       : "text-[var(--muted-foreground)] hover:bg-[var(--button-ghost-hover)] hover:text-[var(--foreground-strong)]",
@@ -292,7 +294,8 @@ export function Sidebar({
                   <button
                     type="button"
                     aria-label="Rename project"
-                    className="mr-1 flex h-6 w-6 flex-none items-center justify-center rounded text-[var(--muted-foreground)] opacity-0 transition-opacity group-hover:opacity-100 hover:bg-[var(--button-ghost-hover)] hover:text-[var(--foreground-strong)]"
+                    data-testid={`sidebar-project-action-${plan.project.id}`}
+                    className="mr-1 flex h-6 w-8 shrink-0 items-center justify-center justify-self-end overflow-visible rounded text-[var(--muted-foreground)] opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 hover:bg-[var(--button-ghost-hover)] hover:text-[var(--foreground-strong)]"
                     onClick={() => {
                       setEditingProjectId(plan.project.id);
                       setDraftProjectName(plan.project.name);

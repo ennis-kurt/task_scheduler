@@ -73,6 +73,7 @@ import { PRIORITIES } from "@/lib/planner/constants";
 import {
   buildDefaultEventWindow,
   calculateMinutes,
+  expandRecurrence,
   toDateTimeInput,
   todayDateString,
 } from "@/lib/planner/date";
@@ -138,6 +139,7 @@ type QuickAddDefaults = {
 
 type TaskSaveOptions = {
   showToast?: boolean;
+  blockId?: string;
 };
 
 type TaskEditorAutoSaveState = "saved" | "queued" | "saving" | "error" | "invalid";
@@ -250,7 +252,7 @@ function taskAvailabilityLabel(task: Pick<PlannerTask, "availability">) {
 }
 
 function calendarNotificationStorageKey(baseKey: string) {
-  return `${baseKey}:calendar-task-sounds:v1`;
+  return `${baseKey}:calendar-item-sounds:v2`;
 }
 
 function readCalendarNotificationKeys(baseKey: string) {
@@ -293,11 +295,12 @@ function DateTimePicker({
   onChange: (val: string) => void;
   className?: string;
 }) {
+  const [open, setOpen] = useState(false);
   const dt = value ? parseISO(value) : undefined;
   const hasValidDate = dt && !isNaN(dt.getTime());
 
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button
           variant="outline"
@@ -320,28 +323,30 @@ function DateTimePicker({
           selected={hasValidDate ? dt : undefined}
           onSelect={(date) => {
             if (date) {
-               const oldTime = hasValidDate ? format(dt, "HH:mm") : "12:00";
-               const newStr = format(date, "yyyy-MM-dd") + "T" + oldTime;
-               onChange(newStr);
+              const oldTime = hasValidDate ? format(dt, "HH:mm") : "12:00";
+              const newStr = format(date, "yyyy-MM-dd") + "T" + oldTime;
+              onChange(newStr);
             }
           }}
           initialFocus
         />
         <div className="border-t border-[var(--border)] p-3">
-           <Input 
-             type="time" 
-             value={hasValidDate ? format(dt, "HH:mm") : ""}
-             onChange={(e) => {
-               const time = e.target.value;
-               if (hasValidDate && time) {
-                 const newStr = format(dt, "yyyy-MM-dd") + "T" + time;
-                 onChange(newStr);
-               } else if (time) {
-                 const newStr = format(new Date(), "yyyy-MM-dd") + "T" + time;
-                 onChange(newStr);
-               }
-             }}
-           />
+          <Input
+            type="time"
+            value={hasValidDate ? format(dt, "HH:mm") : ""}
+            onChange={(event) => {
+              const time = event.target.value;
+              if (hasValidDate && time) {
+                const newStr = format(dt, "yyyy-MM-dd") + "T" + time;
+                onChange(newStr);
+                setOpen(false);
+              } else if (time) {
+                const newStr = format(new Date(), "yyyy-MM-dd") + "T" + time;
+                onChange(newStr);
+                setOpen(false);
+              }
+            }}
+          />
         </div>
       </PopoverContent>
     </Popover>
@@ -673,6 +678,28 @@ function buildTaskItem(
     recurring: false,
     readOnly: false,
   };
+}
+
+function buildEventItems(
+  event: EventRecord,
+  range: PlannerRange,
+): PlannerCalendarItem[] {
+  return expandRecurrence(event.startsAt, event.endsAt, event.recurrence, range).map(
+    (occurrence) => ({
+      id: `event:${event.id}:${occurrence.occurrenceKey}`,
+      sourceId: event.id,
+      instanceId: `${event.id}-${occurrence.occurrenceKey}`,
+      occurrenceKey: occurrence.occurrenceKey,
+      source: "event" as const,
+      title: event.title,
+      start: occurrence.start,
+      end: occurrence.end,
+      notes: event.notes,
+      location: event.location,
+      recurring: occurrence.recurring,
+      readOnly: occurrence.recurring,
+    }),
+  );
 }
 
 function localPlanTimeToISOString(date: string, time: string) {
@@ -1134,7 +1161,7 @@ function useHeaderFocusSession(focusStorageKey: string, tasks: PlannerTask[]) {
   return session;
 }
 
-function useCalendarTaskSoundNotifications(
+function useCalendarItemSoundNotifications(
   storageKey: string,
   scheduledItems: PlannerCalendarItem[],
 ) {
@@ -1143,7 +1170,7 @@ function useCalendarTaskSoundNotifications(
 
   useEffect(() => {
     notifiedKeysRef.current = readCalendarNotificationKeys(storageKey);
-    lastCheckedAtRef.current = Date.now();
+    lastCheckedAtRef.current = Date.now() - CALENDAR_TASK_SOUND_LOOKBACK_MS;
   }, [storageKey]);
 
   useEffect(() => {
@@ -1161,7 +1188,7 @@ function useCalendarTaskSoundNotifications(
   }, []);
 
   useEffect(() => {
-    const checkTaskStarts = () => {
+    const checkItemStarts = () => {
       const currentTime = Date.now();
       const lastCheckedAt = lastCheckedAtRef.current ?? currentTime;
       const windowStart = Math.max(
@@ -1174,7 +1201,7 @@ function useCalendarTaskSoundNotifications(
       let notified = false;
 
       for (const item of scheduledItems) {
-        if (item.source !== "task" || item.status === "done") {
+        if (item.source === "task" && item.status === "done") {
           continue;
         }
 
@@ -1184,7 +1211,7 @@ function useCalendarTaskSoundNotifications(
           continue;
         }
 
-        const key = `${item.instanceId}:start:${item.start}`;
+        const key = `${item.source}:${item.instanceId}:start:${item.start}`;
 
         if (notifiedKeysRef.current.has(key)) {
           continue;
@@ -1192,7 +1219,7 @@ function useCalendarTaskSoundNotifications(
 
         notifiedKeysRef.current.add(key);
         playFocusChime();
-        toast("Task starts now", {
+        toast(item.source === "event" ? "Event starts now" : "Task starts now", {
           description: item.title,
         });
         notified = true;
@@ -1203,8 +1230,8 @@ function useCalendarTaskSoundNotifications(
       }
     };
 
-    checkTaskStarts();
-    const interval = window.setInterval(checkTaskStarts, 30_000);
+    checkItemStarts();
+    const interval = window.setInterval(checkItemStarts, 30_000);
 
     return () => window.clearInterval(interval);
   }, [scheduledItems, storageKey]);
@@ -1374,7 +1401,7 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
   const planningStorageKey = `inflara:planning:${plannerData.mode}:${plannerData.user.id}`;
   const focusStorageKey = `inflara:focus:${plannerData.mode}:${plannerData.user.id}`;
   const activeFocusSession = useHeaderFocusSession(focusStorageKey, plannerData.tasks);
-  useCalendarTaskSoundNotifications(planningStorageKey, plannerData.scheduledItems);
+  useCalendarItemSoundNotifications(planningStorageKey, plannerData.scheduledItems);
   const areaTasks = useMemo(
     () =>
       activeAreaId
@@ -1528,41 +1555,158 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
     });
   }
 
-  function optimisticallyMoveCalendarItem(sourceId: string, startsAt: string, endsAt: string) {
+  function optimisticallyPatchTaskFromEditor(
+    taskId: string,
+    input: UpdateTaskInput,
+    options: TaskSaveOptions = {},
+  ) {
     setPlannerData((current) => {
-      const matchingItem = current.scheduledItems.find(
-        (item) => item.source === "task" && item.sourceId === sourceId,
-      );
+      const task = current.tasks.find((item) => item.id === taskId);
 
-      if (!matchingItem?.taskId) {
+      if (!task) {
         return current;
       }
 
-      const nextTasks: PlannerTask[] = current.tasks.map((task) =>
-          task.id === matchingItem.taskId
+      const startsAt = input.startsAt ?? undefined;
+      const endsAt = input.endsAt ?? undefined;
+      const sourceId =
+        options.blockId ??
+        task.primaryBlock?.id ??
+        current.scheduledItems.find(
+          (item) => item.source === "task" && item.taskId === taskId,
+        )?.sourceId ??
+        `temp-${taskId}`;
+      const scheduledEstimate =
+        startsAt && endsAt ? calculateMinutes(startsAt, endsAt) : undefined;
+      const updatedTask: PlannerTask = {
+        ...task,
+        title: input.title ?? task.title,
+        notes: input.notes ?? task.notes,
+        priority: input.priority ?? task.priority,
+        estimatedMinutes:
+          scheduledEstimate ?? input.estimatedMinutes ?? task.estimatedMinutes,
+        dueAt: input.dueAt === undefined ? task.dueAt : input.dueAt,
+        preferredTimeBand: input.preferredTimeBand ?? task.preferredTimeBand,
+        preferredWindowStart:
+          input.preferredWindowStart === undefined
+            ? task.preferredWindowStart
+            : input.preferredWindowStart,
+        preferredWindowEnd:
+          input.preferredWindowEnd === undefined
+            ? task.preferredWindowEnd
+            : input.preferredWindowEnd,
+        areaId: input.areaId === undefined ? task.areaId : input.areaId,
+        projectId: input.projectId === undefined ? task.projectId : input.projectId,
+        milestoneId:
+          input.milestoneId === undefined ? task.milestoneId : input.milestoneId,
+        recurrence: input.recurrence === undefined ? task.recurrence : input.recurrence,
+        status: input.status ?? task.status,
+        completedAt:
+          input.status === undefined
+            ? task.completedAt
+            : input.status === "done"
+              ? input.completedAt ?? task.completedAt ?? new Date().toISOString()
+              : null,
+        availability:
+          input.availability ?? (startsAt && endsAt ? "ready" : task.availability),
+        dependencyIds: input.dependencyIds ?? task.dependencyIds,
+        hasBlock: startsAt && endsAt ? true : task.hasBlock,
+        primaryBlock:
+          startsAt && endsAt
             ? {
-                ...task,
-                estimatedMinutes: calculateMinutes(startsAt, endsAt),
-                availability: "ready",
-                hasBlock: true,
-              primaryBlock: {
                 id: sourceId,
                 startsAt,
                 endsAt,
-              },
-            }
-          : task,
+              }
+            : task.primaryBlock,
+      };
+      const nextTasks = current.tasks.map((item) =>
+        item.id === taskId ? updatedTask : item,
       );
+      const nextScheduledItems =
+        startsAt && endsAt
+          ? [
+              ...current.scheduledItems.filter(
+                (item) => !(item.source === "task" && item.taskId === taskId),
+              ),
+              buildTaskItem(updatedTask, sourceId, startsAt, endsAt),
+            ]
+          : current.scheduledItems.map((item) =>
+              item.source === "task" && item.taskId === taskId
+                ? {
+                    ...item,
+                    title: updatedTask.title,
+                    notes: updatedTask.notes,
+                    priority: updatedTask.priority,
+                    status: updatedTask.status,
+                    areaId: updatedTask.areaId,
+                    projectId: updatedTask.projectId,
+                  }
+                : item,
+            );
 
       return {
         ...current,
         ...deriveTaskCollections(nextTasks),
         tasks: nextTasks,
-        scheduledItems: current.scheduledItems.map((item) =>
-          item.source === "task" && item.sourceId === sourceId
-            ? { ...item, start: startsAt, end: endsAt }
-            : item,
+        scheduledItems: nextScheduledItems.sort((left, right) =>
+          left.start.localeCompare(right.start),
         ),
+      };
+    });
+  }
+
+  function optimisticallyMoveCalendarTaskItem(
+    sourceId: string,
+    startsAt: string,
+    endsAt: string,
+  ) {
+    const matchingItem = plannerData.scheduledItems.find(
+      (item) => item.source === "task" && item.sourceId === sourceId,
+    );
+
+    if (matchingItem?.taskId) {
+      optimisticallyPatchTaskFromEditor(
+        matchingItem.taskId,
+        { startsAt, endsAt },
+        { blockId: sourceId },
+      );
+    }
+  }
+
+  function optimisticallyPatchEvent(
+    eventId: string,
+    input: Partial<EventRecord>,
+    range: PlannerRange = visibleRange,
+  ) {
+    setPlannerData((current) => {
+      const event = current.events.find((item) => item.id === eventId);
+
+      if (!event) {
+        return current;
+      }
+
+      const updatedEvent: EventRecord = {
+        ...event,
+        title: input.title ?? event.title,
+        notes: input.notes ?? event.notes,
+        location: input.location ?? event.location,
+        startsAt: input.startsAt ?? event.startsAt,
+        endsAt: input.endsAt ?? event.endsAt,
+        recurrence: input.recurrence === undefined ? event.recurrence : input.recurrence,
+      };
+
+      return {
+        ...current,
+        events: current.events.map((item) =>
+          item.id === eventId ? updatedEvent : item,
+        ),
+        scheduledItems: [
+          ...current.scheduledItems.filter(
+            (item) => !(item.source === "event" && item.sourceId === eventId),
+          ),
+          ...buildEventItems(updatedEvent, range),
+        ].sort((left, right) => left.start.localeCompare(right.start)),
       };
     });
   }
@@ -1864,7 +2008,9 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
     }
 
     if (source === "task") {
-      optimisticallyMoveCalendarItem(sourceId, startsAt, endsAt);
+      optimisticallyMoveCalendarTaskItem(sourceId, startsAt, endsAt);
+    } else {
+      optimisticallyPatchEvent(sourceId, { startsAt, endsAt });
     }
 
     startTransition(async () => {
@@ -1901,6 +2047,9 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
     () => new Map(plannerData.projects.map((project) => [project.id, project])),
     [plannerData.projects],
   );
+  const calendarGeometryKey = plannerData.scheduledItems
+    .map((item) => `${item.id}:${item.start}:${item.end}:${item.readOnly}`)
+    .join("|");
   const calendarEvents = plannerData.scheduledItems.map((item) => {
     const project = item.projectId ? projectById.get(item.projectId) : null;
 
@@ -2001,6 +2150,7 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
     const showToast = options.showToast ?? true;
 
     try {
+      optimisticallyPatchTaskFromEditor(taskId, input, options);
       await requestJson(`/api/tasks/${taskId}`, {
         method: "PATCH",
         body: JSON.stringify(input),
@@ -2208,6 +2358,7 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
             externalDragRef={queueRef}
             calendarElement={
               <FullCalendar
+                key={calendarGeometryKey}
                 ref={calendarRef}
                 plugins={[timeGridPlugin, interactionPlugin]}
                 initialView={surface === "week" ? "timeGridWeek" : "timeGridDay"}
@@ -2333,12 +2484,18 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
         }
         onSaveEvent={(eventId, input) =>
           startTransition(async () => {
-            await requestJson(`/api/events/${eventId}`, {
-              method: "PATCH",
-              body: JSON.stringify(input),
-            });
-            toast.success("Event updated");
-            await refreshPlanner();
+            try {
+              optimisticallyPatchEvent(eventId, input);
+              await requestJson(`/api/events/${eventId}`, {
+                method: "PATCH",
+                body: JSON.stringify(input),
+              });
+              toast.success("Event updated");
+              await refreshPlanner();
+            } catch (error) {
+              await refreshPlanner().catch(() => undefined);
+              toast.error(error instanceof Error ? error.message : "Could not update event");
+            }
           })
         }
         onDeleteEvent={(eventId) =>
@@ -2891,7 +3048,9 @@ function EditorModal({
               plannerData={plannerData}
               githubRepoUrls={githubRepoUrls}
               onOpenAgentRun={onOpenAgentRun}
-              onSave={(input, options) => onSaveTask(task.id, input, options)}
+              onSave={(input, options) =>
+                onSaveTask(task.id, input, { ...options, blockId: block?.sourceId })
+              }
               onDelete={() => onDeleteTask(task.id)}
               onUnschedule={() => (block ? onUnscheduleTask(block.sourceId) : undefined)}
             />

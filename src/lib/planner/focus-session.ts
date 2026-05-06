@@ -35,6 +35,7 @@ export type ProjectedFocusSession = PersistedFocusSession & {
 const SESSION_VERSION = 1;
 
 let focusAudioContext: AudioContext | null = null;
+let lastChimeStartedAt = 0;
 
 type AudioWindow = Window &
   typeof globalThis & {
@@ -195,22 +196,29 @@ export function playFocusChime() {
 
   focusAudioContext ??= new AudioContextCtor();
   const context = focusAudioContext;
+  const startedAt = Date.now();
 
-  void context.resume?.().then(() => {
+  if (startedAt - lastChimeStartedAt < 350) {
+    return;
+  }
+
+  lastChimeStartedAt = startedAt;
+
+  const play = () => {
     const now = context.currentTime;
     const output = context.createGain();
     output.gain.setValueAtTime(0.0001, now);
-    output.gain.exponentialRampToValueAtTime(0.07, now + 0.035);
-    output.gain.exponentialRampToValueAtTime(0.0001, now + 1.1);
+    output.gain.exponentialRampToValueAtTime(0.18, now + 0.035);
+    output.gain.exponentialRampToValueAtTime(0.0001, now + 1.25);
     output.connect(context.destination);
 
-    [523.25, 659.25, 783.99].forEach((frequency, index) => {
+    [659.25, 880, 1046.5].forEach((frequency, index) => {
       const oscillator = context.createOscillator();
       const toneGain = context.createGain();
-      const startAt = now + index * 0.08;
-      const stopAt = startAt + 0.85;
+      const startAt = now + index * 0.11;
+      const stopAt = startAt + 0.95;
 
-      oscillator.type = "sine";
+      oscillator.type = "triangle";
       oscillator.frequency.setValueAtTime(frequency, startAt);
       toneGain.gain.setValueAtTime(0.0001, startAt);
       toneGain.gain.exponentialRampToValueAtTime(0.45, startAt + 0.03);
@@ -221,7 +229,18 @@ export function playFocusChime() {
       oscillator.start(startAt);
       oscillator.stop(stopAt + 0.05);
     });
-  });
+  };
+
+  const resumeResult = context.resume?.();
+
+  if (resumeResult) {
+    void resumeResult.then(play).catch(() => {
+      lastChimeStartedAt = 0;
+    });
+    return;
+  }
+
+  play();
 }
 
 function isPersistedFocusSession(value: unknown): value is PersistedFocusSession {

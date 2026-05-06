@@ -1,4 +1,10 @@
-import { expect, test, type APIRequestContext, type APIResponse } from "@playwright/test";
+import {
+  expect,
+  test,
+  type APIRequestContext,
+  type APIResponse,
+  type Page,
+} from "@playwright/test";
 import { readFile, rm } from "node:fs/promises";
 import path from "node:path";
 
@@ -145,6 +151,65 @@ async function expectJson<T>(response: APIResponse, status: number) {
 function timeToMinutes(value: string) {
   const [hours, minutes] = value.split(":").map((part) => Number.parseInt(part, 10));
   return hours * 60 + minutes;
+}
+
+function localTimeInNewYork(value: string) {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    hourCycle: "h23",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
+}
+
+async function installChimeSpy(page: Page) {
+  await page.addInitScript(() => {
+    const target = window as typeof window & {
+      __inflaraChimeStarts?: number;
+      webkitAudioContext?: typeof AudioContext;
+    };
+
+    class FakeAudioParam {
+      setValueAtTime() {}
+      exponentialRampToValueAtTime() {}
+    }
+
+    class FakeAudioNode {
+      gain = new FakeAudioParam();
+      frequency = new FakeAudioParam();
+      type = "sine";
+
+      connect() {
+        return this;
+      }
+
+      start() {
+        target.__inflaraChimeStarts = (target.__inflaraChimeStarts ?? 0) + 1;
+      }
+
+      stop() {}
+    }
+
+    class FakeAudioContext {
+      currentTime = 0;
+      destination = {};
+
+      resume() {
+        return Promise.resolve();
+      }
+
+      createGain() {
+        return new FakeAudioNode();
+      }
+
+      createOscillator() {
+        return new FakeAudioNode();
+      }
+    }
+
+    target.AudioContext = FakeAudioContext as unknown as typeof AudioContext;
+    target.webkitAudioContext = FakeAudioContext as unknown as typeof AudioContext;
+  });
 }
 
 async function createAgentToken(
@@ -303,6 +368,20 @@ test("left rail navigates planning, inbox, capacity, areas, and project tabs", a
   await sidebar.getByRole("button", { name: "Planner MVP", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Planner MVP" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Project Design" })).toBeVisible();
+  const addProjectAction = page.getByTestId("sidebar-add-project-action");
+  const projectRow = page.getByTestId("sidebar-project-row-project-launch");
+  const projectAction = page.getByTestId("sidebar-project-action-project-launch");
+  await expect(addProjectAction).toBeVisible();
+  await projectRow.hover();
+  await expect(projectAction).toHaveCSS("opacity", "1");
+  const projectRowBox = await projectRow.boundingBox();
+  const projectActionBox = await projectAction.boundingBox();
+  expect(projectRowBox).not.toBeNull();
+  expect(projectActionBox).not.toBeNull();
+  expect(projectActionBox!.width).toBeGreaterThanOrEqual(28);
+  expect(projectActionBox!.x + projectActionBox!.width).toBeLessThanOrEqual(
+    projectRowBox!.x + projectRowBox!.width + 1,
+  );
 
   await page.getByRole("button", { name: "Gantt Chart" }).click();
   await expect(page.getByText("Gantt Timeline")).toBeVisible();
@@ -893,6 +972,21 @@ test("tasks without projects cannot retain milestones and extend milestone deadl
       )?.deadline;
     })
     .toBe("2026-06-15T18:00:00.000Z");
+
+  response = await request.patch("/api/tasks/task-plan", {
+    data: {
+      dueAt: "2026-06-20T12:00:00.000Z",
+    },
+  });
+  expect(response.status()).toBe(200);
+  await expect
+    .poll(async () => {
+      const snapshot = await readSnapshot();
+      return snapshot.milestones.find(
+        (milestone) => milestone.id === "milestone-discovery",
+      )?.deadline;
+    })
+    .toBe("2026-06-20T12:00:00.000Z");
 
   response = await request.patch("/api/tasks/task-outline", {
     data: {
@@ -2018,6 +2112,200 @@ test("planning kanban supports custom columns, local task columns, and collapse"
 
   await page.getByTestId("planning-collapse-toggle").click();
   await expect(page.getByTestId("planning-column-list")).toBeVisible();
+});
+
+test("calendar detail editors resync task and event schedule changes", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Planning", exact: true }).click();
+
+  const taskCalendarItem = page.locator(".planner-calendar-item", {
+    hasText: "Outline the planner onboarding",
+  }).first();
+  await expect(taskCalendarItem).toBeVisible();
+  const taskBoxBefore = await taskCalendarItem.boundingBox();
+  expect(taskBoxBefore).not.toBeNull();
+  await taskCalendarItem.dblclick();
+
+  const taskDialog = page.getByRole("dialog", { name: "Task details" });
+  await expect(taskDialog).toBeVisible();
+  await taskDialog
+    .locator("label")
+    .filter({ hasText: /^Start/ })
+    .getByRole("button")
+    .click();
+  await page
+    .locator('[data-slot="popover-content"]')
+    .last()
+    .locator('input[type="time"]')
+    .fill("12:00");
+
+  await expect
+    .poll(async () => {
+      const snapshot = await readSnapshot();
+      const block = snapshot.taskBlocks.find((item) => item.id === "block-outline");
+      return block ? localTimeInNewYork(block.startsAt) : null;
+    })
+    .toBe("12:00");
+  await expect(taskDialog.getByText("All changes saved")).toBeVisible();
+
+  const taskBoxAfter = await page.locator(".planner-calendar-item", {
+    hasText: "Outline the planner onboarding",
+  }).first().boundingBox();
+  expect(taskBoxAfter).not.toBeNull();
+  expect(taskBoxAfter!.y).toBeGreaterThan(taskBoxBefore!.y + 80);
+  await taskDialog.getByLabel("Close details").click();
+
+  const eventCalendarItem = page.locator(".planner-calendar-item", {
+    hasText: "Project review",
+  }).first();
+  await expect(eventCalendarItem).toBeVisible();
+  const eventBoxBefore = await eventCalendarItem.boundingBox();
+  expect(eventBoxBefore).not.toBeNull();
+  await eventCalendarItem.dblclick();
+
+  const eventDialog = page.getByRole("dialog", { name: "Event details" });
+  await expect(eventDialog).toBeVisible();
+  await eventDialog
+    .locator("label")
+    .filter({ hasText: /^Start/ })
+    .getByRole("button")
+    .click();
+  await page
+    .locator('[data-slot="popover-content"]')
+    .last()
+    .locator('input[type="time"]')
+    .fill("16:00");
+  await eventDialog
+    .locator("label")
+    .filter({ hasText: /^End/ })
+    .getByRole("button")
+    .click();
+  await page
+    .locator('[data-slot="popover-content"]')
+    .last()
+    .locator('input[type="time"]')
+    .fill("17:00");
+  await eventDialog.getByRole("button", { name: "Save event" }).click();
+  await expect(page.getByText("Event updated").first()).toBeVisible();
+
+  await expect
+    .poll(async () => {
+      const snapshot = await readSnapshot();
+      const event = snapshot.events.find((item) => item.id === "event-review");
+      return event
+        ? {
+            startsAt: localTimeInNewYork(event.startsAt),
+            endsAt: localTimeInNewYork(event.endsAt),
+          }
+        : null;
+    })
+    .toEqual({ startsAt: "16:00", endsAt: "17:00" });
+
+  const eventBoxAfter = await page.locator(".planner-calendar-item", {
+    hasText: "Project review",
+  }).first().boundingBox();
+  expect(eventBoxAfter).not.toBeNull();
+  expect(eventBoxAfter!.y).toBeGreaterThan(eventBoxBefore!.y + 80);
+  await eventDialog.getByLabel("Close details").click();
+
+  await page.locator(".planner-calendar-item", { hasText: "Project review" }).first().dblclick();
+  const reopenedEventDialog = page.getByRole("dialog", { name: "Event details" });
+  await expect(
+    reopenedEventDialog
+      .locator("label")
+      .filter({ hasText: /^Start/ })
+      .getByRole("button"),
+  ).toContainText("4:00 PM");
+});
+
+test("calendar event starts and restored focus completions play chimes", async ({
+  page,
+  request,
+}) => {
+  await installChimeSpy(page);
+  const now = Date.now();
+
+  await request.post("/api/events", {
+    data: {
+      title: "Immediate event chime",
+      notes: "Regression coverage for event sound notifications.",
+      location: "",
+      startsAt: new Date(now - 10_000).toISOString(),
+      endsAt: new Date(now + 30 * 60_000).toISOString(),
+    },
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Planning", exact: true }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        return (
+          window as typeof window & { __inflaraChimeStarts?: number }
+        ).__inflaraChimeStarts ?? 0;
+      }),
+    )
+    .toBeGreaterThanOrEqual(3);
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const raw = window.localStorage.getItem(
+          "inflara:planning:demo:demo-user:calendar-item-sounds:v2",
+        );
+        return raw ? JSON.parse(raw).some((key: string) => key.startsWith("event:")) : false;
+      }),
+    )
+    .toBe(true);
+});
+
+test("focus sessions chime when a persisted running phase finishes", async ({ page }) => {
+  const updatedAt = new Date(Date.now() - 2_500).toISOString();
+
+  await installChimeSpy(page);
+  await page.addInitScript((sessionUpdatedAt) => {
+    window.localStorage.setItem(
+      "inflara:focus:demo:demo-user:session:v1",
+      JSON.stringify({
+        version: 1,
+        selectedTaskId: "task-plan",
+        selectedProfileId: "dynamic",
+        profileName: "Dynamic Flow",
+        customFocusMinutes: 38,
+        customBreakMinutes: 5,
+        customLongBreakMinutes: 15,
+        customRounds: 4,
+        phaseIndex: 0,
+        remainingSeconds: 1,
+        running: true,
+        phases: [
+          {
+            id: "focus-1",
+            kind: "focus",
+            label: "Work 1",
+            minutes: 25,
+          },
+          {
+            id: "break-1",
+            kind: "break",
+            label: "Break 1",
+            minutes: 5,
+          },
+        ],
+        updatedAt: sessionUpdatedAt,
+      }),
+    );
+  }, updatedAt);
+
+  await page.goto("/");
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        return (
+          window as typeof window & { __inflaraChimeStarts?: number }
+        ).__inflaraChimeStarts ?? 0;
+      }),
+    )
+    .toBeGreaterThanOrEqual(3);
 });
 
 test("AI daily planner generates draft schedules and applies them to the calendar", async ({
