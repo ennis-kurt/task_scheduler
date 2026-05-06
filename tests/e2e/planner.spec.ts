@@ -2019,6 +2019,39 @@ test("project design task search replaces the inactive filter", async ({ page })
   await expect(projectModule.getByTestId("project-task-row-task-kickoff")).toBeVisible();
 });
 
+test("gantt task drill-down can add a task to the selected milestone", async ({ page }) => {
+  await page.goto("/");
+  await page.locator("aside").getByRole("button", { name: "Planner MVP", exact: true }).click();
+  await page.getByRole("button", { name: "Gantt Chart" }).click();
+
+  await page.getByTestId("project-gantt-toggle-milestone-build").click();
+  await page.getByTestId("project-gantt-add-task-milestone-build").click();
+
+  const dialog = page.getByTestId("quick-add-dialog");
+  await expect(dialog).toBeVisible();
+  await expect(dialog.locator("select").nth(0)).toHaveValue("project-launch");
+  await expect(dialog.locator("select").nth(1)).toHaveValue("milestone-build");
+
+  await dialog.getByLabel("Task name").fill("Gantt drilldown task");
+  await dialog.getByRole("button", { name: "Add to inbox" }).click();
+
+  await expect
+    .poll(async () => {
+      const snapshot = await readSnapshot();
+      const task = snapshot.tasks.find((candidate) => candidate.title === "Gantt drilldown task");
+      return task
+        ? {
+            projectId: task.projectId,
+            milestoneId: task.milestoneId,
+          }
+        : null;
+    })
+    .toEqual({
+      projectId: "project-launch",
+      milestoneId: "milestone-build",
+    });
+});
+
 test("planning kanban supports custom columns, local task columns, and collapse", async ({
   page,
 }) => {

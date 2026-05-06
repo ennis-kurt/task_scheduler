@@ -2491,6 +2491,7 @@ export function ProjectPlanningModule({
                         <Button
                           variant="ghost"
                           size="sm"
+                          data-testid={`project-gantt-toggle-${milestone.id}`}
                           className="mt-3 h-7 rounded-full px-3 text-[11px]"
                           onClick={() =>
                             setExpandedMilestoneId((current) =>
@@ -2637,10 +2638,28 @@ export function ProjectPlanningModule({
                         className="grid border-b border-[var(--border)]"
                         style={{ gridTemplateColumns: `${LABEL_WIDTH}px ${timelineWidth}px` }}
                       >
-                      <div className="border-r border-[var(--border)] bg-[var(--surface)] px-4 py-4 md:sticky md:left-0">
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
-                          Task drill-down
-                        </p>
+                        <div className="border-r border-[var(--border)] bg-[var(--surface)] px-4 py-4 md:sticky md:left-0">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
+                            Task drill-down
+                          </p>
+                          {onOpenNewTask ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              data-testid={`project-gantt-add-task-${milestone.id}`}
+                              className="mt-3 h-8 rounded-full px-3 text-[11px]"
+                              onClick={() =>
+                                onOpenNewTask({
+                                  projectId: activeProject.project.id,
+                                  milestoneId: milestone.id,
+                                })
+                              }
+                            >
+                              <Plus className="h-3.5 w-3.5" />
+                              Add Task
+                            </Button>
+                          ) : null}
                         </div>
                         <div className="grid gap-3 bg-[var(--surface)] p-4 md:grid-cols-2">
                           {milestone.tasks.length ? (
