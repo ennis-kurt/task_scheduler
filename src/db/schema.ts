@@ -159,6 +159,26 @@ export const taskTags = pgTable("task_tags", {
     .references(() => tags.id, { onDelete: "cascade" }),
 });
 
+export const taskDependencies = pgTable(
+  "task_dependencies",
+  {
+    taskId: text("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    dependsOnTaskId: text("depends_on_task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("task_dependencies_task_depends_on_idx").on(
+      table.taskId,
+      table.dependsOnTaskId,
+    ),
+    index("task_dependencies_depends_on_task_id_idx").on(table.dependsOnTaskId),
+  ],
+);
+
 export const projectNotePages = pgTable("project_note_pages", {
   id: text("id").primaryKey(),
   userId: text("user_id")

@@ -158,6 +158,12 @@ export type TaskTagRecord = {
   tagId: string;
 };
 
+export type TaskDependencyRecord = {
+  taskId: string;
+  dependsOnTaskId: string;
+  createdAt: string;
+};
+
 export type ProjectNoteStatus = "Draft" | "Shared" | "Final";
 export type ProjectNoteKind = "note" | "section";
 export type ProjectNoteLinkedEntityType = "project" | "milestone" | "task" | "manual";
@@ -344,6 +350,7 @@ export type WorkspaceSnapshot = {
   events: EventRecord[];
   checklistItems: TaskChecklistItemRecord[];
   taskTags: TaskTagRecord[];
+  taskDependencies: TaskDependencyRecord[];
   apiAccessTokens: ApiAccessTokenRecord[];
   agentRunners: AgentRunnerRecord[];
   projectAgentLinks: ProjectAgentLinkRecord[];
@@ -357,6 +364,7 @@ export type PlannerTask = TaskRecord & {
   milestone: MilestoneRecord | null;
   tags: TagRecord[];
   checklist: TaskChecklistItemRecord[];
+  dependencyIds: string[];
   hasBlock: boolean;
   primaryBlock: {
     id: string;
@@ -494,6 +502,7 @@ export type NewTaskInput = {
   projectId?: string | null;
   milestoneId?: string | null;
   tagIds?: string[];
+  dependencyIds?: string[];
   checklist?: Array<{
     id?: string;
     label: string;

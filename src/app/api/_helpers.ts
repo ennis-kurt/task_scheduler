@@ -27,7 +27,11 @@ export function handleRouteError(error: unknown) {
 
   if (
     error instanceof Error &&
-    ["PROJECT_SCOPE_REQUIRED", "INVALID_PROJECT_SCOPE"].includes(error.message)
+    [
+      "PROJECT_SCOPE_REQUIRED",
+      "INVALID_PROJECT_SCOPE",
+      "INVALID_TASK_DEPENDENCY",
+    ].includes(error.message)
   ) {
     return NextResponse.json({ error: error.message }, { status: 400 });
   }

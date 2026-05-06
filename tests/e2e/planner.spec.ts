@@ -42,6 +42,16 @@ type DemoSnapshot = {
     startsAt: string;
     endsAt: string;
   }>;
+  taskDependencies: Array<{
+    taskId: string;
+    dependsOnTaskId: string;
+  }>;
+  events: Array<{
+    id: string;
+    title: string;
+    startsAt: string;
+    endsAt: string;
+  }>;
 };
 
 type AgentTokenResponse = {
@@ -135,26 +145,6 @@ async function expectJson<T>(response: APIResponse, status: number) {
 function timeToMinutes(value: string) {
   const [hours, minutes] = value.split(":").map((part) => Number.parseInt(part, 10));
   return hours * 60 + minutes;
-}
-
-function todayInTimezone(timeZone: string) {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(new Date());
-  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-
-  return {
-    date: `${values.year}-${values.month}-${values.day}`,
-    minutes:
-      Number.parseInt(values.hour ?? "0", 10) * 60 +
-      Number.parseInt(values.minute ?? "0", 10),
-  };
 }
 
 async function createAgentToken(
@@ -862,6 +852,60 @@ test("task notes stay on tasks unless explicitly added to project notes", async 
     title: "Task notes go to project notes",
     markdown: "This should become a project note.",
     sectionId: milestonesSection?.id,
+  });
+});
+
+test("tasks without projects cannot retain milestones and extend milestone deadlines", async ({
+  request,
+}) => {
+  let response = await request.post("/api/tasks", {
+    data: {
+      title: "No project means no milestone",
+      projectId: null,
+      milestoneId: "milestone-discovery",
+      estimatedMinutes: 30,
+    },
+  });
+  const noProjectTask = await expectJson<{
+    projectId: string | null;
+    milestoneId: string | null;
+  }>(response, 201);
+  expect(noProjectTask).toMatchObject({
+    projectId: null,
+    milestoneId: null,
+  });
+
+  response = await request.post("/api/tasks", {
+    data: {
+      title: "Push milestone deadline from task",
+      projectId: "project-launch",
+      milestoneId: "milestone-discovery",
+      dueAt: "2026-06-15T18:00:00.000Z",
+      estimatedMinutes: 45,
+    },
+  });
+  expect(response.status()).toBe(201);
+  await expect
+    .poll(async () => {
+      const snapshot = await readSnapshot();
+      return snapshot.milestones.find(
+        (milestone) => milestone.id === "milestone-discovery",
+      )?.deadline;
+    })
+    .toBe("2026-06-15T18:00:00.000Z");
+
+  response = await request.patch("/api/tasks/task-outline", {
+    data: {
+      projectId: null,
+    },
+  });
+  const clearedProjectTask = await expectJson<{
+    projectId: string | null;
+    milestoneId: string | null;
+  }>(response, 200);
+  expect(clearedProjectTask).toMatchObject({
+    projectId: null,
+    milestoneId: null,
   });
 });
 
@@ -1729,15 +1773,39 @@ test("planning kanban supports custom columns, local task columns, and collapse"
   await expect(page.getByTestId("planning-card-task-plan")).toHaveCount(1);
   await expect(page.getByTestId("planning-card-task-outline")).toHaveCount(1);
   await expect(page.getByTestId("planning-card-task-kickoff")).toHaveCount(1);
-  const taskFlowProjectFilter = page.getByLabel("Filter Task Flow by project");
-  await expect(taskFlowProjectFilter).toHaveValue("__all_projects");
-  await taskFlowProjectFilter.selectOption("project-wellness");
+  const taskFlowProjectFilter = page.getByTestId("task-flow-project-filter-trigger");
+  await expect(taskFlowProjectFilter).toContainText("All projects");
+  await taskFlowProjectFilter.click();
+  const taskFlowProjectFilterMenu = page.getByTestId("task-flow-project-filter-menu");
+  await expect(
+    taskFlowProjectFilterMenu.getByRole("checkbox", { name: "All projects" }),
+  ).toBeChecked();
+  await expect(
+    taskFlowProjectFilterMenu.getByRole("checkbox", { name: "Planner MVP" }),
+  ).toBeChecked();
+  await expect(
+    taskFlowProjectFilterMenu.getByRole("checkbox", { name: "Training Block" }),
+  ).toBeChecked();
+  await taskFlowProjectFilterMenu
+    .getByRole("checkbox", { name: "Planner MVP" })
+    .uncheck();
+  await expect(taskFlowProjectFilter).toContainText("Training Block");
   await expect(page.getByTestId("planning-card-task-gym")).toHaveCount(1);
   await expect(page.getByTestId("planning-card-task-plan")).toHaveCount(0);
-  await taskFlowProjectFilter.selectOption("project-launch");
+  await taskFlowProjectFilterMenu
+    .getByRole("checkbox", { name: "Planner MVP" })
+    .check();
+  await expect(taskFlowProjectFilter).toContainText("All projects");
+  await taskFlowProjectFilterMenu
+    .getByRole("checkbox", { name: "Training Block" })
+    .uncheck();
+  await expect(taskFlowProjectFilter).toContainText("Planner MVP");
   await expect(page.getByTestId("planning-card-task-plan")).toHaveCount(1);
   await expect(page.getByTestId("planning-card-task-gym")).toHaveCount(0);
-  await taskFlowProjectFilter.selectOption("__all_projects");
+  await taskFlowProjectFilterMenu
+    .getByRole("checkbox", { name: "All projects" })
+    .check();
+  await expect(taskFlowProjectFilter).toContainText("All projects");
   await expect(page.getByTestId("planning-card-task-plan")).toHaveCount(1);
   await page.getByTestId("surface-day").click();
   const shortCalendarItem = page
@@ -1958,9 +2026,15 @@ test("AI daily planner generates draft schedules and applies them to the calenda
   await page.goto("/");
   await page.getByRole("button", { name: "Planning", exact: true }).click();
 
-  const initialBlockCount = (await readSnapshot()).taskBlocks.length;
+  const initialSnapshot = await readSnapshot();
+  const initialBlockCount = initialSnapshot.taskBlocks.length;
+  const initialBreakEventCount = initialSnapshot.events.filter(
+    (event) => event.title === "Break",
+  ).length;
 
   await page.getByTestId("ai-planner-mode-standard").click();
+  await expect(page.getByTestId("ai-planner-scheduled-task-choice")).toBeVisible();
+  await page.getByTestId("ai-planner-preserve-scheduled").click();
   await expect(page.getByTestId("ai-planner-timeline")).toBeVisible();
   await expect(page.getByText("Apply Plan")).toBeVisible();
 
@@ -1972,6 +2046,12 @@ test("AI daily planner generates draft schedules and applies them to the calenda
       return snapshot.taskBlocks.length;
     })
     .toBeGreaterThan(initialBlockCount);
+  await expect
+    .poll(async () => {
+      const snapshot = await readSnapshot();
+      return snapshot.events.filter((event) => event.title === "Break").length;
+    })
+    .toBeGreaterThan(initialBreakEventCount);
 
   await page.getByTestId("ai-planner-mode-custom").click();
   await expect(page.getByTestId("ai-planner-custom-form")).toBeVisible();
@@ -1986,17 +2066,97 @@ test("AI daily planner generates draft schedules and applies them to the calenda
   await expect(page.getByTestId("ai-planner-timeline")).toBeVisible();
 });
 
+test("AI daily planner uses the Task Flow project filter", async ({ page }) => {
+  let dailyPlanRequest: {
+    date: string;
+    tasks: Array<{ id: string; projectId: string | null }>;
+    projects: Array<{ id: string }>;
+    projectPlans: Array<{ project: { id: string } }>;
+    scheduledItems: Array<{ source: string; taskId?: string }>;
+  } | null = null;
+
+  await page.route("**/api/ai/daily-plan", async (route) => {
+    dailyPlanRequest = route.request().postDataJSON();
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        planning_mode: "standard",
+        summary: "Filtered project plan",
+        generated_at: "2026-01-15T14:00:00.000Z",
+        date: dailyPlanRequest?.date ?? "2026-01-15",
+        schedule: [],
+        warnings: [],
+        postponed_tasks: [],
+        alternatives: [],
+        explanation_summary: "Only selected project tasks were considered.",
+      }),
+    });
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Planning", exact: true }).click();
+
+  const taskFlowProjectFilter = page.getByRole("button", {
+    name: "Filter Task Flow by project",
+  });
+  await expect(taskFlowProjectFilter).toBeVisible();
+  await taskFlowProjectFilter.click();
+  await page
+    .getByTestId("task-flow-project-filter-menu")
+    .getByRole("checkbox", { name: "Planner MVP" })
+    .uncheck();
+  await expect(taskFlowProjectFilter).toContainText("Training Block");
+
+  const requestPromise = page.waitForRequest(
+    (request) =>
+      request.url().includes("/api/ai/daily-plan") && request.method() === "POST",
+  );
+  await page.getByTestId("ai-planner-mode-standard").click();
+
+  if (
+    await page
+      .getByTestId("ai-planner-scheduled-task-choice")
+      .isVisible({ timeout: 1000 })
+      .catch(() => false)
+  ) {
+    await page.getByTestId("ai-planner-preserve-scheduled").click();
+  }
+
+  await requestPromise;
+  await expect(page.getByTestId("ai-planner-timeline")).toBeVisible();
+
+  expect(dailyPlanRequest).not.toBeNull();
+  expect(dailyPlanRequest!.tasks.length).toBeGreaterThan(0);
+  expect(
+    dailyPlanRequest!.tasks.every((task) => task.projectId === "project-wellness"),
+  ).toBe(true);
+  expect(dailyPlanRequest!.projects.map((project) => project.id)).toEqual([
+    "project-wellness",
+  ]);
+  expect(dailyPlanRequest!.projectPlans.map((plan) => plan.project.id)).toEqual([
+    "project-wellness",
+  ]);
+  expect(
+    dailyPlanRequest!.scheduledItems.some(
+      (item) => item.source === "task" && item.taskId === "task-plan",
+    ),
+  ).toBe(true);
+});
+
 test("AI daily planner fallback starts today after now and applies profile spacing", async ({
   request,
 }) => {
   const timezone = "UTC";
-  const now = todayInTimezone(timezone);
+  const date = "2026-01-15";
+  const currentTime = "2026-01-15T14:17:00.000Z";
   const workHours = Object.fromEntries(
     Array.from({ length: 7 }, (_, day) => [day, { start: "00:00", end: "23:59" }]),
   );
   const baseRequest = {
-    date: now.date,
+    date,
     timezone,
+    currentTime,
     projects: [],
     milestones: [],
     projectPlans: [],
@@ -2048,16 +2208,13 @@ test("AI daily planner fallback starts today after now and applies profile spaci
   const firstFocusBlock = standard.schedule.find((block) => block.type === "focus_block");
   expect(firstFocusBlock).toBeTruthy();
   expect(timeToMinutes(firstFocusBlock!.start_time)).toBeGreaterThanOrEqual(
-    Math.ceil(now.minutes / 5) * 5,
+    timeToMinutes("14:20"),
   );
 
-  const tomorrow = new Date();
-  tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
-  const futureDate = tomorrow.toISOString().slice(0, 10);
   const chillResponse = await request.post("/api/ai/daily-plan", {
     data: {
       ...baseRequest,
-      date: futureDate,
+      date: "2026-01-16",
       planningMode: "chill",
     },
   });
@@ -2069,6 +2226,18 @@ test("AI daily planner fallback starts today after now and applies profile spaci
   expect(
     timeToMinutes(firstBreak!.end_time) - timeToMinutes(firstBreak!.start_time),
   ).toBeGreaterThanOrEqual(20);
+
+  const pastDateResponse = await request.post("/api/ai/daily-plan", {
+    data: {
+      ...baseRequest,
+      date: "2026-01-14",
+      planningMode: "standard",
+    },
+  });
+  const pastDatePlan = await expectJson<{
+    schedule: Array<{ start_time: string; end_time: string; type: string }>;
+  }>(pastDateResponse, 200);
+  expect(pastDatePlan.schedule).toHaveLength(0);
 });
 
 test("AI daily planner fallback avoids overlapping calendar events", async ({
@@ -2081,6 +2250,7 @@ test("AI daily planner fallback avoids overlapping calendar events", async ({
       planningMode: "standard",
       date,
       timezone,
+      currentTime: "2026-01-15T14:00:00.000Z",
       projects: [],
       milestones: [],
       projectPlans: [],
@@ -2164,6 +2334,422 @@ test("AI daily planner fallback avoids overlapping calendar events", async ({
   }
 });
 
+test("AI daily planner fallback avoids tasks already scheduled on the calendar", async ({
+  request,
+}) => {
+  const timezone = "UTC";
+  const date = "2026-01-15";
+  const response = await request.post("/api/ai/daily-plan", {
+    data: {
+      planningMode: "standard",
+      date,
+      timezone,
+      currentTime: "2026-01-15T14:00:00.000Z",
+      projects: [],
+      milestones: [],
+      projectPlans: [],
+      capacity: [],
+      settings: {
+        workHours: {
+          0: { start: "14:00", end: "17:00" },
+          1: { start: "14:00", end: "17:00" },
+          2: { start: "14:00", end: "17:00" },
+          3: { start: "14:00", end: "17:00" },
+          4: { start: "14:00", end: "17:00" },
+          5: { start: "14:00", end: "17:00" },
+          6: { start: "14:00", end: "17:00" },
+        },
+        timezone,
+        slotMinutes: 30,
+        weekStart: 1,
+        theme: "system",
+      },
+      dependencies: [],
+      scheduledItems: [
+        {
+          id: "task-block",
+          sourceId: "task-block",
+          instanceId: "task-block",
+          source: "task",
+          taskId: "task-already-scheduled",
+          title: "Already scheduled task",
+          start: "2026-01-15T14:30:00.000Z",
+          end: "2026-01-15T15:15:00.000Z",
+          notes: "",
+        },
+      ],
+      tasks: [
+        {
+          id: "task-already-scheduled",
+          title: "Already scheduled task",
+          priority: "critical",
+          estimatedMinutes: 45,
+          dueAt: null,
+          status: "todo",
+          availability: "ready",
+          areaId: null,
+          projectId: null,
+          hasBlock: true,
+        },
+        {
+          id: "task-open-one",
+          title: "Open task one",
+          priority: "high",
+          estimatedMinutes: 30,
+          dueAt: null,
+          status: "todo",
+          availability: "ready",
+          areaId: null,
+          projectId: null,
+          hasBlock: false,
+        },
+        {
+          id: "task-open-two",
+          title: "Open task two",
+          priority: "medium",
+          estimatedMinutes: 30,
+          dueAt: null,
+          status: "todo",
+          availability: "ready",
+          areaId: null,
+          projectId: null,
+          hasBlock: false,
+        },
+      ],
+    },
+  });
+  const payload = await expectJson<{
+    schedule: Array<{
+      start_time: string;
+      end_time: string;
+      type: string;
+      task_id: string | null;
+    }>;
+  }>(response, 200);
+  const blockedStart = timeToMinutes("14:30");
+  const blockedEnd = timeToMinutes("15:15");
+
+  expect(
+    payload.schedule.some((block) => block.task_id === "task-already-scheduled"),
+  ).toBe(false);
+
+  for (const block of payload.schedule.filter((entry) => entry.type === "focus_block")) {
+    expect(
+      timeToMinutes(block.end_time) <= blockedStart ||
+        timeToMinutes(block.start_time) >= blockedEnd,
+    ).toBeTruthy();
+  }
+});
+
+test("AI daily planner fallback schedules prerequisite tasks first", async ({
+  request,
+}) => {
+  const timezone = "UTC";
+  const date = "2026-01-15";
+  const response = await request.post("/api/ai/daily-plan", {
+    data: {
+      planningMode: "standard",
+      date,
+      timezone,
+      currentTime: "2026-01-15T14:00:00.000Z",
+      projects: [],
+      milestones: [],
+      projectPlans: [],
+      capacity: [],
+      settings: {
+        workHours: {
+          0: { start: "14:00", end: "17:00" },
+          1: { start: "14:00", end: "17:00" },
+          2: { start: "14:00", end: "17:00" },
+          3: { start: "14:00", end: "17:00" },
+          4: { start: "14:00", end: "17:00" },
+          5: { start: "14:00", end: "17:00" },
+          6: { start: "14:00", end: "17:00" },
+        },
+        timezone,
+        slotMinutes: 30,
+        weekStart: 1,
+        theme: "system",
+      },
+      dependencies: [
+        {
+          taskId: "task-score-model",
+          dependsOnTaskId: "task-train-model",
+          type: "blocks",
+        },
+      ],
+      scheduledItems: [],
+      tasks: [
+        {
+          id: "task-score-model",
+          title: "Score model",
+          priority: "critical",
+          estimatedMinutes: 30,
+          dueAt: null,
+          status: "todo",
+          availability: "ready",
+          areaId: null,
+          projectId: null,
+          dependencyIds: ["task-train-model"],
+        },
+        {
+          id: "task-train-model",
+          title: "Train model",
+          priority: "low",
+          estimatedMinutes: 30,
+          dueAt: null,
+          status: "todo",
+          availability: "ready",
+          areaId: null,
+          projectId: null,
+          dependencyIds: [],
+        },
+      ],
+    },
+  });
+  const payload = await expectJson<{
+    schedule: Array<{
+      type: string;
+      task_id: string | null;
+      start_time: string;
+    }>;
+  }>(response, 200);
+  const focusTaskIds = payload.schedule
+    .filter((block) => block.type === "focus_block")
+    .map((block) => block.task_id);
+
+  expect(focusTaskIds.indexOf("task-train-model")).toBeGreaterThanOrEqual(0);
+  expect(focusTaskIds.indexOf("task-score-model")).toBeGreaterThanOrEqual(0);
+  expect(focusTaskIds.indexOf("task-train-model")).toBeLessThan(
+    focusTaskIds.indexOf("task-score-model"),
+  );
+});
+
+test("AI daily planner fallback can rearrange future scheduled tasks by request", async ({
+  request,
+}) => {
+  const timezone = "UTC";
+  const date = "2026-01-15";
+  const response = await request.post("/api/ai/daily-plan", {
+    data: {
+      planningMode: "standard",
+      scheduledTaskHandling: "rearrange_future",
+      date,
+      timezone,
+      currentTime: "2026-01-15T14:00:00.000Z",
+      projects: [],
+      milestones: [],
+      projectPlans: [],
+      capacity: [],
+      settings: {
+        workHours: {
+          0: { start: "14:00", end: "17:00" },
+          1: { start: "14:00", end: "17:00" },
+          2: { start: "14:00", end: "17:00" },
+          3: { start: "14:00", end: "17:00" },
+          4: { start: "14:00", end: "17:00" },
+          5: { start: "14:00", end: "17:00" },
+          6: { start: "14:00", end: "17:00" },
+        },
+        timezone,
+        slotMinutes: 30,
+        weekStart: 1,
+        theme: "system",
+      },
+      dependencies: [],
+      scheduledItems: [
+        {
+          id: "event-block",
+          sourceId: "event-block",
+          instanceId: "event-block",
+          source: "event",
+          title: "Calendar event",
+          start: "2026-01-15T14:45:00.000Z",
+          end: "2026-01-15T15:15:00.000Z",
+          notes: "",
+        },
+        {
+          id: "future-task-block",
+          sourceId: "future-task-block",
+          instanceId: "future-task-block",
+          source: "task",
+          taskId: "task-future",
+          title: "Future scheduled task",
+          start: "2026-01-15T16:00:00.000Z",
+          end: "2026-01-15T16:30:00.000Z",
+          status: "todo",
+          notes: "",
+        },
+      ],
+      tasks: [
+        {
+          id: "task-future",
+          title: "Future scheduled task",
+          priority: "critical",
+          estimatedMinutes: 30,
+          dueAt: null,
+          status: "todo",
+          availability: "ready",
+          areaId: null,
+          projectId: null,
+          hasBlock: true,
+        },
+        {
+          id: "task-open",
+          title: "Open task",
+          priority: "high",
+          estimatedMinutes: 30,
+          dueAt: null,
+          status: "todo",
+          availability: "ready",
+          areaId: null,
+          projectId: null,
+          hasBlock: false,
+        },
+      ],
+    },
+  });
+  const payload = await expectJson<{
+    schedule: Array<{
+      start_time: string;
+      end_time: string;
+      type: string;
+      task_id: string | null;
+    }>;
+  }>(response, 200);
+  const focusBlocks = payload.schedule.filter((entry) => entry.type === "focus_block");
+  const blockedStart = timeToMinutes("14:45");
+  const blockedEnd = timeToMinutes("15:15");
+
+  expect(focusBlocks.some((block) => block.task_id === "task-future")).toBe(true);
+
+  for (const block of focusBlocks) {
+    expect(
+      timeToMinutes(block.end_time) <= blockedStart ||
+        timeToMinutes(block.start_time) >= blockedEnd,
+    ).toBeTruthy();
+  }
+});
+
+test("AI daily planner fallback reschedules unfinished tasks from earlier today", async ({
+  request,
+}) => {
+  const timezone = "UTC";
+  const date = "2026-01-15";
+  const response = await request.post("/api/ai/daily-plan", {
+    data: {
+      planningMode: "standard",
+      date,
+      timezone,
+      currentTime: "2026-01-15T14:44:00.000Z",
+      projects: [],
+      milestones: [],
+      projectPlans: [],
+      capacity: [],
+      settings: {
+        workHours: {
+          0: { start: "14:00", end: "18:00" },
+          1: { start: "14:00", end: "18:00" },
+          2: { start: "14:00", end: "18:00" },
+          3: { start: "14:00", end: "18:00" },
+          4: { start: "14:00", end: "18:00" },
+          5: { start: "14:00", end: "18:00" },
+          6: { start: "14:00", end: "18:00" },
+        },
+        timezone,
+        slotMinutes: 30,
+        weekStart: 1,
+        theme: "system",
+      },
+      dependencies: [],
+      scheduledItems: [
+        {
+          id: "missed-task-block",
+          sourceId: "missed-task-block",
+          instanceId: "missed-task-block",
+          source: "task",
+          taskId: "task-missed",
+          title: "Missed unfinished task",
+          start: "2026-01-15T13:00:00.000Z",
+          end: "2026-01-15T13:45:00.000Z",
+          status: "todo",
+          notes: "",
+        },
+        {
+          id: "future-task-block",
+          sourceId: "future-task-block",
+          instanceId: "future-task-block",
+          source: "task",
+          taskId: "task-future",
+          title: "Future scheduled task",
+          start: "2026-01-15T16:00:00.000Z",
+          end: "2026-01-15T16:30:00.000Z",
+          status: "todo",
+          notes: "",
+        },
+      ],
+      tasks: [
+        {
+          id: "task-missed",
+          title: "Missed unfinished task",
+          priority: "critical",
+          estimatedMinutes: 30,
+          dueAt: null,
+          status: "todo",
+          availability: "ready",
+          areaId: null,
+          projectId: null,
+          hasBlock: true,
+        },
+        {
+          id: "task-future",
+          title: "Future scheduled task",
+          priority: "critical",
+          estimatedMinutes: 30,
+          dueAt: null,
+          status: "todo",
+          availability: "ready",
+          areaId: null,
+          projectId: null,
+          hasBlock: true,
+        },
+        {
+          id: "task-open",
+          title: "Open task",
+          priority: "medium",
+          estimatedMinutes: 30,
+          dueAt: null,
+          status: "todo",
+          availability: "ready",
+          areaId: null,
+          projectId: null,
+          hasBlock: false,
+        },
+      ],
+    },
+  });
+  const payload = await expectJson<{
+    schedule: Array<{
+      start_time: string;
+      end_time: string;
+      type: string;
+      task_id: string | null;
+    }>;
+  }>(response, 200);
+  const focusBlocks = payload.schedule.filter((entry) => entry.type === "focus_block");
+
+  expect(focusBlocks.some((block) => block.task_id === "task-missed")).toBe(true);
+  expect(focusBlocks.some((block) => block.task_id === "task-future")).toBe(false);
+
+  for (const block of focusBlocks) {
+    expect(timeToMinutes(block.start_time)).toBeGreaterThanOrEqual(timeToMinutes("14:45"));
+    expect(
+      timeToMinutes(block.end_time) <= timeToMinutes("16:00") ||
+        timeToMinutes(block.start_time) >= timeToMinutes("16:30"),
+    ).toBeTruthy();
+  }
+});
+
 test("AI daily planner fallback respects events that spill into the selected day", async ({
   request,
 }) => {
@@ -2174,6 +2760,7 @@ test("AI daily planner fallback respects events that spill into the selected day
       planningMode: "standard",
       date,
       timezone,
+      currentTime: "2026-01-15T00:00:00.000Z",
       projects: [],
       milestones: [],
       projectPlans: [],
@@ -2275,9 +2862,7 @@ test("quick add creates unscheduled tasks and pipeline status edits persist", as
     .getByRole("dialog", { name: "Task details" })
     .getByRole("button", { name: "Start soon", exact: true })
     .click();
-  await page.getByRole("button", { name: "Save task" }).click();
-  await expect(page.getByText("Task updated").first()).toBeVisible();
-  await page.keyboard.press("Escape");
+  await expect(page.getByRole("button", { name: "Save task" })).toHaveCount(0);
 
   await expect
     .poll(async () => {
@@ -2285,14 +2870,13 @@ test("quick add creates unscheduled tasks and pipeline status edits persist", as
       return latest.tasks.find((task) => task.id === createdTask.id)?.availability ?? null;
     })
     .toBe("ready");
+  await page.keyboard.press("Escape");
 
   await page.getByRole("button", { name: "Planning", exact: true }).click();
   await expect(page.getByTestId(`planning-card-${createdTask.id}`)).toBeVisible();
 
   await page.getByTestId(`planning-card-${createdTask.id}`).click();
   await page.getByRole("button", { name: "In progress", exact: true }).click();
-  await page.getByRole("button", { name: "Save task" }).click();
-  await expect(page.getByText("Task updated").first()).toBeVisible();
 
   await expect
     .poll(async () => {
@@ -2353,6 +2937,46 @@ test("scheduled quick add creates a task block and settings persist", async ({ p
 
   await page.getByRole("button", { name: "Planning", exact: true }).click();
   await expect(page.getByTestId(`planning-card-${scheduledTask.id}`)).toHaveCount(1);
+
+  await page.getByTestId(`planning-card-${scheduledTask.id}`).click();
+  const scheduledTaskDialog = page.getByRole("dialog", { name: "Task details" });
+  await scheduledTaskDialog.getByRole("button", { name: "Later", exact: true }).click();
+  await expect
+    .poll(async () => {
+      const latest = await readSnapshot();
+      return latest.tasks.find((task) => task.id === scheduledTask.id)?.availability ?? null;
+    })
+    .toBe("later");
+  await expect(
+    scheduledTaskDialog.getByRole("button", { name: "Later", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+
+  await scheduledTaskDialog
+    .getByRole("checkbox", { name: /Outline the planner onboarding/ })
+    .check();
+  await expect
+    .poll(async () => {
+      const latest = await readSnapshot();
+      return latest.taskDependencies.some(
+        (dependency) =>
+          dependency.taskId === scheduledTask.id &&
+          dependency.dependsOnTaskId === "task-outline",
+      );
+    })
+    .toBe(true);
+  await expect(scheduledTaskDialog.getByText("All changes saved")).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  await page.getByTestId(`planning-card-${scheduledTask.id}`).click();
+  await expect(
+    page
+      .getByRole("dialog", { name: "Task details" })
+      .getByRole("button", { name: "Later", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(
+    page.getByRole("dialog", { name: "Task details" }).getByText("All changes saved"),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
 
   await page.getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Calendar slot size").selectOption("60");

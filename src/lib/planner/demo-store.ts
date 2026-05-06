@@ -36,6 +36,9 @@ function normalizeSnapshot(snapshot: WorkspaceSnapshot): WorkspaceSnapshot {
       : [],
     agentRuns: Array.isArray(snapshot.agentRuns) ? snapshot.agentRuns : [],
     agentRunEvents: Array.isArray(snapshot.agentRunEvents) ? snapshot.agentRunEvents : [],
+    taskDependencies: Array.isArray(snapshot.taskDependencies)
+      ? snapshot.taskDependencies
+      : [],
     tasks: snapshot.tasks.map((task) => ({
       ...task,
       milestoneId: task.milestoneId ?? null,

@@ -11,6 +11,7 @@ import {
   tags,
   taskBlocks,
   taskChecklistItems,
+  taskDependencies,
   taskTags,
   tasks,
   userSettings,
@@ -38,6 +39,7 @@ import type {
   TaskAvailability,
   TaskBlockRecord,
   TaskChecklistItemRecord,
+  TaskDependencyRecord,
   TaskRecord,
   TaskTagRecord,
   UpdateEventInput,
@@ -71,7 +73,7 @@ function resolveTaskAvailability(input: {
   endsAt?: string | null;
   availability?: TaskAvailability;
 }) {
-  return input.startsAt && input.endsAt ? "ready" : (input.availability ?? "later");
+  return input.availability ?? (input.startsAt && input.endsAt ? "ready" : "later");
 }
 
 async function ensureDbUser(userId: string) {
@@ -257,9 +259,99 @@ function mapTaskTag(record: typeof taskTags.$inferSelect): TaskTagRecord {
   };
 }
 
-async function replaceTaskRelations(
+function mapTaskDependency(
+  record: typeof taskDependencies.$inferSelect,
+): TaskDependencyRecord {
+  return {
+    taskId: record.taskId,
+    dependsOnTaskId: record.dependsOnTaskId,
+    createdAt: iso(record.createdAt)!,
+  };
+}
+
+function dependencyPathExists(
+  dependenciesByTask: Map<string, Set<string>>,
+  fromTaskId: string,
+  targetTaskId: string,
+  visited = new Set<string>(),
+): boolean {
+  if (fromTaskId === targetTaskId) {
+    return true;
+  }
+
+  if (visited.has(fromTaskId)) {
+    return false;
+  }
+
+  visited.add(fromTaskId);
+
+  for (const nextTaskId of dependenciesByTask.get(fromTaskId) ?? []) {
+    if (dependencyPathExists(dependenciesByTask, nextTaskId, targetTaskId, visited)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+async function validateTaskDependencyIds(
+  userId: string,
   taskId: string,
-  input: Pick<NewTaskInput | UpdateTaskInput, "checklist" | "tagIds">,
+  dependencyIds: string[],
+) {
+  const db = getDb();
+  const candidateIds = Array.from(new Set(dependencyIds));
+  const userTaskRows = await db
+    .select({ id: tasks.id })
+    .from(tasks)
+    .where(eq(tasks.userId, userId));
+  const userTaskIds = new Set(userTaskRows.map((task) => task.id));
+
+  for (const dependencyId of candidateIds) {
+    if (dependencyId === taskId) {
+      throw new Error("INVALID_TASK_DEPENDENCY");
+    }
+
+    if (!userTaskIds.has(dependencyId)) {
+      throw new Error("NOT_FOUND");
+    }
+  }
+
+  const existingDependencies = userTaskRows.length
+    ? await db
+        .select()
+        .from(taskDependencies)
+        .where(inArray(taskDependencies.taskId, userTaskRows.map((task) => task.id)))
+    : [];
+  const dependenciesByTask = new Map<string, Set<string>>();
+
+  for (const dependency of existingDependencies) {
+    if (dependency.taskId === taskId) {
+      continue;
+    }
+
+    if (!dependenciesByTask.has(dependency.taskId)) {
+      dependenciesByTask.set(dependency.taskId, new Set());
+    }
+
+    dependenciesByTask.get(dependency.taskId)?.add(dependency.dependsOnTaskId);
+  }
+
+  dependenciesByTask.set(taskId, new Set(candidateIds));
+
+  for (const dependencyId of candidateIds) {
+    if (dependencyPathExists(dependenciesByTask, dependencyId, taskId)) {
+      throw new Error("INVALID_TASK_DEPENDENCY");
+    }
+  }
+
+  return candidateIds;
+}
+
+async function replaceTaskRelations(
+  userId: string,
+  taskId: string,
+  input: Pick<NewTaskInput | UpdateTaskInput, "checklist" | "tagIds" | "dependencyIds">,
 ) {
   const db = getDb();
 
@@ -287,6 +379,25 @@ async function replaceTaskRelations(
         input.tagIds.map((tagId) => ({
           taskId,
           tagId,
+        })),
+      );
+    }
+  }
+
+  if (input.dependencyIds) {
+    const validDependencyIds = await validateTaskDependencyIds(
+      userId,
+      taskId,
+      input.dependencyIds,
+    );
+
+    await db.delete(taskDependencies).where(eq(taskDependencies.taskId, taskId));
+    if (validDependencyIds.length) {
+      await db.insert(taskDependencies).values(
+        validDependencyIds.map((dependsOnTaskId) => ({
+          taskId,
+          dependsOnTaskId,
+          createdAt: now(),
         })),
       );
     }
@@ -349,6 +460,106 @@ async function resolveMilestoneProject(
   return record ? mapMilestone(record) : null;
 }
 
+async function resolveTaskRelations(
+  current: Pick<TaskRecord, "projectId" | "milestoneId">,
+  input: Pick<NewTaskInput | UpdateTaskInput, "projectId" | "milestoneId">,
+) {
+  const hasProjectInput = input.projectId !== undefined;
+  const hasMilestoneInput = input.milestoneId !== undefined;
+  const nextProjectId = hasProjectInput ? input.projectId ?? null : current.projectId;
+
+  if (hasProjectInput && nextProjectId === null) {
+    return {
+      projectId: null,
+      milestoneId: null,
+    };
+  }
+
+  const nextMilestoneId =
+    input.milestoneId === undefined ? current.milestoneId : input.milestoneId;
+  const linkedMilestone = await resolveMilestoneProject(nextMilestoneId);
+
+  if (!linkedMilestone) {
+    return {
+      projectId: nextProjectId,
+      milestoneId: null,
+    };
+  }
+
+  if (!hasProjectInput && (hasMilestoneInput || !nextProjectId)) {
+    return {
+      projectId: linkedMilestone.projectId,
+      milestoneId: linkedMilestone.id,
+    };
+  }
+
+  return {
+    projectId: nextProjectId,
+    milestoneId:
+      linkedMilestone.projectId === nextProjectId ? linkedMilestone.id : null,
+  };
+}
+
+function latestDate(values: Array<Date | string | null | undefined>) {
+  return values.reduce<Date | null>((latest, value) => {
+    if (!value) {
+      return latest;
+    }
+
+    const date = value instanceof Date ? value : new Date(value);
+
+    if (Number.isNaN(date.getTime())) {
+      return latest;
+    }
+
+    return !latest || date.getTime() > latest.getTime() ? date : latest;
+  }, null);
+}
+
+async function syncMilestoneDeadlineForTask(userId: string, taskId: string) {
+  const db = getDb();
+  const [task] = await db
+    .select()
+    .from(tasks)
+    .where(and(eq(tasks.id, taskId), eq(tasks.userId, userId)))
+    .limit(1);
+
+  if (!task?.milestoneId) {
+    return;
+  }
+
+  const blockRows = await db
+    .select({ endsAt: taskBlocks.endsAt })
+    .from(taskBlocks)
+    .where(and(eq(taskBlocks.taskId, taskId), eq(taskBlocks.userId, userId)));
+  const nextDeadline = latestDate([
+    task.dueAt,
+    ...blockRows.map((block) => block.endsAt),
+  ]);
+
+  if (!nextDeadline) {
+    return;
+  }
+
+  const [milestone] = await db
+    .select()
+    .from(milestones)
+    .where(and(eq(milestones.id, task.milestoneId), eq(milestones.userId, userId)))
+    .limit(1);
+
+  if (!milestone || nextDeadline.getTime() <= milestone.deadline.getTime()) {
+    return;
+  }
+
+  await db
+    .update(milestones)
+    .set({
+      deadline: nextDeadline,
+      updatedAt: now(),
+    })
+    .where(and(eq(milestones.id, task.milestoneId), eq(milestones.userId, userId)));
+}
+
 export const databaseRepository = {
   async getWorkspace(userId: string): Promise<WorkspaceSnapshot> {
     await ensureDbUser(userId);
@@ -371,15 +582,19 @@ export const databaseRepository = {
         db.select().from(events).where(eq(events.userId, userId)),
       ]);
     const taskIds = taskRows.map((task) => task.id);
-    const [checklistRows, taskTagRows] = taskIds.length
+    const [checklistRows, taskTagRows, taskDependencyRows] = taskIds.length
       ? await Promise.all([
           db
             .select()
             .from(taskChecklistItems)
             .where(inArray(taskChecklistItems.taskId, taskIds)),
           db.select().from(taskTags).where(inArray(taskTags.taskId, taskIds)),
+          db
+            .select()
+            .from(taskDependencies)
+            .where(inArray(taskDependencies.taskId, taskIds)),
         ])
-      : [[], []];
+      : [[], [], []];
 
     return {
       user: mapUser(userRecord),
@@ -393,6 +608,7 @@ export const databaseRepository = {
       events: eventRows.map(mapEvent),
       checklistItems: checklistRows.map(mapChecklistItem),
       taskTags: taskTagRows.map(mapTaskTag),
+      taskDependencies: taskDependencyRows.map(mapTaskDependency),
       apiAccessTokens: [],
       agentRunners: [],
       projectAgentLinks: [],
@@ -405,7 +621,10 @@ export const databaseRepository = {
     await ensureDbUser(userId);
     const db = getDb();
     const taskId = id("task");
-    const linkedMilestone = await resolveMilestoneProject(input.milestoneId);
+    const relations = await resolveTaskRelations(
+      { projectId: null, milestoneId: null },
+      input,
+    );
     const syncedEstimate =
       input.estimatedMinutes ??
       (input.startsAt && input.endsAt
@@ -427,15 +646,16 @@ export const databaseRepository = {
       availability: resolveTaskAvailability(input),
       completedAt: null,
       areaId: input.areaId ?? null,
-      projectId: linkedMilestone?.projectId ?? input.projectId ?? null,
-      milestoneId: linkedMilestone?.id ?? null,
+      projectId: relations.projectId,
+      milestoneId: relations.milestoneId,
       recurrence: input.recurrence ?? null,
       createdAt: now(),
       updatedAt: now(),
     });
 
-    await replaceTaskRelations(taskId, input);
+    await replaceTaskRelations(userId, taskId, input);
     await upsertPrimaryBlock(userId, taskId, input.startsAt, input.endsAt);
+    await syncMilestoneDeadlineForTask(userId, taskId);
 
     const [record] = await db.select().from(tasks).where(eq(tasks.id, taskId)).limit(1);
     return mapTask(record);
@@ -444,10 +664,23 @@ export const databaseRepository = {
   async updateTask(userId: string, taskId: string, input: UpdateTaskInput) {
     await ensureDbUser(userId);
     const db = getDb();
-    const linkedMilestone =
-      input.milestoneId === undefined
-        ? null
-        : await resolveMilestoneProject(input.milestoneId);
+    const [currentTask] = await db
+      .select()
+      .from(tasks)
+      .where(and(eq(tasks.id, taskId), eq(tasks.userId, userId)))
+      .limit(1);
+
+    if (!currentTask) {
+      throw new Error("NOT_FOUND");
+    }
+
+    const relations = await resolveTaskRelations(
+      {
+        projectId: currentTask.projectId,
+        milestoneId: currentTask.milestoneId,
+      },
+      input,
+    );
     const syncedEstimate =
       input.estimatedMinutes ??
       (input.startsAt && input.endsAt
@@ -467,8 +700,10 @@ export const databaseRepository = {
         preferredWindowEnd: input.preferredWindowEnd,
         status: input.status,
         availability:
-          input.startsAt && input.endsAt
-            ? "ready"
+          input.availability === undefined
+            ? input.startsAt && input.endsAt
+              ? "ready"
+              : undefined
             : input.availability,
         completedAt:
           input.status === undefined
@@ -479,21 +714,16 @@ export const databaseRepository = {
                 : now()
               : null,
         areaId: input.areaId,
-        projectId:
-          input.milestoneId === undefined
-            ? input.projectId
-            : linkedMilestone?.projectId ?? input.projectId ?? null,
-        milestoneId:
-          input.milestoneId === undefined
-            ? undefined
-            : linkedMilestone?.id ?? null,
+        projectId: relations.projectId,
+        milestoneId: relations.milestoneId,
         recurrence: input.recurrence,
         updatedAt: now(),
       })
       .where(and(eq(tasks.id, taskId), eq(tasks.userId, userId)));
 
-    await replaceTaskRelations(taskId, input);
+    await replaceTaskRelations(userId, taskId, input);
     await upsertPrimaryBlock(userId, taskId, input.startsAt, input.endsAt);
+    await syncMilestoneDeadlineForTask(userId, taskId);
 
     const [record] = await db.select().from(tasks).where(eq(tasks.id, taskId)).limit(1);
 
@@ -536,6 +766,7 @@ export const databaseRepository = {
         updatedAt: now(),
       })
       .where(and(eq(tasks.id, input.taskId), eq(tasks.userId, userId)));
+    await syncMilestoneDeadlineForTask(userId, input.taskId);
 
     const [record] = await db.select().from(taskBlocks).where(eq(taskBlocks.id, blockId)).limit(1);
     return mapTaskBlock(record);
@@ -640,6 +871,7 @@ export const databaseRepository = {
         updatedAt: now(),
       })
       .where(and(eq(tasks.id, record.taskId), eq(tasks.userId, userId)));
+    await syncMilestoneDeadlineForTask(userId, record.taskId);
 
     return mapTaskBlock(record);
   },

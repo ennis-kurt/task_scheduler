@@ -17,6 +17,7 @@ import type {
   NewTaxonomyInput,
   TaskAvailability,
   TaskChecklistItemRecord,
+  TaskDependencyRecord,
   TaskRecord,
   UpdateEventInput,
   UpdateMilestoneInput,
@@ -40,7 +41,7 @@ function resolveTaskAvailability(input: {
   endsAt?: string | null;
   availability?: TaskAvailability;
 }) {
-  return input.startsAt && input.endsAt ? "ready" : (input.availability ?? "later");
+  return input.availability ?? (input.startsAt && input.endsAt ? "ready" : "later");
 }
 
 async function withSnapshot<T>(
@@ -93,20 +94,195 @@ function replaceTaskTags(
   snapshot.taskTags.push(...tagIds.map((tagId) => ({ taskId, tagId })));
 }
 
+function dependencyPathExists(
+  dependenciesByTask: Map<string, Set<string>>,
+  fromTaskId: string,
+  targetTaskId: string,
+  visited = new Set<string>(),
+): boolean {
+  if (fromTaskId === targetTaskId) {
+    return true;
+  }
+
+  if (visited.has(fromTaskId)) {
+    return false;
+  }
+
+  visited.add(fromTaskId);
+
+  for (const nextTaskId of dependenciesByTask.get(fromTaskId) ?? []) {
+    if (dependencyPathExists(dependenciesByTask, nextTaskId, targetTaskId, visited)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function validateTaskDependencyIds(
+  snapshot: WorkspaceSnapshot,
+  userId: string,
+  taskId: string,
+  dependencyIds: string[],
+) {
+  const candidateIds = Array.from(new Set(dependencyIds));
+  const userTaskIds = new Set(
+    snapshot.tasks
+      .filter((task) => task.userId === userId)
+      .map((task) => task.id),
+  );
+
+  for (const dependencyId of candidateIds) {
+    if (dependencyId === taskId) {
+      throw new Error("INVALID_TASK_DEPENDENCY");
+    }
+
+    if (!userTaskIds.has(dependencyId)) {
+      throw new Error("NOT_FOUND");
+    }
+  }
+
+  const dependenciesByTask = new Map<string, Set<string>>();
+
+  for (const dependency of snapshot.taskDependencies) {
+    if (dependency.taskId === taskId) {
+      continue;
+    }
+
+    if (!dependenciesByTask.has(dependency.taskId)) {
+      dependenciesByTask.set(dependency.taskId, new Set());
+    }
+
+    dependenciesByTask.get(dependency.taskId)?.add(dependency.dependsOnTaskId);
+  }
+
+  dependenciesByTask.set(taskId, new Set(candidateIds));
+
+  for (const dependencyId of candidateIds) {
+    if (dependencyPathExists(dependenciesByTask, dependencyId, taskId)) {
+      throw new Error("INVALID_TASK_DEPENDENCY");
+    }
+  }
+
+  return candidateIds;
+}
+
+function replaceTaskDependencies(
+  snapshot: WorkspaceSnapshot,
+  userId: string,
+  taskId: string,
+  dependencyIds: string[] | undefined,
+) {
+  if (dependencyIds === undefined) {
+    return;
+  }
+
+  const validDependencyIds = validateTaskDependencyIds(
+    snapshot,
+    userId,
+    taskId,
+    dependencyIds,
+  );
+  const timestamp = now();
+
+  snapshot.taskDependencies = snapshot.taskDependencies.filter(
+    (dependency) => dependency.taskId !== taskId,
+  );
+  snapshot.taskDependencies.push(
+    ...validDependencyIds.map<TaskDependencyRecord>((dependsOnTaskId) => ({
+      taskId,
+      dependsOnTaskId,
+      createdAt: timestamp,
+    })),
+  );
+}
+
+function latestIso(values: Array<string | null | undefined>) {
+  return values.reduce<string | null>((latest, value) => {
+    if (!value) {
+      return latest;
+    }
+
+    const parsedValue = Date.parse(value);
+
+    if (Number.isNaN(parsedValue)) {
+      return latest;
+    }
+
+    if (!latest) {
+      return value;
+    }
+
+    return parsedValue > Date.parse(latest) ? value : latest;
+  }, null);
+}
+
+function syncMilestoneDeadlineForTask(snapshot: WorkspaceSnapshot, task: TaskRecord) {
+  if (!task.milestoneId) {
+    return;
+  }
+
+  const milestone = snapshot.milestones.find(
+    (candidate) =>
+      candidate.id === task.milestoneId && candidate.userId === task.userId,
+  );
+
+  if (!milestone) {
+    return;
+  }
+
+  const latestTaskDate = latestIso([
+    task.dueAt,
+    ...snapshot.taskBlocks
+      .filter((block) => block.taskId === task.id && block.userId === task.userId)
+      .map((block) => block.endsAt),
+  ]);
+
+  if (
+    latestTaskDate &&
+    Date.parse(latestTaskDate) > Date.parse(milestone.deadline)
+  ) {
+    milestone.deadline = latestTaskDate;
+    milestone.updatedAt = now();
+  }
+}
+
 function resolveTaskRelations(
   snapshot: WorkspaceSnapshot,
-  task: TaskRecord,
+  task: Pick<TaskRecord, "projectId" | "milestoneId">,
   input: UpdateTaskInput | NewTaskInput,
 ) {
+  const hasProjectInput = input.projectId !== undefined;
+  const hasMilestoneInput = input.milestoneId !== undefined;
+  const nextProjectId = hasProjectInput ? input.projectId ?? null : task.projectId;
+
+  if (hasProjectInput && nextProjectId === null) {
+    return {
+      projectId: null,
+      milestoneId: null,
+    };
+  }
+
   const nextMilestoneId =
     input.milestoneId === undefined ? task.milestoneId : input.milestoneId;
   const linkedMilestone =
     nextMilestoneId == null
       ? null
       : snapshot.milestones.find((milestone) => milestone.id === nextMilestoneId) ?? null;
-  const nextProjectId =
-    linkedMilestone?.projectId ??
-    (input.projectId === undefined ? task.projectId : input.projectId);
+
+  if (!linkedMilestone) {
+    return {
+      projectId: nextProjectId,
+      milestoneId: null,
+    };
+  }
+
+  if (!hasProjectInput && (hasMilestoneInput || !nextProjectId)) {
+    return {
+      projectId: linkedMilestone.projectId,
+      milestoneId: linkedMilestone.id,
+    };
+  }
 
   return {
     projectId: nextProjectId,
@@ -154,11 +330,11 @@ function patchTask(
     recurrence:
       input.recurrence === undefined ? task.recurrence : input.recurrence,
     availability:
-      input.startsAt && input.endsAt
-        ? "ready"
-        : input.availability === undefined
-          ? task.availability
-          : input.availability,
+      input.availability === undefined
+        ? input.startsAt && input.endsAt
+          ? "ready"
+          : task.availability
+        : input.availability,
     updatedAt: timestamp,
   });
 
@@ -179,10 +355,11 @@ const demoRepository = {
   async createTask(userId: string, input: NewTaskInput) {
     return withSnapshot(userId, (snapshot) => {
       const timestamp = now();
-      const linkedMilestone =
-        input.milestoneId == null
-          ? null
-          : snapshot.milestones.find((milestone) => milestone.id === input.milestoneId) ?? null;
+      const relations = resolveTaskRelations(
+        snapshot,
+        { projectId: null, milestoneId: null },
+        input,
+      );
       const task: TaskRecord = {
         id: id("task"),
         userId,
@@ -202,8 +379,8 @@ const demoRepository = {
         availability: resolveTaskAvailability(input),
         completedAt: null,
         areaId: input.areaId ?? null,
-        projectId: linkedMilestone?.projectId ?? input.projectId ?? null,
-        milestoneId: linkedMilestone?.id ?? null,
+        projectId: relations.projectId,
+        milestoneId: relations.milestoneId,
         recurrence: input.recurrence ?? null,
         createdAt: timestamp,
         updatedAt: timestamp,
@@ -212,6 +389,7 @@ const demoRepository = {
       snapshot.tasks.unshift(task);
       replaceChecklist(snapshot, task.id, input.checklist);
       replaceTaskTags(snapshot, task.id, input.tagIds);
+      replaceTaskDependencies(snapshot, userId, task.id, input.dependencyIds);
 
       if (input.startsAt && input.endsAt) {
         snapshot.taskBlocks.push({
@@ -224,6 +402,8 @@ const demoRepository = {
           updatedAt: timestamp,
         });
       }
+
+      syncMilestoneDeadlineForTask(snapshot, task);
 
       return task;
     });
@@ -242,6 +422,7 @@ const demoRepository = {
       patchTask(snapshot, task, input);
       replaceChecklist(snapshot, task.id, input.checklist);
       replaceTaskTags(snapshot, task.id, input.tagIds);
+      replaceTaskDependencies(snapshot, userId, task.id, input.dependencyIds);
 
       if (input.startsAt && input.endsAt) {
         const existingBlock = snapshot.taskBlocks.find(
@@ -265,6 +446,8 @@ const demoRepository = {
         }
       }
 
+      syncMilestoneDeadlineForTask(snapshot, task);
+
       return task;
     });
   },
@@ -281,6 +464,10 @@ const demoRepository = {
         (item) => item.taskId !== taskId,
       );
       snapshot.taskTags = snapshot.taskTags.filter((tag) => tag.taskId !== taskId);
+      snapshot.taskDependencies = snapshot.taskDependencies.filter(
+        (dependency) =>
+          dependency.taskId !== taskId && dependency.dependsOnTaskId !== taskId,
+      );
       return { ok: true };
     });
   },
@@ -308,6 +495,7 @@ const demoRepository = {
         task.estimatedMinutes = calculateMinutes(input.startsAt, input.endsAt);
         task.availability = "ready";
         task.updatedAt = now();
+        syncMilestoneDeadlineForTask(snapshot, task);
       }
 
       return block;
@@ -380,6 +568,7 @@ const demoRepository = {
       if (task) {
         task.estimatedMinutes = calculateMinutes(block.startsAt, block.endsAt);
         task.updatedAt = now();
+        syncMilestoneDeadlineForTask(snapshot, task);
       }
 
       return block;

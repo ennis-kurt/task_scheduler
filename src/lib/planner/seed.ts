@@ -7,6 +7,7 @@ import type {
   ProjectRecord,
   TaskBlockRecord,
   TaskChecklistItemRecord,
+  TaskDependencyRecord,
   TaskRecord,
   TaskTagRecord,
   WorkspaceSnapshot,
@@ -374,6 +375,13 @@ export function createSeedSnapshot(userId = "demo-user"): WorkspaceSnapshot {
     { taskId: "task-qa", tagId: "tag-admin" },
     { taskId: "task-kickoff", tagId: "tag-focus" },
   ];
+  const taskDependencies: TaskDependencyRecord[] = [
+    {
+      taskId: "task-qa",
+      dependsOnTaskId: "task-outline",
+      createdAt,
+    },
+  ];
 
   return {
     user: {
@@ -398,6 +406,7 @@ export function createSeedSnapshot(userId = "demo-user"): WorkspaceSnapshot {
     events,
     checklistItems,
     taskTags,
+    taskDependencies,
     apiAccessTokens: [],
     agentRunners: [],
     projectAgentLinks: [],

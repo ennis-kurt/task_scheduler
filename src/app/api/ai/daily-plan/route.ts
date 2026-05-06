@@ -9,8 +9,10 @@ import {
 
 const dailyPlanRequestSchema = z.object({
   planningMode: z.enum(["deep_focus", "standard", "chill", "custom"]),
+  scheduledTaskHandling: z.enum(["preserve_future", "rearrange_future"]).optional(),
   date: z.string().min(1),
   timezone: z.string().min(1),
+  currentTime: z.string().optional(),
   tasks: z.array(z.any()),
   projects: z.array(z.any()),
   milestones: z.array(z.any()),

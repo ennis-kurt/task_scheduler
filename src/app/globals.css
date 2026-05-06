@@ -980,6 +980,15 @@ body {
   background: var(--surface);
 }
 
+.ai-planner-apply-button {
+  background: var(--button-solid-bg);
+  color: var(--button-solid-fg);
+}
+
+.ai-planner-apply-button:hover:not(:disabled) {
+  background: var(--button-solid-hover);
+}
+
 .planning-schedule-panel {
   --planning-calendar-bg: var(--surface);
   --planning-calendar-grid: rgba(17, 24, 39, 0.055);

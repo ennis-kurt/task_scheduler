@@ -81,7 +81,6 @@ import type {
   DayCapacity,
   EventRecord,
   NewMilestoneInput,
-  NewTaskInput,
   PlannerCalendarItem,
   PlannerPayload,
   ProjectPlan,
@@ -107,6 +106,7 @@ import {
   formatFocusPhaseLabel,
   formatFocusTimer,
   playFocusChime,
+  primeFocusChime,
   projectPersistedFocusSession,
   readPersistedFocusSession,
   writePersistedFocusSession,
@@ -136,6 +136,30 @@ type QuickAddDefaults = {
   milestoneId?: string | null;
 };
 
+type TaskSaveOptions = {
+  showToast?: boolean;
+};
+
+type TaskEditorAutoSaveState = "saved" | "queued" | "saving" | "error" | "invalid";
+
+type TaskEditorValidDraft = {
+  input: UpdateTaskInput;
+  key: string;
+  error: null;
+};
+
+type TaskEditorInvalidDraft = {
+  input: null;
+  key: null;
+  error: string;
+};
+
+type TaskEditorDraft = TaskEditorValidDraft | TaskEditorInvalidDraft;
+
+function isTaskEditorValidDraft(draft: TaskEditorDraft): draft is TaskEditorValidDraft {
+  return draft.input !== null;
+}
+
 type PendingRecurringEdit = {
   taskId: string;
   title: string;
@@ -152,6 +176,8 @@ const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 const INFLARA_MCP_ENDPOINT = "https://inflara.io/mcp";
 const GITHUB_REPO_LINKS_KEY = "inflara:github-repo-links:v1";
+const CALENDAR_TASK_SOUND_LOOKBACK_MS = 60_000;
+const TASK_EDITOR_AUTOSAVE_DELAY_MS = 700;
 const CLAUDE_CODE_MCP_COMMAND =
   'claude mcp add --transport http inflara https://inflara.io/mcp --header "Authorization: Bearer <token>"';
 const CODEX_MCP_COMMAND =
@@ -221,6 +247,41 @@ const AVAILABILITY_LABELS: Record<TaskAvailability, string> = {
 
 function taskAvailabilityLabel(task: Pick<PlannerTask, "availability">) {
   return AVAILABILITY_LABELS[task.availability ?? "ready"];
+}
+
+function calendarNotificationStorageKey(baseKey: string) {
+  return `${baseKey}:calendar-task-sounds:v1`;
+}
+
+function readCalendarNotificationKeys(baseKey: string) {
+  if (typeof window === "undefined") {
+    return new Set<string>();
+  }
+
+  try {
+    const raw = window.localStorage.getItem(calendarNotificationStorageKey(baseKey));
+    const parsed = raw ? JSON.parse(raw) : [];
+
+    return new Set(
+      Array.isArray(parsed)
+        ? parsed.filter((value): value is string => typeof value === "string")
+        : [],
+    );
+  } catch {
+    return new Set<string>();
+  }
+}
+
+function writeCalendarNotificationKeys(baseKey: string, keys: Set<string>) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const recentKeys = Array.from(keys).slice(-200);
+  window.localStorage.setItem(
+    calendarNotificationStorageKey(baseKey),
+    JSON.stringify(recentKeys),
+  );
 }
 
 function DateTimePicker({
@@ -619,6 +680,20 @@ function localPlanTimeToISOString(date: string, time: string) {
   const base = parseISO(`${date}T00:00:00`);
   base.setHours(Number.isFinite(hours) ? hours : 0, Number.isFinite(minutes) ? minutes : 0, 0, 0);
   return base.toISOString();
+}
+
+function dateTimeInputToIso(value: string) {
+  if (!value) {
+    return null;
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return undefined;
+  }
+
+  return date.toISOString();
 }
 
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -1059,6 +1134,82 @@ function useHeaderFocusSession(focusStorageKey: string, tasks: PlannerTask[]) {
   return session;
 }
 
+function useCalendarTaskSoundNotifications(
+  storageKey: string,
+  scheduledItems: PlannerCalendarItem[],
+) {
+  const notifiedKeysRef = useRef<Set<string>>(new Set());
+  const lastCheckedAtRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    notifiedKeysRef.current = readCalendarNotificationKeys(storageKey);
+    lastCheckedAtRef.current = Date.now();
+  }, [storageKey]);
+
+  useEffect(() => {
+    const unlockAudio = () => {
+      primeFocusChime();
+    };
+
+    window.addEventListener("pointerdown", unlockAudio, { once: true, passive: true });
+    window.addEventListener("keydown", unlockAudio, { once: true });
+
+    return () => {
+      window.removeEventListener("pointerdown", unlockAudio);
+      window.removeEventListener("keydown", unlockAudio);
+    };
+  }, []);
+
+  useEffect(() => {
+    const checkTaskStarts = () => {
+      const currentTime = Date.now();
+      const lastCheckedAt = lastCheckedAtRef.current ?? currentTime;
+      const windowStart = Math.max(
+        lastCheckedAt - 5_000,
+        currentTime - CALENDAR_TASK_SOUND_LOOKBACK_MS,
+      );
+
+      lastCheckedAtRef.current = currentTime;
+
+      let notified = false;
+
+      for (const item of scheduledItems) {
+        if (item.source !== "task" || item.status === "done") {
+          continue;
+        }
+
+        const startsAt = Date.parse(item.start);
+
+        if (!Number.isFinite(startsAt) || startsAt <= windowStart || startsAt > currentTime) {
+          continue;
+        }
+
+        const key = `${item.instanceId}:start:${item.start}`;
+
+        if (notifiedKeysRef.current.has(key)) {
+          continue;
+        }
+
+        notifiedKeysRef.current.add(key);
+        playFocusChime();
+        toast("Task starts now", {
+          description: item.title,
+        });
+        notified = true;
+      }
+
+      if (notified) {
+        writeCalendarNotificationKeys(storageKey, notifiedKeysRef.current);
+      }
+    };
+
+    checkTaskStarts();
+    const interval = window.setInterval(checkTaskStarts, 30_000);
+
+    return () => window.clearInterval(interval);
+  }, [scheduledItems, storageKey]);
+}
+
 export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
   const initialProjectId = pickInitialProjectId(initialData.projectPlans);
   const calendarRef = useRef<FullCalendar | null>(null);
@@ -1223,6 +1374,7 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
   const planningStorageKey = `inflara:planning:${plannerData.mode}:${plannerData.user.id}`;
   const focusStorageKey = `inflara:focus:${plannerData.mode}:${plannerData.user.id}`;
   const activeFocusSession = useHeaderFocusSession(focusStorageKey, plannerData.tasks);
+  useCalendarTaskSoundNotifications(planningStorageKey, plannerData.scheduledItems);
   const areaTasks = useMemo(
     () =>
       activeAreaId
@@ -1841,6 +1993,35 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
     }
   }
 
+  async function saveTaskFromEditor(
+    taskId: string,
+    input: UpdateTaskInput,
+    options: TaskSaveOptions = {},
+  ) {
+    const showToast = options.showToast ?? true;
+
+    try {
+      await requestJson(`/api/tasks/${taskId}`, {
+        method: "PATCH",
+        body: JSON.stringify(input),
+      });
+
+      if (showToast) {
+        toast.success("Task updated");
+      }
+
+      await refreshPlanner();
+    } catch (error) {
+      await refreshPlanner().catch(() => undefined);
+
+      if (showToast) {
+        toast.error(error instanceof Error ? error.message : "Could not update task");
+      }
+
+      throw error;
+    }
+  }
+
   async function updateProjectFields(projectId: string, input: UpdateProjectInput) {
     try {
       await requestJson(`/api/projects/${projectId}`, {
@@ -1883,27 +2064,57 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
     const focusBlocks = plan.schedule.filter(
       (block) => block.type === "focus_block" && block.task_id,
     );
+    const calendarBreaks = plan.schedule.filter(
+      (block) => block.type === "break" || block.type === "buffer",
+    );
 
     if (!focusBlocks.length) {
       toast.error("This draft does not include any task blocks to apply");
       return;
     }
 
-    for (const block of focusBlocks) {
+    const taskBlocksToCreate = focusBlocks.flatMap((block) => {
       const startsAt = localPlanTimeToISOString(plan.date || focusedDate, block.start_time);
       const endsAt = localPlanTimeToISOString(plan.date || focusedDate, block.end_time);
 
       if (startsAt >= endsAt || !block.task_id) {
-        continue;
+        return [];
       }
 
+      return {
+        taskId: block.task_id,
+        startsAt,
+        endsAt,
+      };
+    });
+    const calendarEventsToCreate = calendarBreaks.flatMap((block) => {
+      const startsAt = localPlanTimeToISOString(plan.date || focusedDate, block.start_time);
+      const endsAt = localPlanTimeToISOString(plan.date || focusedDate, block.end_time);
+
+      if (startsAt >= endsAt) {
+        return [];
+      }
+
+      return {
+        title: block.task_title || (block.type === "buffer" ? "Buffer" : "Break"),
+        notes: block.reason ?? "",
+        location: "",
+        startsAt,
+        endsAt,
+      };
+    });
+
+    for (const taskBlock of taskBlocksToCreate) {
       await requestJson("/api/task-blocks", {
         method: "POST",
-        body: JSON.stringify({
-          taskId: block.task_id,
-          startsAt,
-          endsAt,
-        }),
+        body: JSON.stringify(taskBlock),
+      });
+    }
+
+    for (const event of calendarEventsToCreate) {
+      await requestJson("/api/events", {
+        method: "POST",
+        body: JSON.stringify(event),
       });
     }
 
@@ -2104,16 +2315,7 @@ export function PlannerApp({ initialData, initialRange }: PlannerAppProps) {
         plannerData={plannerData}
         githubRepoUrls={githubRepoUrls}
         onOpenAgentRun={(taskId) => setAgentDialogTaskId(taskId)}
-        onSaveTask={(taskId, input) =>
-          startTransition(async () => {
-            await requestJson(`/api/tasks/${taskId}`, {
-              method: "PATCH",
-              body: JSON.stringify(input),
-            });
-            toast.success("Task updated");
-            await refreshPlanner();
-          })
-        }
+        onSaveTask={saveTaskFromEditor}
         onDeleteTask={(taskId) =>
           startTransition(async () => {
             await requestJson(`/api/tasks/${taskId}`, { method: "DELETE" });
@@ -2570,7 +2772,11 @@ type EditorModalProps = {
   plannerData: PlannerPayload;
   githubRepoUrls: Record<string, string>;
   onOpenAgentRun: (taskId: string) => void;
-  onSaveTask: (taskId: string, input: Partial<NewTaskInput> & { status?: TaskStatus }) => void;
+  onSaveTask: (
+    taskId: string,
+    input: UpdateTaskInput,
+    options?: TaskSaveOptions,
+  ) => Promise<void>;
   onDeleteTask: (taskId: string) => void;
   onUnscheduleTask: (blockId: string) => void;
   onSaveEvent: (eventId: string, input: Partial<EventRecord>) => void;
@@ -2685,7 +2891,7 @@ function EditorModal({
               plannerData={plannerData}
               githubRepoUrls={githubRepoUrls}
               onOpenAgentRun={onOpenAgentRun}
-              onSave={(input) => onSaveTask(task.id, input)}
+              onSave={(input, options) => onSaveTask(task.id, input, options)}
               onDelete={() => onDeleteTask(task.id)}
               onUnschedule={() => (block ? onUnscheduleTask(block.sourceId) : undefined)}
             />
@@ -2935,7 +3141,7 @@ function TaskEditor({
   plannerData: PlannerPayload;
   githubRepoUrls: Record<string, string>;
   onOpenAgentRun: (taskId: string) => void;
-  onSave: (input: Partial<NewTaskInput> & { status?: TaskStatus }) => void;
+  onSave: (input: UpdateTaskInput, options?: TaskSaveOptions) => Promise<void>;
   onDelete: () => void;
   onUnschedule: () => void;
 }) {
@@ -2954,6 +3160,7 @@ function TaskEditor({
   const [projectId, setProjectId] = useState(task.projectId ?? "");
   const [milestoneId, setMilestoneId] = useState(task.milestoneId ?? "");
   const [tagIds, setTagIds] = useState(task.tags.map((tag) => tag.id));
+  const [dependencyIds, setDependencyIds] = useState(task.dependencyIds);
   const [checklist, setChecklist] = useState(
     task.checklist.map<{
       id?: string;
@@ -2974,12 +3181,216 @@ function TaskEditor({
   const compactTextAreaClassName =
     "min-h-[88px] rounded-[18px] border-[var(--task-modal-border)] bg-[var(--task-modal-neutral)] px-3 py-2.5 text-[13px] leading-5 shadow-none";
   const availableMilestones = plannerData.milestones.filter(
-    (milestone) => !projectId || milestone.projectId === projectId,
+    (milestone) => projectId && milestone.projectId === projectId,
+  );
+  const dependencyOptions = useMemo(
+    () =>
+      plannerData.tasks
+        .filter((candidate) => candidate.id !== task.id)
+        .toSorted((left, right) => {
+          const leftProject = left.project?.name ?? "";
+          const rightProject = right.project?.name ?? "";
+
+          if (leftProject !== rightProject) {
+            return leftProject.localeCompare(rightProject);
+          }
+
+          return left.title.localeCompare(right.title);
+        }),
+    [plannerData.tasks, task.id],
   );
   const githubRepoUrl = projectId ? githubRepoUrls[projectId] ?? "" : "";
   const taskAgentRuns = plannerData.agentRuns.filter((run) => run.taskId === task.id);
   const latestAgentRun = taskAgentRuns[0] ?? null;
   const latestAgentRunLabel = activeAgentRunLabel(latestAgentRun);
+  const [autoSaveState, setAutoSaveState] = useState<TaskEditorAutoSaveState>("saved");
+  const [autoSaveMessage, setAutoSaveMessage] = useState("All changes saved");
+  const lastSavedDraftKeyRef = useRef<string | null>(null);
+  const queuedDraftRef = useRef<TaskEditorValidDraft | null>(null);
+  const isAutoSavingRef = useRef(false);
+  const isMountedRef = useRef(false);
+  const taskDraft = useMemo<TaskEditorDraft>(() => {
+    const nextEstimatedMinutes = Number(estimatedMinutes);
+    const nextDueAt = dateTimeInputToIso(dueAt);
+    const nextStartsAt = dateTimeInputToIso(startsAt);
+    const nextEndsAt = dateTimeInputToIso(endsAt);
+
+    if (!title.trim()) {
+      return { input: null, key: null, error: "Task name is required before autosave." };
+    }
+
+    if (
+      !Number.isFinite(nextEstimatedMinutes) ||
+      !Number.isInteger(nextEstimatedMinutes) ||
+      nextEstimatedMinutes < 15 ||
+      nextEstimatedMinutes > 720
+    ) {
+      return {
+        input: null,
+        key: null,
+        error: "Estimated minutes must be a whole number from 15 to 720.",
+      };
+    }
+
+    if (nextDueAt === undefined) {
+      return { input: null, key: null, error: "Due date is invalid." };
+    }
+
+    if (nextStartsAt === undefined || nextEndsAt === undefined) {
+      return { input: null, key: null, error: "Schedule date is invalid." };
+    }
+
+    if ((nextStartsAt && !nextEndsAt) || (!nextStartsAt && nextEndsAt)) {
+      return {
+        input: null,
+        key: null,
+        error: "Start and end times are both required when scheduling a task.",
+      };
+    }
+
+    if (nextStartsAt && nextEndsAt && nextStartsAt >= nextEndsAt) {
+      return { input: null, key: null, error: "End time must be after start time." };
+    }
+
+    const input: UpdateTaskInput = {
+      title,
+      notes,
+      priority,
+      estimatedMinutes: nextEstimatedMinutes,
+      dueAt: nextDueAt,
+      areaId: areaId || null,
+      projectId: projectId || null,
+      milestoneId: projectId && milestoneId ? milestoneId : null,
+      status,
+      availability,
+      tagIds,
+      dependencyIds,
+      checklist: checklist.filter((item) => item.label.trim()),
+      recurrence,
+      startsAt: nextStartsAt,
+      endsAt: nextEndsAt,
+    };
+
+    return { input, key: JSON.stringify(input), error: null };
+  }, [
+    areaId,
+    availability,
+    checklist,
+    dueAt,
+    endsAt,
+    estimatedMinutes,
+    dependencyIds,
+    milestoneId,
+    notes,
+    priority,
+    projectId,
+    recurrence,
+    startsAt,
+    status,
+    tagIds,
+    title,
+  ]);
+  const latestDraftRef = useRef<TaskEditorDraft | null>(null);
+  latestDraftRef.current = taskDraft;
+  const runAutoSave = useEffectEvent(
+    async (draft: TaskEditorValidDraft, options?: { updateStatus?: boolean }) => {
+      queuedDraftRef.current = draft;
+
+      if (isAutoSavingRef.current) {
+        return;
+      }
+
+      isAutoSavingRef.current = true;
+
+      while (queuedDraftRef.current) {
+        const nextDraft = queuedDraftRef.current;
+        queuedDraftRef.current = null;
+
+        if (options?.updateStatus !== false && isMountedRef.current) {
+          setAutoSaveState("saving");
+          setAutoSaveMessage("Saving changes...");
+        }
+
+        try {
+          await onSave(nextDraft.input, { showToast: false });
+          lastSavedDraftKeyRef.current = nextDraft.key;
+
+          if (isMountedRef.current) {
+            setAutoSaveState("saved");
+            setAutoSaveMessage("All changes saved");
+          }
+        } catch (error) {
+          queuedDraftRef.current = null;
+
+          if (isMountedRef.current) {
+            setAutoSaveState("error");
+            setAutoSaveMessage(error instanceof Error ? error.message : "Autosave failed");
+          }
+        }
+      }
+
+      isAutoSavingRef.current = false;
+    },
+  );
+
+  useEffect(() => {
+    isMountedRef.current = true;
+
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isTaskEditorValidDraft(taskDraft)) {
+      if (lastSavedDraftKeyRef.current === null) {
+        lastSavedDraftKeyRef.current = "";
+      }
+
+      setAutoSaveState("invalid");
+      setAutoSaveMessage(taskDraft.error);
+      return;
+    }
+
+    const validDraft: TaskEditorValidDraft = taskDraft;
+
+    if (lastSavedDraftKeyRef.current === null) {
+      lastSavedDraftKeyRef.current = validDraft.key;
+      setAutoSaveState("saved");
+      setAutoSaveMessage("All changes saved");
+      return;
+    }
+
+    if (validDraft.key === lastSavedDraftKeyRef.current) {
+      if (!isAutoSavingRef.current) {
+        setAutoSaveState("saved");
+        setAutoSaveMessage("All changes saved");
+      }
+      return;
+    }
+
+    setAutoSaveState("queued");
+    setAutoSaveMessage("Autosave pending...");
+
+    const timeout = window.setTimeout(() => {
+      void runAutoSave(validDraft);
+    }, TASK_EDITOR_AUTOSAVE_DELAY_MS);
+
+    return () => window.clearTimeout(timeout);
+  }, [taskDraft]);
+
+  useEffect(() => {
+    return () => {
+      const latestDraft = latestDraftRef.current;
+
+      if (
+        latestDraft?.input &&
+        latestDraft.key !== lastSavedDraftKeyRef.current
+      ) {
+        void runAutoSave(latestDraft, { updateStatus: false });
+      }
+    };
+  }, []);
 
   return (
     <div className="grid gap-3">
@@ -3009,6 +3420,7 @@ function TaskEditor({
             <Button
               key={item}
               type="button"
+              aria-pressed={availability === item}
               variant={availability === item ? "solid" : "outline"}
               size="sm"
               onClick={() => setAvailability(item)}
@@ -3159,12 +3571,17 @@ function TaskEditor({
                 onChange={(event) => {
                   const nextProjectId = event.target.value;
                   setProjectId(nextProjectId);
+                  if (!nextProjectId) {
+                    setMilestoneId("");
+                    return;
+                  }
+
                   if (
                     milestoneId &&
                     !plannerData.milestones.some(
                       (milestone) =>
                         milestone.id === milestoneId &&
-                        (!nextProjectId || milestone.projectId === nextProjectId),
+                        milestone.projectId === nextProjectId,
                     )
                   ) {
                     setMilestoneId("");
@@ -3198,6 +3615,7 @@ function TaskEditor({
                     }
                   }
                 }}
+                disabled={!projectId}
                 className={compactFieldClassName}
               >
                 <option value="">No milestone</option>
@@ -3236,6 +3654,60 @@ function TaskEditor({
                 })}
               </div>
             </Field>
+          </TaskDetailSection>
+
+          <TaskDetailSection
+            title="Dependencies"
+            caption="Prerequisite tasks that should be scheduled first."
+          >
+            <div
+              data-testid="task-dependency-options"
+              className="grid max-h-44 gap-2 overflow-y-auto pr-1"
+            >
+              {dependencyOptions.length ? (
+                dependencyOptions.map((candidate) => {
+                  const checked = dependencyIds.includes(candidate.id);
+                  const wouldCreateDirectCycle = candidate.dependencyIds.includes(task.id);
+
+                  return (
+                    <label
+                      key={candidate.id}
+                      className={cn(
+                        "flex cursor-pointer items-start gap-2 rounded-[16px] border border-[var(--task-modal-border)] bg-[var(--task-modal-neutral)] px-3 py-2 text-[12px] leading-5",
+                        wouldCreateDirectCycle && "cursor-not-allowed opacity-55",
+                      )}
+                    >
+                      <Checkbox
+                        checked={checked}
+                        disabled={wouldCreateDirectCycle}
+                        onChange={(event) => {
+                          const nextChecked = event.target.checked;
+                          setDependencyIds((current) =>
+                            nextChecked
+                              ? [...new Set([...current, candidate.id])]
+                              : current.filter((id) => id !== candidate.id),
+                          );
+                        }}
+                      />
+                      <span className="min-w-0">
+                        <span className="block truncate font-medium text-[var(--foreground-strong)]">
+                          {candidate.title}
+                        </span>
+                        <span className="block truncate text-[11px] text-[var(--muted-foreground)]">
+                          {candidate.project?.name ?? "No project"}
+                          {candidate.status === "done" ? " · Done" : ""}
+                          {wouldCreateDirectCycle ? " · Already depends on this task" : ""}
+                        </span>
+                      </span>
+                    </label>
+                  );
+                })
+              ) : (
+                <div className="rounded-[16px] border border-dashed border-[var(--task-modal-border)] px-3 py-3 text-[12px] text-[var(--muted-foreground)]">
+                  No other tasks are available as prerequisites.
+                </div>
+              )}
+            </div>
           </TaskDetailSection>
 
           <TaskDetailSection
@@ -3412,36 +3884,31 @@ function TaskEditor({
         </div>
       </div>
 
-      <div className="flex flex-wrap justify-between gap-2 border-t border-[var(--border)] pt-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--border)] pt-3">
         <Button variant="danger" size="sm" onClick={onDelete}>
           Delete task
         </Button>
-        <Button
-          size="sm"
-          onClick={() => {
-            const nextStartsAt = startsAt ? new Date(startsAt).toISOString() : null;
-            const nextEndsAt = endsAt ? new Date(endsAt).toISOString() : null;
-            onSave({
-              title,
-              notes,
-              priority,
-              estimatedMinutes,
-              dueAt: dueAt ? new Date(dueAt).toISOString() : null,
-              areaId: areaId || null,
-              projectId: projectId || null,
-              milestoneId: milestoneId || null,
-              status,
-              availability: nextStartsAt && nextEndsAt ? "ready" : availability,
-              tagIds,
-              checklist: checklist.filter((item) => item.label.trim()),
-              recurrence,
-              startsAt: nextStartsAt,
-              endsAt: nextEndsAt,
-            });
-          }}
+        <div
+          aria-live="polite"
+          className={cn(
+            "flex min-h-8 items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium",
+            autoSaveState === "error" || autoSaveState === "invalid"
+              ? "border-[var(--danger)] bg-[var(--danger-soft)] text-[var(--danger)]"
+              : "border-[var(--task-modal-border)] bg-[var(--task-modal-neutral)] text-[var(--muted-foreground)]",
+          )}
         >
-          Save task
-        </Button>
+          <span
+            className={cn(
+              "h-2 w-2 rounded-full",
+              autoSaveState === "saved"
+                ? "bg-[var(--success)]"
+                : autoSaveState === "error" || autoSaveState === "invalid"
+                  ? "bg-[var(--danger)]"
+                  : "bg-[var(--accent-strong)]",
+            )}
+          />
+          {autoSaveMessage}
+        </div>
       </div>
     </div>
   );
@@ -4366,7 +4833,9 @@ function QuickAddDialog({
     initialTaskScheduled ? "ready" : "later",
   );
   const [taskProjectId, setTaskProjectId] = useState(defaults.projectId ?? "");
-  const [taskMilestoneId, setTaskMilestoneId] = useState(defaults.milestoneId ?? "");
+  const [taskMilestoneId, setTaskMilestoneId] = useState(
+    defaults.projectId ? defaults.milestoneId ?? "" : "",
+  );
   const [projectName, setProjectName] = useState("");
   const [projectStatus, setProjectStatus] = useState<ProjectStatus>("active");
   const [projectDeadline, setProjectDeadline] = useState("");
@@ -4402,7 +4871,7 @@ function QuickAddDialog({
   const [startsAt, setStartsAt] = useState(defaultDateTimes.startsAt);
   const [endsAt, setEndsAt] = useState(defaultDateTimes.endsAt);
   const availableMilestones = plannerData.milestones.filter(
-    (milestone) => !taskProjectId || milestone.projectId === taskProjectId,
+    (milestone) => taskProjectId && milestone.projectId === taskProjectId,
   );
   const linkedGithubRepoUrl = taskProjectId ? githubRepoUrls[taskProjectId] ?? "" : "";
 
@@ -4573,8 +5042,9 @@ function QuickAddDialog({
                       setTaskProjectId(milestone.projectId);
                     }
                   }}
+                  disabled={!taskProjectId}
                 >
-                  <option value="">Directly under project</option>
+                  <option value="">No milestone</option>
                   {availableMilestones.map((milestone) => (
                     <option key={milestone.id} value={milestone.id}>
                       {milestone.name}

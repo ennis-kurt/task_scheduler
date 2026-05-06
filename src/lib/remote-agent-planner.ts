@@ -92,6 +92,21 @@ function resolveTaskProjectId(
   return input.projectId === undefined ? currentTask?.projectId : input.projectId;
 }
 
+function assertDependencyTaskAccess(
+  access: RemoteAccess,
+  workspace: WorkspaceSnapshot,
+  dependencyIds?: string[],
+) {
+  if (!dependencyIds) {
+    return;
+  }
+
+  for (const dependencyId of dependencyIds) {
+    const dependencyTask = findTask(workspace, dependencyId);
+    assertApiTokenProjectAccess(access, dependencyTask.projectId);
+  }
+}
+
 export function serializeProject(workspace: WorkspaceSnapshot, project: ProjectRecord) {
   const milestones = workspace.milestones.filter(
     (milestone) => milestone.projectId === project.id,
@@ -137,6 +152,9 @@ export function serializeTask(workspace: WorkspaceSnapshot, task: TaskRecord) {
     tagIds: workspace.taskTags
       .filter((tag) => tag.taskId === task.id)
       .map((tag) => tag.tagId),
+    dependencyIds: workspace.taskDependencies
+      .filter((dependency) => dependency.taskId === task.id)
+      .map((dependency) => dependency.dependsOnTaskId),
   };
 }
 
@@ -251,6 +269,7 @@ export async function listRemoteTasks(access: RemoteAccess, filters: TaskFilters
 export async function createRemoteTask(access: RemoteAccess, input: NewTaskInput) {
   const workspaceBeforeCreate = await plannerRepository.getWorkspace(access.userId);
   assertApiTokenProjectAccess(access, resolveTaskProjectId(workspaceBeforeCreate, input));
+  assertDependencyTaskAccess(access, workspaceBeforeCreate, input.dependencyIds);
   const task = await plannerRepository.createTask(access.userId, input);
   const workspace = await plannerRepository.getWorkspace(access.userId);
   const milestone = task.milestoneId
@@ -284,6 +303,7 @@ export async function updateRemoteTask(
     access,
     resolveTaskProjectId(previousWorkspace, input, previousTask),
   );
+  assertDependencyTaskAccess(access, previousWorkspace, input.dependencyIds);
 
   const task = await plannerRepository.updateTask(access.userId, taskId, input);
   const workspace = await plannerRepository.getWorkspace(access.userId);

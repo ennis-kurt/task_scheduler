@@ -57,6 +57,13 @@
       "when": 1777939200000,
       "tag": "0007_agent_runner_dispatch",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1778081200000,
+      "tag": "0008_task_dependencies",
+      "breakpoints": true
     }
   ]
 }

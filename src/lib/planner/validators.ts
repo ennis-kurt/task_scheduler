@@ -36,6 +36,7 @@ const taskBaseSchema = z.object({
   projectId: z.string().nullable().optional(),
   milestoneId: z.string().nullable().optional(),
   tagIds: z.array(z.string()).optional(),
+  dependencyIds: z.array(z.string()).optional(),
   checklist: z
     .array(
       z.object({

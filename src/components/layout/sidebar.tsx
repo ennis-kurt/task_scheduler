@@ -211,15 +211,15 @@ export function Sidebar({
 
         {/* Projects */}
         <div className="flex flex-col gap-1">
-          <div className="flex items-center justify-between px-2 py-1 group">
-            <span className="text-xs font-medium tracking-tight text-[var(--muted-foreground)] uppercase">Projects</span>
+          <div className="group flex items-center justify-between gap-2 px-2 py-1">
+            <span className="min-w-0 truncate text-xs font-medium uppercase tracking-tight text-[var(--muted-foreground)]">Projects</span>
             <button
               type="button"
               aria-label="Add project"
-              className="text-[var(--muted-foreground)] opacity-0 group-hover:opacity-100 hover:text-[var(--foreground-strong)] transition-all"
+              className="flex h-6 w-6 flex-none items-center justify-center rounded text-[var(--muted-foreground)] opacity-0 transition-opacity group-hover:opacity-100 hover:bg-[var(--button-ghost-hover)] hover:text-[var(--foreground-strong)]"
               onClick={onOpenNewProject}
             >
-              <Icon icon="solar:add-square-linear" width="16" />
+              <Icon icon="solar:add-square-linear" className="h-4 w-4 shrink-0" />
             </button>
           </div>
           {projectPlans.map((plan) => {
@@ -269,7 +269,7 @@ export function Sidebar({
                 <div
                   key={plan.project.id}
                   className={cn(
-                    "group flex items-center rounded-md transition-colors text-sm w-full",
+                    "group flex min-w-0 items-center overflow-hidden rounded-md text-sm transition-colors w-full",
                     isActive
                       ? "bg-[var(--accent-soft)] text-[var(--foreground-strong)] font-medium"
                       : "text-[var(--muted-foreground)] hover:bg-[var(--button-ghost-hover)] hover:text-[var(--foreground-strong)]",
@@ -278,7 +278,7 @@ export function Sidebar({
                   <button
                     type="button"
                     onClick={() => onChangeView(`project:${plan.project.id}`)}
-                    className="flex min-w-0 flex-1 items-center gap-2.5 px-2 py-1.5 text-left"
+                    className="flex min-w-0 flex-1 basis-0 items-center gap-2.5 px-2 py-1.5 text-left"
                   >
                     <div
                       className="h-2 w-2 shrink-0 rounded-full border"
@@ -292,13 +292,13 @@ export function Sidebar({
                   <button
                     type="button"
                     aria-label="Rename project"
-                    className="mr-1 flex h-6 w-6 shrink-0 items-center justify-center rounded opacity-0 transition group-hover:opacity-100 hover:bg-[var(--button-ghost-hover)]"
+                    className="mr-1 flex h-6 w-6 flex-none items-center justify-center rounded text-[var(--muted-foreground)] opacity-0 transition-opacity group-hover:opacity-100 hover:bg-[var(--button-ghost-hover)] hover:text-[var(--foreground-strong)]"
                     onClick={() => {
                       setEditingProjectId(plan.project.id);
                       setDraftProjectName(plan.project.name);
                     }}
                   >
-                    <Icon icon="solar:pen-linear" width="14" />
+                    <Icon icon="solar:pen-linear" className="h-3.5 w-3.5 shrink-0" />
                   </button>
                 </div>
               );

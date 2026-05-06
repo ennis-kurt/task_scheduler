@@ -45,23 +45,44 @@ export async function getInitialPlannerPayload(range?: PlannerRange) {
       },
     ]),
   );
-  const tasks: PlannerTask[] = workspace.tasks.map((task) => ({
-    ...task,
-    area: workspace.areas.find((area) => area.id === task.areaId) ?? null,
-    project: workspace.projects.find((project) => project.id === task.projectId) ?? null,
-    milestone:
-      workspace.milestones.find((milestone) => milestone.id === task.milestoneId) ?? null,
-    tags: workspace.tags.filter((tag) =>
-      workspace.taskTags.some(
-        (taskTag) => taskTag.taskId === task.id && taskTag.tagId === tag.id,
+  const dependencyIdsByTask = new Map<string, string[]>();
+
+  for (const dependency of workspace.taskDependencies) {
+    const dependencyIds = dependencyIdsByTask.get(dependency.taskId) ?? [];
+    dependencyIds.push(dependency.dependsOnTaskId);
+    dependencyIdsByTask.set(dependency.taskId, dependencyIds);
+  }
+
+  const tasks: PlannerTask[] = workspace.tasks.map((task) => {
+    const project =
+      workspace.projects.find((candidate) => candidate.id === task.projectId) ?? null;
+    const milestone = project
+      ? workspace.milestones.find(
+          (candidate) =>
+            candidate.id === task.milestoneId &&
+            candidate.projectId === project.id,
+        ) ?? null
+      : null;
+
+    return {
+      ...task,
+      milestoneId: milestone?.id ?? null,
+      area: workspace.areas.find((area) => area.id === task.areaId) ?? null,
+      project,
+      milestone,
+      tags: workspace.tags.filter((tag) =>
+        workspace.taskTags.some(
+          (taskTag) => taskTag.taskId === task.id && taskTag.tagId === tag.id,
+        ),
       ),
-    ),
-    checklist: workspace.checklistItems
-      .filter((item) => item.taskId === task.id)
-      .sort((left, right) => left.sortOrder - right.sortOrder),
-    hasBlock: primaryBlocksByTask.has(task.id),
-    primaryBlock: primaryBlocksByTask.get(task.id) ?? null,
-  }));
+      checklist: workspace.checklistItems
+        .filter((item) => item.taskId === task.id)
+        .sort((left, right) => left.sortOrder - right.sortOrder),
+      dependencyIds: dependencyIdsByTask.get(task.id) ?? [],
+      hasBlock: primaryBlocksByTask.has(task.id),
+      primaryBlock: primaryBlocksByTask.get(task.id) ?? null,
+    };
+  });
 
   const scheduledTasks: PlannerCalendarItem[] = workspace.taskBlocks.flatMap((block) => {
     const task = tasks.find((candidate) => candidate.id === block.taskId);

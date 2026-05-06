@@ -57,6 +57,18 @@ export function handleApiError(error: unknown) {
     );
   }
 
+  if (error instanceof Error && error.message === "INVALID_TASK_DEPENDENCY") {
+    return NextResponse.json(
+      {
+        error: {
+          code: "INVALID_TASK_DEPENDENCY",
+          message: "Task dependencies cannot include the same task or create a cycle.",
+        },
+      },
+      { status: 400 },
+    );
+  }
+
   console.error(error);
   return NextResponse.json(
     {
