@@ -1,4 +1,5 @@
 import { PlannerApp } from "@/components/planner/planner-app";
+import { LandingShell } from "@/components/landing-shell";
 import { getSessionContext } from "@/lib/auth";
 import { buildDefaultRange } from "@/lib/planner/date";
 import { getInitialPlannerPayload } from "@/lib/planner/service";
@@ -10,7 +11,7 @@ export default async function HomePage() {
   const session = await getSessionContext();
 
   if (session.clerkConfigured && !session.userId) {
-    redirect("/sign-in");
+    return <LandingShell />;
   }
 
   const range = buildDefaultRange();
