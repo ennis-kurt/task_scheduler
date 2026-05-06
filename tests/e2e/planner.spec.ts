@@ -478,6 +478,8 @@ test("project notes support markdown blocks, comments, and cloud persistence", a
         window.localStorage.removeItem(key);
       }
     }
+
+    window.localStorage.setItem("inflara:project-notes-sidebar-width", "296");
   });
   await page.reload();
   await page.locator("aside").getByRole("button", { name: "Planner MVP", exact: true }).click();
@@ -494,6 +496,10 @@ test("project notes support markdown blocks, comments, and cloud persistence", a
   const resizeHandleBox = await page.getByTestId("project-notes-sidebar-resize-handle").boundingBox();
   expect(folderPanelBoxBefore).not.toBeNull();
   expect(resizeHandleBox).not.toBeNull();
+  expect(Math.round(folderPanelBoxBefore?.width ?? 0)).toBeGreaterThanOrEqual(320);
+  await expect
+    .poll(() => page.evaluate(() => window.localStorage.getItem("inflara:project-notes-sidebar-width")))
+    .toBe("385");
   if (folderPanelBoxBefore && resizeHandleBox) {
     await page.mouse.move(
       resizeHandleBox.x + resizeHandleBox.width / 2,

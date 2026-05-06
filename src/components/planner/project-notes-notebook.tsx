@@ -207,7 +207,8 @@ const NOTE_STATUSES: ProjectNoteDocumentV2["status"][] = ["Draft", "Shared", "Fi
 const LOCAL_NOTE_PAGE_PREFIX = "local-note-page";
 const MAX_EMBEDDED_IMAGE_BYTES = 1_500_000;
 const NOTES_SIDEBAR_WIDTH_STORAGE_KEY = "inflara:project-notes-sidebar-width";
-const DEFAULT_NOTES_SIDEBAR_WIDTH = 296;
+const LEGACY_DEFAULT_NOTES_SIDEBAR_WIDTH = 296;
+const DEFAULT_NOTES_SIDEBAR_WIDTH = Math.round(LEGACY_DEFAULT_NOTES_SIDEBAR_WIDTH * 1.3);
 const MIN_NOTES_SIDEBAR_WIDTH = 236;
 const MAX_NOTES_SIDEBAR_WIDTH = 460;
 
@@ -1154,9 +1155,14 @@ export function ProjectNotesNotebook({ projectPlan }: ProjectNotesNotebookProps)
     }
 
     const storedWidth = Number(window.localStorage.getItem(NOTES_SIDEBAR_WIDTH_STORAGE_KEY));
-    return Number.isFinite(storedWidth)
-      ? clampNotesSidebarWidth(storedWidth)
-      : DEFAULT_NOTES_SIDEBAR_WIDTH;
+    if (!Number.isFinite(storedWidth)) {
+      return DEFAULT_NOTES_SIDEBAR_WIDTH;
+    }
+
+    const clampedWidth = clampNotesSidebarWidth(storedWidth);
+    return clampedWidth === LEGACY_DEFAULT_NOTES_SIDEBAR_WIDTH
+      ? DEFAULT_NOTES_SIDEBAR_WIDTH
+      : clampedWidth;
   });
   const [isResizingNotesSidebar, setIsResizingNotesSidebar] = useState(false);
   const [activeNotesPanel, setActiveNotesPanel] = useState<NotesPanel>("folders");
