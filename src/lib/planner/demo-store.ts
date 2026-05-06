@@ -39,6 +39,13 @@ function normalizeSnapshot(snapshot: WorkspaceSnapshot): WorkspaceSnapshot {
     taskDependencies: Array.isArray(snapshot.taskDependencies)
       ? snapshot.taskDependencies
       : [],
+    focusSessions: Array.isArray(snapshot.focusSessions)
+      ? snapshot.focusSessions.map((record) => ({
+          ...record,
+          session: record.session ?? null,
+          history: Array.isArray(record.history) ? record.history : [],
+        }))
+      : [],
     tasks: snapshot.tasks.map((task) => ({
       ...task,
       milestoneId: task.milestoneId ?? null,

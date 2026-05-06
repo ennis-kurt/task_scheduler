@@ -41,6 +41,7 @@ type DemoSnapshot = {
     availability: "ready" | "later";
     areaId: string | null;
     projectId: string | null;
+    milestoneId: string | null;
   }>;
   taskBlocks: Array<{
     id: string;

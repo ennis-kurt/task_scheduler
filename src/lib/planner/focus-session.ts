@@ -1,35 +1,32 @@
 "use client";
 
+import type {
+  FocusHistoryRecord,
+  FocusSessionPhase,
+  FocusSessionPhaseKind,
+  FocusSessionState,
+} from "@/lib/planner/types";
+
 export const FOCUS_SESSION_EVENT = "inflara:focus-session-updated";
+export const FOCUS_SESSION_REMOTE_EVENT = "inflara:focus-session-remote-updated";
 
-export type PersistedFocusPhaseKind = "focus" | "break" | "long_break";
+export type PersistedFocusPhaseKind = FocusSessionPhaseKind;
 
-export type PersistedFocusPhase = {
-  id: string;
-  kind: PersistedFocusPhaseKind;
-  label: string;
-  minutes: number;
-};
+export type PersistedFocusPhase = FocusSessionPhase;
 
-export type PersistedFocusSession = {
-  version: 1;
-  selectedTaskId: string | null;
-  selectedProfileId: string;
-  profileName: string;
-  customFocusMinutes: number;
-  customBreakMinutes: number;
-  customLongBreakMinutes: number;
-  customRounds: number;
-  phaseIndex: number;
-  remainingSeconds: number;
-  running: boolean;
-  phases: PersistedFocusPhase[];
-  updatedAt: string;
-};
+export type PersistedFocusSession = FocusSessionState;
+
+export type PersistedFocusHistoryRecord = FocusHistoryRecord;
 
 export type ProjectedFocusSession = PersistedFocusSession & {
   activePhase: PersistedFocusPhase;
   endedSinceLastSave: boolean;
+};
+
+export type SyncedFocusSessionSnapshot = {
+  session: PersistedFocusSession | null;
+  history: PersistedFocusHistoryRecord[];
+  updatedAt: string | null;
 };
 
 const SESSION_VERSION = 1;
@@ -86,20 +83,26 @@ export function readPersistedFocusSession(
 export function writePersistedFocusSession(
   baseKey: string,
   session: PersistedFocusSession,
+  options?: { preserveUpdatedAt?: boolean },
 ) {
   if (typeof window === "undefined") {
-    return;
+    return null;
   }
+
+  const persisted = {
+    ...session,
+    version: SESSION_VERSION,
+    updatedAt: options?.preserveUpdatedAt
+      ? session.updatedAt
+      : new Date().toISOString(),
+  } satisfies PersistedFocusSession;
 
   window.localStorage.setItem(
     focusSessionStorageKey(baseKey),
-    JSON.stringify({
-      ...session,
-      version: SESSION_VERSION,
-      updatedAt: new Date().toISOString(),
-    } satisfies PersistedFocusSession),
+    JSON.stringify(persisted),
   );
   window.dispatchEvent(new Event(FOCUS_SESSION_EVENT));
+  return persisted;
 }
 
 export function projectPersistedFocusSession(
@@ -164,6 +167,83 @@ export function buildPersistedFocusSession(
     version: SESSION_VERSION,
     updatedAt: new Date().toISOString(),
   };
+}
+
+export function focusSessionTimestamp(session: PersistedFocusSession | null) {
+  if (!session) {
+    return 0;
+  }
+
+  const parsed = Date.parse(session.updatedAt);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+export function isNewerFocusSession(
+  candidate: PersistedFocusSession | null,
+  current: PersistedFocusSession | null,
+) {
+  return focusSessionTimestamp(candidate) > focusSessionTimestamp(current);
+}
+
+export function mergeFocusHistory(
+  localHistory: PersistedFocusHistoryRecord[],
+  remoteHistory: PersistedFocusHistoryRecord[],
+  limit = 60,
+) {
+  const records = new Map<string, PersistedFocusHistoryRecord>();
+
+  for (const record of [...localHistory, ...remoteHistory]) {
+    if (!records.has(record.id)) {
+      records.set(record.id, record);
+    }
+  }
+
+  return Array.from(records.values())
+    .sort((left, right) => right.completedAt.localeCompare(left.completedAt))
+    .slice(0, limit);
+}
+
+export function focusHistorySignature(history: PersistedFocusHistoryRecord[]) {
+  return history.map((record) => `${record.id}:${record.completedAt}`).join("|");
+}
+
+export async function readSyncedFocusSession(): Promise<SyncedFocusSessionSnapshot | null> {
+  try {
+    const response = await fetch("/api/focus-session", {
+      cache: "no-store",
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    return (await response.json()) as SyncedFocusSessionSnapshot;
+  } catch {
+    return null;
+  }
+}
+
+export async function writeSyncedFocusSession(input: {
+  session?: PersistedFocusSession | null;
+  history?: PersistedFocusHistoryRecord[];
+}) {
+  try {
+    const response = await fetch("/api/focus-session", {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(input),
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    return (await response.json()) as SyncedFocusSessionSnapshot;
+  } catch {
+    return null;
+  }
 }
 
 export function primeFocusChime() {

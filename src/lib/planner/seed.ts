@@ -407,6 +407,7 @@ export function createSeedSnapshot(userId = "demo-user"): WorkspaceSnapshot {
     checklistItems,
     taskTags,
     taskDependencies,
+    focusSessions: [],
     apiAccessTokens: [],
     agentRunners: [],
     projectAgentLinks: [],

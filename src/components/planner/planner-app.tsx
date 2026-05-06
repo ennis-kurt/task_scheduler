@@ -104,13 +104,16 @@ import type {
 import type { DailyPlanResponse } from "@/lib/planner/ai-daily-plan";
 import {
   FOCUS_SESSION_EVENT,
+  isNewerFocusSession,
   formatFocusPhaseLabel,
   formatFocusTimer,
   playFocusChime,
   primeFocusChime,
   projectPersistedFocusSession,
   readPersistedFocusSession,
+  readSyncedFocusSession,
   writePersistedFocusSession,
+  writeSyncedFocusSession,
 } from "@/lib/planner/focus-session";
 import { cn } from "@/lib/utils";
 import { Sidebar, ThemeSelector, type ActiveViewType } from "../layout/sidebar";
@@ -1124,13 +1127,17 @@ function useHeaderFocusSession(focusStorageKey: string, tasks: PlannerTask[]) {
           playFocusChime();
         }
 
-        writePersistedFocusSession(focusStorageKey, {
+        const completedSession = writePersistedFocusSession(focusStorageKey, {
           ...persisted,
           phaseIndex: projected.phaseIndex,
           remainingSeconds: projected.remainingSeconds,
           running: false,
           phases: projected.phases,
         });
+
+        if (completedSession) {
+          void writeSyncedFocusSession({ session: completedSession });
+        }
       }
 
       if (!projected.running) {
@@ -1157,6 +1164,34 @@ function useHeaderFocusSession(focusStorageKey: string, tasks: PlannerTask[]) {
       window.clearInterval(interval);
     };
   }, [focusStorageKey, tasks]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const syncRemoteFocusSession = async () => {
+      const remote = await readSyncedFocusSession();
+
+      if (cancelled || !remote?.session) {
+        return;
+      }
+
+      const local = readPersistedFocusSession(focusStorageKey);
+
+      if (isNewerFocusSession(remote.session, local)) {
+        writePersistedFocusSession(focusStorageKey, remote.session, {
+          preserveUpdatedAt: true,
+        });
+      }
+    };
+
+    void syncRemoteFocusSession();
+    const interval = window.setInterval(syncRemoteFocusSession, 5_000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [focusStorageKey]);
 
   return session;
 }

@@ -64,6 +64,13 @@
       "when": 1778081200000,
       "tag": "0008_task_dependencies",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1778086800000,
+      "tag": "0009_focus_sessions",
+      "breakpoints": true
     }
   ]
 }

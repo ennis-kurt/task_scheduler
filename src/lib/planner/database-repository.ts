@@ -6,6 +6,7 @@ import { getDb } from "@/db";
 import {
   areas,
   events,
+  focusSessions,
   milestones,
   projects,
   tags,
@@ -28,6 +29,9 @@ import type {
   AppUserRecord,
   AreaRecord,
   EventRecord,
+  FocusHistoryRecord,
+  FocusSessionRecord,
+  FocusSessionState,
   MilestoneRecord,
   NewEventInput,
   NewMilestoneInput,
@@ -66,6 +70,18 @@ function iso(value: Date | string | null | undefined) {
 
 function id(prefix: string) {
   return `${prefix}_${crypto.randomUUID().slice(0, 8)}`;
+}
+
+function emptyFocusSessionRecord(userId: string): FocusSessionRecord {
+  const timestamp = new Date().toISOString();
+
+  return {
+    userId,
+    session: null,
+    history: [],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
 }
 
 function resolveTaskAvailability(input: {
@@ -266,6 +282,18 @@ function mapTaskDependency(
     taskId: record.taskId,
     dependsOnTaskId: record.dependsOnTaskId,
     createdAt: iso(record.createdAt)!,
+  };
+}
+
+function mapFocusSession(record: typeof focusSessions.$inferSelect): FocusSessionRecord {
+  return {
+    userId: record.userId,
+    session: (record.session ?? null) as FocusSessionState | null,
+    history: Array.isArray(record.history)
+      ? (record.history as FocusHistoryRecord[])
+      : [],
+    createdAt: iso(record.createdAt)!,
+    updatedAt: iso(record.updatedAt)!,
   };
 }
 
@@ -571,8 +599,16 @@ export const databaseRepository = {
       .from(userSettings)
       .where(eq(userSettings.userId, userId))
       .limit(1);
-    const [areaRows, projectRows, milestoneRows, tagRows, taskRows, blockRows, eventRows] =
-      await Promise.all([
+    const [
+      areaRows,
+      projectRows,
+      milestoneRows,
+      tagRows,
+      taskRows,
+      blockRows,
+      eventRows,
+      focusSessionRows,
+    ] = await Promise.all([
         db.select().from(areas).where(eq(areas.userId, userId)),
         db.select().from(projects).where(eq(projects.userId, userId)),
         db.select().from(milestones).where(eq(milestones.userId, userId)),
@@ -580,6 +616,7 @@ export const databaseRepository = {
         db.select().from(tasks).where(eq(tasks.userId, userId)),
         db.select().from(taskBlocks).where(eq(taskBlocks.userId, userId)),
         db.select().from(events).where(eq(events.userId, userId)),
+        db.select().from(focusSessions).where(eq(focusSessions.userId, userId)),
       ]);
     const taskIds = taskRows.map((task) => task.id);
     const [checklistRows, taskTagRows, taskDependencyRows] = taskIds.length
@@ -609,12 +646,60 @@ export const databaseRepository = {
       checklistItems: checklistRows.map(mapChecklistItem),
       taskTags: taskTagRows.map(mapTaskTag),
       taskDependencies: taskDependencyRows.map(mapTaskDependency),
+      focusSessions: focusSessionRows.map(mapFocusSession),
       apiAccessTokens: [],
       agentRunners: [],
       projectAgentLinks: [],
       agentRuns: [],
       agentRunEvents: [],
     };
+  },
+
+  async getFocusSession(userId: string): Promise<FocusSessionRecord> {
+    await ensureDbUser(userId);
+    const db = getDb();
+    const [record] = await db
+      .select()
+      .from(focusSessions)
+      .where(eq(focusSessions.userId, userId))
+      .limit(1);
+
+    return record ? mapFocusSession(record) : emptyFocusSessionRecord(userId);
+  },
+
+  async updateFocusSession(
+    userId: string,
+    input: {
+      session?: FocusSessionState | null;
+      history?: FocusHistoryRecord[];
+    },
+  ): Promise<FocusSessionRecord> {
+    await ensureDbUser(userId);
+    const db = getDb();
+    const current = await databaseRepository.getFocusSession(userId);
+    const timestamp = now();
+    const nextSession = input.session === undefined ? current.session : input.session;
+    const nextHistory = input.history === undefined ? current.history : input.history;
+
+    await db
+      .insert(focusSessions)
+      .values({
+        userId,
+        session: nextSession,
+        history: nextHistory,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      })
+      .onConflictDoUpdate({
+        target: focusSessions.userId,
+        set: {
+          session: nextSession,
+          history: nextHistory,
+          updatedAt: timestamp,
+        },
+      });
+
+    return databaseRepository.getFocusSession(userId);
   },
 
   async createTask(userId: string, input: NewTaskInput) {

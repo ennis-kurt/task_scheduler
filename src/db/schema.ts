@@ -9,6 +9,11 @@ import {
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 
+import type {
+  FocusHistoryRecord,
+  FocusSessionState,
+} from "@/lib/planner/types";
+
 export const users = pgTable("users", {
   id: text("id").primaryKey(),
   email: text("email").notNull(),
@@ -178,6 +183,16 @@ export const taskDependencies = pgTable(
     index("task_dependencies_depends_on_task_id_idx").on(table.dependsOnTaskId),
   ],
 );
+
+export const focusSessions = pgTable("focus_sessions", {
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => users.id, { onDelete: "cascade" }),
+  session: jsonb("session").$type<FocusSessionState | null>(),
+  history: jsonb("history").$type<FocusHistoryRecord[]>().notNull().default([]),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
 
 export const projectNotePages = pgTable("project_note_pages", {
   id: text("id").primaryKey(),

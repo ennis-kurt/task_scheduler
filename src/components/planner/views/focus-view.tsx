@@ -26,15 +26,22 @@ import {
 
 import {
   buildPersistedFocusSession,
+  focusHistorySignature,
   formatFocusPhaseLabel,
   formatFocusTimer,
+  isNewerFocusSession,
+  mergeFocusHistory,
   playFocusChime,
   primeFocusChime,
   projectPersistedFocusSession,
   readPersistedFocusSession,
+  readSyncedFocusSession,
   writePersistedFocusSession,
+  writeSyncedFocusSession,
+  type PersistedFocusHistoryRecord,
   type PersistedFocusPhase as FocusPhase,
   type PersistedFocusPhaseKind as FocusPhaseKind,
+  type PersistedFocusSession,
 } from "@/lib/planner/focus-session";
 import { TASK_STATUS_LABELS, type PlannerTask, type TaskStatus } from "@/lib/planner/types";
 import { cn } from "@/lib/utils";
@@ -67,15 +74,7 @@ type FocusColumn =
       label: string;
     };
 
-type FocusHistoryRecord = {
-  id: string;
-  taskId: string | null;
-  taskTitle: string;
-  projectName: string | null;
-  profileName: string;
-  minutes: number;
-  completedAt: string;
-};
+type FocusHistoryRecord = PersistedFocusHistoryRecord;
 
 export type FocusViewProps = {
   tasks: PlannerTask[];
@@ -474,6 +473,103 @@ export function FocusView({
   const durationSignature = `${selectedProfile.id}:${phaseIndex}:${activeDurationSeconds}`;
   const profileSignatureRef = useRef(profileSignature);
   const durationSignatureRef = useRef(durationSignature);
+  const pendingRemoteSessionRef = useRef<PersistedFocusSession | null>(null);
+  const pendingRemoteHistoryRef = useRef<FocusHistoryRecord[] | null>(null);
+  const remoteSessionTimerRef = useRef<number | null>(null);
+  const remoteHistoryTimerRef = useRef<number | null>(null);
+  const remoteSessionTimerDueAtRef = useRef(0);
+  const lastQueuedRunningStateRef = useRef<boolean | null>(null);
+  const lastSyncedHistorySignatureRef = useRef("");
+
+  const applyPersistedSession = useCallback(
+    (session: PersistedFocusSession) => {
+      const nextProfileId = isSprintProfileId(session.selectedProfileId)
+        ? session.selectedProfileId
+        : "dynamic";
+      const projected = projectPersistedFocusSession({
+        ...session,
+        selectedProfileId: nextProfileId,
+      });
+      const selectedTaskExists =
+        projected.selectedTaskId &&
+        tasks.some((task) => task.id === projected.selectedTaskId);
+      const nextSelectedTaskId = selectedTaskExists
+        ? projected.selectedTaskId
+        : tasks.find((task) => task.status === "in_progress")?.id ?? tasks[0]?.id ?? null;
+      const nextPhaseIndex = projected.phaseIndex;
+      const nextPhase = projected.phases[nextPhaseIndex] ?? projected.phases[0];
+
+      profileSignatureRef.current = `${nextProfileId}:${session.customFocusMinutes}:${session.customBreakMinutes}:${session.customLongBreakMinutes}:${session.customRounds}`;
+      durationSignatureRef.current = `${nextProfileId}:${nextPhaseIndex}:${Math.max(1, nextPhase.minutes * 60)}`;
+
+      setSelectedTaskId(nextSelectedTaskId);
+      setSelectedProfileId(nextProfileId);
+      setCustomFocusMinutes(session.customFocusMinutes);
+      setCustomBreakMinutes(session.customBreakMinutes);
+      setCustomLongBreakMinutes(session.customLongBreakMinutes);
+      setCustomRounds(session.customRounds);
+      setPhaseIndex(nextPhaseIndex);
+      setRemainingSeconds(projected.remainingSeconds);
+      setRunning(projected.running);
+    },
+    [tasks],
+  );
+
+  const flushRemoteSession = useCallback(() => {
+    const session = pendingRemoteSessionRef.current;
+    pendingRemoteSessionRef.current = null;
+    remoteSessionTimerRef.current = null;
+    remoteSessionTimerDueAtRef.current = 0;
+
+    if (session) {
+      void writeSyncedFocusSession({ session });
+    }
+  }, []);
+
+  const queueRemoteSessionSave = useCallback(
+    (session: PersistedFocusSession, delayMs: number) => {
+      pendingRemoteSessionRef.current = session;
+
+      const dueAt = Date.now() + delayMs;
+      if (
+        remoteSessionTimerRef.current !== null &&
+        remoteSessionTimerDueAtRef.current <= dueAt
+      ) {
+        return;
+      }
+
+      if (remoteSessionTimerRef.current !== null) {
+        window.clearTimeout(remoteSessionTimerRef.current);
+      }
+
+      remoteSessionTimerDueAtRef.current = dueAt;
+      remoteSessionTimerRef.current = window.setTimeout(flushRemoteSession, delayMs);
+    },
+    [flushRemoteSession],
+  );
+
+  const flushRemoteHistory = useCallback(() => {
+    const historyRecords = pendingRemoteHistoryRef.current;
+    pendingRemoteHistoryRef.current = null;
+    remoteHistoryTimerRef.current = null;
+
+    if (historyRecords) {
+      void writeSyncedFocusSession({ history: historyRecords });
+    }
+  }, []);
+
+  const queueRemoteHistorySave = useCallback(
+    (historyRecords: FocusHistoryRecord[]) => {
+      pendingRemoteHistoryRef.current = historyRecords;
+
+      if (remoteHistoryTimerRef.current !== null) {
+        return;
+      }
+
+      remoteHistoryTimerRef.current = window.setTimeout(flushRemoteHistory, 500);
+    },
+    [flushRemoteHistory],
+  );
 
   const totalSprintSeconds = useMemo(() => {
     return selectedProfile.phases.reduce((sum, phase) => sum + phase.minutes * 60, 0);
@@ -578,8 +674,76 @@ export function FocusView({
   }, [focusStorageKey]);
 
   useEffect(() => {
-    window.localStorage.setItem(`${focusStorageKey}:history:v1`, JSON.stringify(history));
-  }, [focusStorageKey, history]);
+    let cancelled = false;
+
+    const syncRemoteFocusSession = async () => {
+      const remote = await readSyncedFocusSession();
+
+      if (cancelled || !remote) {
+        return;
+      }
+
+      const localSession = readPersistedFocusSession(focusStorageKey);
+
+      if (remote.session && isNewerFocusSession(remote.session, localSession)) {
+        writePersistedFocusSession(focusStorageKey, remote.session, {
+          preserveUpdatedAt: true,
+        });
+        applyPersistedSession(remote.session);
+      }
+
+      setHistory((current) => {
+        const merged = mergeFocusHistory(current, remote.history);
+        return focusHistorySignature(merged) === focusHistorySignature(current)
+          ? current
+          : merged;
+      });
+    };
+
+    void syncRemoteFocusSession();
+    const interval = window.setInterval(syncRemoteFocusSession, 5_000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [applyPersistedSession, focusStorageKey]);
+
+  useEffect(() => {
+    const persistedHistory = history.slice(0, 60);
+    window.localStorage.setItem(
+      `${focusStorageKey}:history:v1`,
+      JSON.stringify(persistedHistory),
+    );
+
+    const signature = focusHistorySignature(persistedHistory);
+    if (lastSyncedHistorySignatureRef.current !== signature) {
+      lastSyncedHistorySignatureRef.current = signature;
+      queueRemoteHistorySave(persistedHistory);
+    }
+  }, [focusStorageKey, history, queueRemoteHistorySave]);
+
+  useEffect(() => {
+    return () => {
+      if (remoteSessionTimerRef.current !== null) {
+        window.clearTimeout(remoteSessionTimerRef.current);
+      }
+
+      if (remoteHistoryTimerRef.current !== null) {
+        window.clearTimeout(remoteHistoryTimerRef.current);
+      }
+
+      const session = pendingRemoteSessionRef.current;
+      const historyRecords = pendingRemoteHistoryRef.current;
+
+      if (session || historyRecords) {
+        void writeSyncedFocusSession({
+          ...(session ? { session } : {}),
+          ...(historyRecords ? { history: historyRecords } : {}),
+        });
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!restoredSession || !restoredRuntime?.endedSinceLastSave) {
@@ -587,7 +751,7 @@ export function FocusView({
     }
 
     playFocusChime();
-    writePersistedFocusSession(
+    const persisted = writePersistedFocusSession(
       focusStorageKey,
       buildPersistedFocusSession({
         selectedTaskId,
@@ -603,6 +767,10 @@ export function FocusView({
         phases: selectedProfile.phases,
       }),
     );
+
+    if (persisted) {
+      queueRemoteSessionSave(persisted, 250);
+    }
   }, [
     customBreakMinutes,
     customFocusMinutes,
@@ -614,6 +782,7 @@ export function FocusView({
     restoredRuntime,
     restoredSession,
     running,
+    queueRemoteSessionSave,
     selectedProfile.name,
     selectedProfile.phases,
     selectedProfileId,
@@ -640,7 +809,7 @@ export function FocusView({
   }, [activeDurationSeconds, durationSignature]);
 
   useEffect(() => {
-    writePersistedFocusSession(
+    const persisted = writePersistedFocusSession(
       focusStorageKey,
       buildPersistedFocusSession({
         selectedTaskId,
@@ -656,6 +825,12 @@ export function FocusView({
         phases: selectedProfile.phases,
       }),
     );
+
+    if (persisted) {
+      const runningStateChanged = lastQueuedRunningStateRef.current !== running;
+      lastQueuedRunningStateRef.current = running;
+      queueRemoteSessionSave(persisted, runningStateChanged || !running ? 250 : 5_000);
+    }
   }, [
     customBreakMinutes,
     customFocusMinutes,
@@ -665,6 +840,7 @@ export function FocusView({
     phaseIndex,
     remainingSeconds,
     running,
+    queueRemoteSessionSave,
     selectedProfile.name,
     selectedProfile.phases,
     selectedProfileId,

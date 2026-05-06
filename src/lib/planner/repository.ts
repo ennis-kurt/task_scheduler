@@ -9,6 +9,9 @@ import {
 import { databaseRepository } from "@/lib/planner/database-repository";
 import { readDemoSnapshot, writeDemoSnapshot } from "@/lib/planner/demo-store";
 import type {
+  FocusHistoryRecord,
+  FocusSessionRecord,
+  FocusSessionState,
   MilestoneRecord,
   NewEventInput,
   NewMilestoneInput,
@@ -34,6 +37,18 @@ function now() {
 
 function id(prefix: string) {
   return `${prefix}_${crypto.randomUUID().slice(0, 8)}`;
+}
+
+function emptyFocusSessionRecord(userId: string): FocusSessionRecord {
+  const timestamp = now();
+
+  return {
+    userId,
+    session: null,
+    history: [],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
 }
 
 function resolveTaskAvailability(input: {
@@ -350,6 +365,46 @@ function patchTask(
 const demoRepository = {
   async getWorkspace(userId: string) {
     return readDemoSnapshot(userId);
+  },
+
+  async getFocusSession(userId: string) {
+    const snapshot = await readDemoSnapshot(userId);
+    return (
+      snapshot.focusSessions.find((record) => record.userId === userId) ??
+      emptyFocusSessionRecord(userId)
+    );
+  },
+
+  async updateFocusSession(
+    userId: string,
+    input: {
+      session?: FocusSessionState | null;
+      history?: FocusHistoryRecord[];
+    },
+  ) {
+    return withSnapshot(userId, (snapshot) => {
+      const existingIndex = snapshot.focusSessions.findIndex(
+        (record) => record.userId === userId,
+      );
+      const existing =
+        existingIndex >= 0
+          ? snapshot.focusSessions[existingIndex]
+          : emptyFocusSessionRecord(userId);
+      const nextRecord: FocusSessionRecord = {
+        ...existing,
+        session: input.session === undefined ? existing.session : input.session,
+        history: input.history === undefined ? existing.history : input.history,
+        updatedAt: now(),
+      };
+
+      if (existingIndex >= 0) {
+        snapshot.focusSessions[existingIndex] = nextRecord;
+      } else {
+        snapshot.focusSessions.push(nextRecord);
+      }
+
+      return nextRecord;
+    });
   },
 
   async createTask(userId: string, input: NewTaskInput) {

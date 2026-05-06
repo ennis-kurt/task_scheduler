@@ -164,6 +164,49 @@ export type TaskDependencyRecord = {
   createdAt: string;
 };
 
+export type FocusSessionPhaseKind = "focus" | "break" | "long_break";
+
+export type FocusSessionPhase = {
+  id: string;
+  kind: FocusSessionPhaseKind;
+  label: string;
+  minutes: number;
+};
+
+export type FocusSessionState = {
+  version: 1;
+  selectedTaskId: string | null;
+  selectedProfileId: string;
+  profileName: string;
+  customFocusMinutes: number;
+  customBreakMinutes: number;
+  customLongBreakMinutes: number;
+  customRounds: number;
+  phaseIndex: number;
+  remainingSeconds: number;
+  running: boolean;
+  phases: FocusSessionPhase[];
+  updatedAt: string;
+};
+
+export type FocusHistoryRecord = {
+  id: string;
+  taskId: string | null;
+  taskTitle: string;
+  projectName: string | null;
+  profileName: string;
+  minutes: number;
+  completedAt: string;
+};
+
+export type FocusSessionRecord = {
+  userId: string;
+  session: FocusSessionState | null;
+  history: FocusHistoryRecord[];
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type ProjectNoteStatus = "Draft" | "Shared" | "Final";
 export type ProjectNoteKind = "note" | "section";
 export type ProjectNoteLinkedEntityType = "project" | "milestone" | "task" | "manual";
@@ -351,6 +394,7 @@ export type WorkspaceSnapshot = {
   checklistItems: TaskChecklistItemRecord[];
   taskTags: TaskTagRecord[];
   taskDependencies: TaskDependencyRecord[];
+  focusSessions: FocusSessionRecord[];
   apiAccessTokens: ApiAccessTokenRecord[];
   agentRunners: AgentRunnerRecord[];
   projectAgentLinks: ProjectAgentLinkRecord[];
